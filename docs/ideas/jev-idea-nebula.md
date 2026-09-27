@@ -6,7 +6,7 @@
 
 ## Method and result
 
-Four independent idea-generation approaches produced 18 concepts. An LLM ranker compared eight of them in both presentation orders without seeing which approach generated each idea. Ten other concepts were set aside to keep the comparison manageable; they were **not** shown to be inferior on every dimension. A timeboxed live-source scan checked five finalists for independent complaints and paid substitutes. The pairwise standings are subjective ideation judgments, not an experiment with users.
+Four independent idea-generation approaches produced 18 concepts. An LLM ranker compared eight of them in both presentation orders without seeing which approach generated each idea. Ten other concepts were set aside to keep the comparison manageable; they were **not** shown to be inferior on every dimension. A timeboxed live-source scan checked five finalists for independent complaints and paid substitutes. No per-duel ballot record was retained, so the W-D-L figures below are the ranker's **unaudited notes**, not measured results or an experiment with users.
 
 For every concept, Jev would answer a narrow [Choice, Score, or Noul question](https://docs.typesafe.ai/primitives). Parsers, hashes, test results, environment changes, and permissions remain in code. [Jev 1.13's documented limitations](https://docs.typesafe.ai/model-jaggedness/jev-1.13) make that split essential.
 
@@ -38,15 +38,15 @@ A [Claude/Codex skill-discovery difference](https://github.com/anthropics/claude
 
 ## Demand evidence
 
-The scan counted distinct relevant authors or threads, not posts or market prevalence. Its 20-complaint cutoff is a screening rule from the Idea Nebula workflow, not a measure of usefulness to JevDev. All five checks fell short for the **specific proposed solution**. Paid substitutes exist, but no reviewed source showed a paid vendor failing at exactly these jobs; the workflow's vendor-gap multiplier is therefore zero for all five.
+The original scan reported counts of distinct relevant authors or threads, but its complete source inventory and inclusion decisions were not retained. The figures below are **unaudited working notes**; the links show examples, not proof of the totals. The Idea Nebula workflow uses a 20-complaint screening rule, but this document cannot apply that rule as a verified pass/fail result. No saved evidence establishes that a paid substitute fails one of these precise jobs.
 
-| Idea | Timeboxed complaint count | Strongest directly linked example | Paid adjacent substitute | Screening result |
+| Idea | Original scan tally (unaudited) | Directly linked example | Paid adjacent substitute | Current assessment |
 |---|---:|---|---|---|
-| Contract Fracture Lab | 11 adjacent portability reports; few about matched traces | [Codex recognizes a skill that Claude misses](https://github.com/anthropics/claude-code/issues/20979) | [Bring Your AI](https://bringyour.ai/) migration tooling | Demand unproven |
-| Skill Bankruptcy Court | 21 broad skill complaints; no direct request for measured clause retirement | [Skills read but not reliably followed](https://github.com/openai/codex/issues/34189) | [Tessl](https://docs.tessl.io/support/faqs), [Oqoqo](https://oqoqo.ai/pricing) | Crowded; deprioritize |
-| Cold Start Fuzzer | 12 adjacent setup failures | [Valid skills reported as missing](https://github.com/anthropics/claude-code/issues/20576) | [Agent sandboxes](https://e2b.dev/pricing) | Demand unproven |
-| Test Intent Escrow | 17 relatively direct test-manipulation reports | [Assertion weakening report](https://github.com/anthropics/claude-code/issues/7074) | [AI code review](https://www.coderabbit.ai/pricing) | Closest demand signal; still below cutoff |
-| Assumption Recall | 9 stale-premise reports | [Old plan revived after compaction](https://github.com/anthropics/claude-code/issues/27319) | [Requirements impact analysis](https://support.jamasoftware.com/hc/en-us/articles/40781365974541-Using-Trace-View-Coverage-Explorer-Impact-Analysis-in-Jama-Connect) | Demand unproven |
+| Contract Fracture Lab | About 11 adjacent portability reports | [Codex recognizes a skill that Claude misses](https://github.com/anthropics/claude-code/issues/20979) | [Bring Your AI](https://bringyour.ai/) migration tooling | Demand unvalidated |
+| Skill Bankruptcy Court | About 21 broad skill or instruction complaints | [A user reports that Claude ignores skill instructions](https://www.reddit.com/r/ClaudeAI/comments/1oetd0h/claude_will_not_follow_instructions_in_skills/) | [Tessl](https://docs.tessl.io/support/faqs), [Oqoqo](https://oqoqo.ai/pricing) | Existing evaluators make differentiation uncertain |
+| Cold Start Fuzzer | About 12 adjacent setup failures | [Valid skills reported as missing](https://github.com/anthropics/claude-code/issues/20576) | [Agent sandboxes](https://e2b.dev/pricing) | Demand unvalidated |
+| Test Intent Escrow | About 17 relatively direct test-manipulation reports | [Assertion weakening report](https://github.com/anthropics/claude-code/issues/7074) | [AI code review](https://www.coderabbit.ai/pricing) | Promising failure report; demand unvalidated |
+| Assumption Recall | About 9 stale-premise reports | [Old plan revived after compaction](https://github.com/anthropics/claude-code/issues/27319) | [Requirements impact analysis](https://support.jamasoftware.com/hc/en-us/articles/40781365974541-Using-Trace-View-Coverage-Explorer-Impact-Analysis-in-Jama-Connect) | Demand unvalidated |
 
 These links support the existence of reported failures. They do **not** establish how often the failures occur, classifier accuracy, or willingness to pay for a new tool.
 
@@ -69,11 +69,11 @@ These were excluded by an editorial focus on founder fit and a distinct Jev judg
 
 ## Modal region and disagreement
 
-Generic guardrails, routing, review, and freshness warnings are the crowded center. Several concepts converge on rechecking earlier work; Test Intent Escrow is narrower because it asks whether an edited test still means the same thing. The blind ranking favored Skill Bankruptcy Court, but the demand check found direct overlap with existing paid evaluators. Contract Fracture Lab won the most pairwise comparisons yet has only adjacent portability complaints, so its originality should be tested through a small replay rather than assumed to be a product advantage.
+Generic guardrails, routing, review, and freshness warnings are the crowded center. Several concepts converge on rechecking earlier work; Test Intent Escrow is narrower because it asks whether an edited test still means the same thing. Among the safe picks, the ranker favored Skill Bankruptcy Court, but the demand check found direct overlap with existing paid evaluators. Contract Fracture Lab had the strongest reported pairwise standing yet has only adjacent portability complaints, so its originality should be tested through a small replay rather than assumed to be a product advantage.
 
 ## Validate next
 
 1. **Test Intent Escrow:** Blind-label 30 changed-test examples. Compare a deterministic diff-only baseline with diff plus Jev on missed weakening and needless flags. Keep all outputs advisory.
 2. **Contract Fracture Lab:** Run five matched, read-only tasks in Claude and Codex. Pin host versions, task inputs, and tool traces; manually label differences before inspecting Jev's classifications. If exact trace comparison explains every difference, Jev adds no value.
 
-This ranking is a funnel, not a verdict. A [randomized execution study](https://arxiv.org/abs/2506.20803) found that ideas judged novel before implementation did not retain that advantage after researchers built them. JevDev should use the pilots, not pairwise standings, to decide what to build.
+This ranking is a funnel, not a verdict. In one [research-idea execution study](https://arxiv.org/abs/2506.20803), an initial novelty advantage for LLM-generated ideas over expert-written ideas narrowed after researchers executed them. That is an analogy, not evidence about these Jev concepts. JevDev should use pilots, not pairwise standings, to decide what to build.
