@@ -778,6 +778,40 @@ def benchmark(
     }
 
 
+def run_prompt_hook(host: str) -> None:
+    """Route a host UserPromptSubmit event and return a non-blocking hint."""
+    try:
+        event = json.load(sys.stdin)
+        prompt = event.get("prompt") if isinstance(event, dict) else None
+        if not isinstance(prompt, str) or not prompt.strip():
+            return
+        routing = suggest(prompt, host_roster(host))
+        suggestion = routing.get("suggestion")
+        if not suggestion:
+            return
+        context = (
+            f"Jev skill router suggests `{suggestion}` for this request. "
+            "Load that skill and use its instructions if it fits the task."
+        )
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": context,
+                    }
+                }
+            )
+        )
+    except Exception:
+        # Routing is advisory: a Jev outage or missing key must never block a prompt.
+        message = (
+            "Jev skill routing failed open; this prompt will continue without a "
+            "router suggestion. Check the Jev credentials and router configuration."
+        )
+        print(json.dumps({"systemMessage": message}))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=("claude", "codex"), default="claude")
@@ -785,6 +819,7 @@ def main() -> None:
     sub.add_parser("measure")
     route = sub.add_parser("route")
     route.add_argument("request")
+    sub.add_parser("hook", help="handle a host UserPromptSubmit event from stdin")
     grade = sub.add_parser("score")
     grade.add_argument(
         "observations", type=Path, help="JSONL with id, gold, loads, routing"
@@ -800,6 +835,9 @@ def main() -> None:
     sample.add_argument("--count", type=int, default=300)
     sample.add_argument("--per-session", type=int, default=3)
     args = parser.parse_args()
+    if args.command == "hook":
+        run_prompt_hook(args.host)
+        return
     if args.command == "sample":
         transcript_dir = args.transcripts or (
             CONFIG / "projects" if args.host == "claude" else CODEX_HOME / "sessions"
