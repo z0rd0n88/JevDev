@@ -10,7 +10,7 @@ Make tracked changes on a non-`main` feature branch in a dedicated worktree and 
 
 ## Credentials and data
 
-Read API credentials from the environment. Never commit credential values, `~/.secrets`, private session transcripts, sampled prompt pools, logs, or live benchmark observations. Keep local run output under ignored `.local/`. Review authored fixtures before committing them.
+Read API credentials from the environment. Never commit credential values, `~/.secrets`, private session transcripts, sampled prompt pools, logs, downloaded YouTube transcripts (e.g., from `yteval` in `docs/reports/`), or live benchmark observations. Keep local run output under ignored `.local/`. Review authored fixtures before committing them.
 
 ## Routing and evaluation
 
