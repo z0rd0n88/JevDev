@@ -1,0 +1,7 @@
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/skill_router.py" --host codex hook'
+timeout = 90
+statusMessage = "Checking for a matching skill with Jev"
