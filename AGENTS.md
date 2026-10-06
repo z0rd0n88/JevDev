@@ -10,10 +10,24 @@ Make tracked changes on a non-`main` feature branch in a dedicated worktree and 
 
 ## Credentials and data
 
-Read API credentials from the environment. Never commit credential values, `~/.secrets`, private session transcripts, sampled prompt pools, logs, or live benchmark observations. Keep local run output under ignored `.local/`. Review authored fixtures before committing them.
+Read API credentials from the environment. Never commit credential values, `~/.secrets`, private session transcripts, sampled prompt pools, logs, downloaded YouTube transcripts (e.g., from `yteval` in `docs/reports/`), or live benchmark observations. Keep local run output under ignored `.local/`. Review authored fixtures before committing them.
 
 ## Routing and evaluation
 
 Discover each host's live skill roster when routing. Record the host, model, router version, and roster hash with observations; do not combine measurements from different snapshots. Score Claude and Codex separately, using the same labeled prompts for baseline, routed, and oracle arms within each host. Label prompts before inspecting observed loads. Do not present an authored pilot as an estimate of real-world accuracy or infer accuracy from a smoke test.
 
 Run `python3 tests/test_router.py` after changing the router. See `README.md` for host-specific preflights and benchmark commands.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout. See `docs/agents/domain.md`.
