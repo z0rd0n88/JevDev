@@ -9,12 +9,18 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
 
 DEFAULT_MODEL = "jev-latest"
 JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
+SENTINEL_VERSION = "shadow-v1"
+# ponytail: regex picks which Bash commands get judged; widen once logged rows show misses.
+RISKY = re.compile(
+    r"\b(git\s+(push|commit|reset\s+--hard|clean)|gh\s+pr\s+(merge|close|create)|rm\s+-\w*[rf]|deploy)\b"
+)
 
 
 def check_scope(instruction: str, constraints: str, action: str) -> dict:
@@ -55,15 +61,56 @@ def check_scope(instruction: str, constraints: str, action: str) -> dict:
         )
 
     response = json.loads(process.stdout)
+    answer = response["answers"]["scope"]
     return {
-        "result": response["answers"]["scope"]["choice"],
-        "confidence": float(response["answers"]["scope"].get("confidence", 0.0)),
+        "result": answer["choice"],
+        "confidence": float(answer.get("probabilities", {}).get(answer["choice"], 0.0)),
         "elapsed": elapsed,
         "input_tokens": int(response.get("usage", {}).get("input_tokens") or 0),
     }
 
 
+def latest_user_prompt(transcript: Path) -> str:
+    """Last typed user message in a Claude transcript, skipping tool results and command wrappers."""
+    prompt = ""
+    for line in transcript.read_text().splitlines():
+        entry = json.loads(line)
+        if entry.get("type") != "user" or entry.get("isMeta"):
+            continue
+        content = entry.get("message", {}).get("content")
+        if isinstance(content, list):
+            content = "\n".join(b.get("text", "") for b in content if b.get("type") == "text")
+        if isinstance(content, str) and content.strip() and not content.lstrip().startswith("<"):
+            prompt = content
+    return prompt
+
+
+def run_hook(log: Path) -> None:
+    """Shadow-mode PreToolUse hook: log a verdict for risky Bash commands, never block."""
+    row = {"host": "claude", "sentinel_version": SENTINEL_VERSION,
+           "model": os.environ.get("JEV_MODEL") or DEFAULT_MODEL, "ts": time.time()}
+    try:
+        event = json.load(sys.stdin)
+        command = (event.get("tool_input") or {}).get("command", "")
+        if event.get("tool_name") != "Bash" or not RISKY.search(command):
+            return
+        row.update(session_id=event.get("session_id"), command=command)
+        row["instruction"] = latest_user_prompt(Path(event["transcript_path"]))[-2000:]
+        row.update(check_scope(row["instruction"], "None", command))
+    except Exception as e:
+        # Shadow mode fails open; record the failure so silent gaps show up in the log.
+        row["error"] = f"{type(e).__name__}: {e}"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
 def main():
+    if sys.argv[1:] == ["hook"]:
+        root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
+        run_hook(root / ".local" / "sentinel.jsonl")
+        return
+
     parser = argparse.ArgumentParser(
         description="Scope Sentinel - Evaluate if an agent action is within scope."
     )
