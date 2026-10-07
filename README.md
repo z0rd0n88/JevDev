@@ -36,3 +36,13 @@ python3 skill_router.py --host codex score .local/pilot-observations-codex.jsonl
 Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex's first observed `SKILL.md` read count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm, so the same command resumes interrupted work. A changed roster, router version, host, or agent model requires a new observations file.
 
 The full pilot invokes up to 300 agent sessions per host and can take hours. Claude defaults to `haiku` with a $0.10 cap per agent call; Codex defaults to `gpt-6-luna`. The host prompts are not identical: Claude receives a system-prompt addition, while Codex receives a delimited addition to the user turn. Compare arms within a host. Keep credentials, sampled transcripts, logs, and live observations out of Git; `.local/` is ignored.
+
+## Scope Sentinel
+
+`scope_sentinel.py` asks Jev whether a proposed agent action is `covered`, `ambiguous`, or in `conflict` with the user's latest instruction. `demo_scope_sentinel.sh` runs three example cases through the CLI.
+
+The project's Claude `PreToolUse` hook runs it in shadow mode, and only when `SCOPE_SENTINEL=1` is set in Claude's environment. It never blocks a command. For risky Bash commands (pushes, commits, PR create/merge/close, destructive git/gh/rm/find), it starts a detached judge and returns immediately. The judge sends the redacted command and the latest typed prompt (each clipped to about 2000 characters) to the Jev provider, then appends one row to `.local/sentinel.jsonl`, which is created with mode 0600. Rows with an `error` field show missed verdicts, such as a missing key. Label logged rows before choosing any blocking threshold.
+
+```bash
+python3 tests/test_sentinel.py
+```
