@@ -17,8 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR}/scope_sentinel.py\" hook",
-            "timeout": 45
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/scope_sentinel.py\" hook || true",
+            "timeout": 10
           }
         ]
       }

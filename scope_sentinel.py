@@ -16,11 +16,36 @@ import time
 
 DEFAULT_MODEL = "jev-latest"
 JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
-SENTINEL_VERSION = "shadow-v1"
-# ponytail: regex picks which Bash commands get judged; widen once logged rows show misses.
+SENTINEL_VERSION = "shadow-v2"
+_GIT = r"\bgit(?:\s+(?:-[Cc]\s+\S+|--\S+))*\s+"
+_GH = r"\bgh(?:\s+(?:-R\s+\S+|--repo\s+\S+))*\s+"
+# ponytail: regex picks which Bash commands get judged; text inside quotes still matches.
+# Widen or narrow it from logged rows.
 RISKY = re.compile(
-    r"\b(git\s+(push|commit|reset\s+--hard|clean)|gh\s+pr\s+(merge|close|create)|rm\s+-\w*[rf]|deploy)\b"
+    _GIT + r"(?:push|commit|clean|stash\s+drop|worktree\s+remove|branch\s+(?:\S+\s+)*-D"
+    r"|checkout\s+--|reset\b[^;&|]*--hard)(?![\w-])"
+    r"|" + _GH + r"(?:pr\s+(?:merge|close|create)|repo\s+delete|api\b[^;&|]*-X\s*DELETE)"
+    r"|\brm\s+(?:-\S*[rRf]|--recursive|--force)"
+    r"|\bfind\b[^;&|]*\s-delete\b"
 )
+DRY_RUN = re.compile(r"\s--dry-run\b")
+SECRET = re.compile(
+    r"(?i)(authorization:\s*\S+\s+|bearer\s+|(?:token|secret|password|passwd|api[_-]?key)\w*[=:]\s*)\S+"
+    r"|://[^/\s:@]+:[^/\s@]+@"
+    r"|\b(?:gh[pousr]_|github_pat_|sk-)[\w-]{10,}"
+)
+TAG_BLOCK = re.compile(r"<(system-reminder|local-command-[\w-]+)>.*?</\1>", re.S)
+TAG = re.compile(r"</?[\w-]+(?:\s[^>]*)?>")
+
+
+def redact(text: str) -> str:
+    return SECRET.sub(lambda m: f"{m.group(1)}[REDACTED]" if m.group(1) else "[REDACTED]", text)
+
+
+def clip(text: str, limit: int = 2000) -> str:
+    """Keep both ends: constraints often open a prompt and the latest ask closes it."""
+    half = limit // 2
+    return text if len(text) <= limit else f"{text[:half]}\n[...]\n{text[-half:]}"
 
 
 def check_scope(instruction: str, constraints: str, action: str) -> dict:
@@ -64,51 +89,100 @@ def check_scope(instruction: str, constraints: str, action: str) -> dict:
     answer = response["answers"]["scope"]
     return {
         "result": answer["choice"],
-        "confidence": float(answer.get("probabilities", {}).get(answer["choice"], 0.0)),
+        "confidence": (answer.get("probabilities") or {}).get(answer["choice"], answer.get("confidence")),
         "elapsed": elapsed,
         "input_tokens": int(response.get("usage", {}).get("input_tokens") or 0),
     }
 
 
 def latest_user_prompt(transcript: Path) -> str:
-    """Last typed user message in a Claude transcript, skipping tool results and command wrappers."""
+    """Last typed user message in a Claude transcript; wrappers are stripped, tool results skipped."""
     prompt = ""
-    for line in transcript.read_text().splitlines():
-        entry = json.loads(line)
-        if entry.get("type") != "user" or entry.get("isMeta"):
-            continue
-        content = entry.get("message", {}).get("content")
-        if isinstance(content, list):
-            content = "\n".join(b.get("text", "") for b in content if b.get("type") == "text")
-        if isinstance(content, str) and content.strip() and not content.lstrip().startswith("<"):
-            prompt = content
+    with transcript.open(errors="replace") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue  # blank or half-flushed line
+            if (
+                not isinstance(entry, dict)
+                or entry.get("type") != "user"
+                or entry.get("isMeta")
+                or entry.get("isCompactSummary")
+                or entry.get("isVisibleInTranscriptOnly")
+            ):
+                continue
+            content = (entry.get("message") or {}).get("content")
+            if isinstance(content, list):
+                content = "\n".join(
+                    b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+                )
+            if not isinstance(content, str):
+                continue
+            text = TAG.sub(" ", TAG_BLOCK.sub("", content)).strip()
+            if text and not text.startswith("[Request interrupted"):
+                prompt = text
     return prompt
 
 
 def run_hook(log: Path) -> None:
-    """Shadow-mode PreToolUse hook: log a verdict for risky Bash commands, never block."""
+    """Opt-in PreToolUse hook: hand risky Bash commands to a detached judge and return at once."""
+    if os.environ.get("SCOPE_SENTINEL") != "1":
+        return
+    try:
+        raw = sys.stdin.read()
+        event = json.loads(raw)
+        command = (event.get("tool_input") or {}).get("command")
+        if (
+            event.get("tool_name") != "Bash"
+            or not isinstance(command, str)
+            or not RISKY.search(command)
+            or DRY_RUN.search(command)
+        ):
+            return
+        judge = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "judge", str(log)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        judge.stdin.write(raw.encode())
+        judge.stdin.close()
+    except Exception:
+        pass  # shadow mode never blocks or slows a tool call
+
+
+def run_judge(log: Path) -> None:
+    """Detached half of the hook: judge one event with Jev and append one redacted row."""
     row = {"host": "claude", "sentinel_version": SENTINEL_VERSION,
            "model": os.environ.get("JEV_MODEL") or DEFAULT_MODEL, "ts": time.time()}
     try:
         event = json.load(sys.stdin)
-        command = (event.get("tool_input") or {}).get("command", "")
-        if event.get("tool_name") != "Bash" or not RISKY.search(command):
-            return
-        row.update(session_id=event.get("session_id"), command=command)
-        row["instruction"] = latest_user_prompt(Path(event["transcript_path"]))[-2000:]
-        row.update(check_scope(row["instruction"], "None", command))
+        row.update(session_id=event.get("session_id"),
+                   command=clip(redact(event["tool_input"]["command"])))
+        row["instruction"] = clip(redact(latest_user_prompt(Path(event["transcript_path"]))))
+        if not row["instruction"]:
+            raise RuntimeError("no user instruction found in transcript")
+        row.update(check_scope(row["instruction"], "None", row["command"]))
     except Exception as e:
-        # Shadow mode fails open; record the failure so silent gaps show up in the log.
+        # Fails open; the error row keeps silent gaps visible.
         row["error"] = f"{type(e).__name__}: {e}"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as f:
-        f.write(json.dumps(row) + "\n")
+    try:
+        log.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with os.fdopen(os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a") as f:
+            f.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
 
 
 def main():
     if sys.argv[1:] == ["hook"]:
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
         run_hook(root / ".local" / "sentinel.jsonl")
+        return
+    if sys.argv[1:2] == ["judge"]:
+        run_judge(Path(sys.argv[2]))
         return
 
     parser = argparse.ArgumentParser(
