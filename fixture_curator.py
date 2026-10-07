@@ -19,20 +19,25 @@ JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
 
 
 def validate_record(record: dict) -> list[str]:
-    """Check for required fields and formatting."""
+    """Check required fields and their types: id and text are non-empty strings, gold is a string or null."""
+    if not isinstance(record, dict):
+        return ["Record is not a JSON object"]
     errors = []
-    required_fields = ["id", "text", "gold"]
-    for field in required_fields:
+    for field in ("id", "text", "gold"):
         if field not in record:
             errors.append(f"Missing required field: {field}")
-        elif not record[field] and record[field] is not None:
-            errors.append(f"Field {field} cannot be empty")
+            continue
+        value = record[field]
+        if field == "gold" and value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"Field {field} must be a non-empty string")
     return errors
 
 
 def find_duplicates(records: list[dict]) -> set[str]:
     """Find duplicate IDs across records."""
-    counts = collections.Counter(r.get("id") for r in records if r.get("id"))
+    counts = collections.Counter(r.get("id") for r in records if isinstance(r.get("id"), str))
     return {id_val for id_val, count in counts.items() if count > 1}
 
 
@@ -73,15 +78,16 @@ def curate_with_jev(record: dict) -> dict:
     elapsed = time.perf_counter() - start
     
     if process.returncode:
-        raise RuntimeError(f"jev exited {process.returncode}; {process.stderr}")
-        
+        # Do not echo stderr: provider error bodies can include the request text.
+        raise RuntimeError(f"jev exited {process.returncode}; inspect provider access and limits locally")
+
     response = json.loads(process.stdout)
-    answers = response.get("answers", {})
+    answers = response["answers"]  # strict: a missing answer is an error, never a 0.0 verdict
     return {
-        "self_contained": float(answers.get("self_contained", {}).get("noul", 0.0)),
-        "multiple_defensible": float(answers.get("multiple_defensible", {}).get("noul", 0.0)),
+        "self_contained": float(answers["self_contained"]["noul"]),
+        "multiple_defensible": float(answers["multiple_defensible"]["noul"]),
         "elapsed": elapsed,
-        "input_tokens": int(response.get("usage", {}).get("input_tokens", 0))
+        "input_tokens": int((response.get("usage") or {}).get("input_tokens") or 0),
     }
 
 
@@ -92,85 +98,97 @@ def main():
     args = parser.parse_args()
     
     path = Path(args.file)
-    if not path.exists():
-        print(f"File not found: {path}", file=sys.stderr)
-        sys.exit(1)
-        
     records = []
-    with path.open("r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
+    has_errors = False
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as e:
+                    has_errors = True
+                    print(f"ERROR: Line {line_num}: Invalid JSON - {e}")
+                    continue
+                if not isinstance(record, dict):
+                    has_errors = True
+                    print(f"ERROR: Line {line_num}: Record is not a JSON object")
+                    continue
                 record["_line"] = line_num
                 records.append(record)
-            except json.JSONDecodeError as e:
-                print(f"Line {line_num}: Invalid JSON - {e}")
-                
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"Cannot read {path}: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Deterministic checks
     print("--- Deterministic Checks ---")
-    has_errors = False
-    
+    if not records:
+        has_errors = True
+        print("ERROR: No records found")
+
     dupes = find_duplicates(records)
     if dupes:
         has_errors = True
-        print(f"ERROR: Found duplicate IDs: {', '.join(dupes)}")
-        
+        print(f"ERROR: Found duplicate IDs: {', '.join(sorted(dupes))}")
+
     for record in records:
         errors = validate_record(record)
         if errors:
             has_errors = True
-            fallback = f"Line {record.get('_line')}"
-            print(f"ERROR in record {record.get('id', fallback)}:")
+            print(f"ERROR in record at line {record['_line']}:")
             for err in errors:
                 print(f"  - {err}")
-                
+
     if has_errors:
         print("\nDeterministic checks failed. Please fix these before using Jev.")
         sys.exit(1)
-    else:
-        print("Deterministic checks passed.")
-        
+    print("Deterministic checks passed.")
+
     if args.skip_jev:
         print("Skipping Jev checks as requested.")
         sys.exit(0)
-        
+
     # Jev checks
     print("\n--- Jev Curation ---")
     flagged = 0
+    failed = 0
     total_tokens = 0
     total_time = 0.0
-    
+
     for i, record in enumerate(records, start=1):
-        # We don't necessarily want to process hundreds without feedback
-        print(f"Evaluating {i}/{len(records)}: {record.get('id')}...", end=" ", flush=True)
+        print(f"Evaluating {i}/{len(records)}: {record['id']}...", end=" ", flush=True)
         try:
             res = curate_with_jev(record)
-            total_tokens += res["input_tokens"]
-            total_time += res["elapsed"]
-            
-            # thresholds for flags
-            flags = []
-            if res["self_contained"] < 0.5:
-                flags.append("Not self-contained")
-            if res["multiple_defensible"] >= 0.5:
-                flags.append("Multiple labels defensible")
-                
-            if flags:
-                flagged += 1
-                print("FLAGGED")
-                for f in flags:
-                    print(f"    - {f}")
-            else:
-                print("OK")
-                
         except Exception as e:
-            print(f"ERROR: {e}")
-            
+            failed += 1
+            print(f"ERROR: {type(e).__name__}: {e}")
+            continue
+        total_tokens += res["input_tokens"]
+        total_time += res["elapsed"]
+
+        # ponytail: uncalibrated 0.5 thresholds; set them from human-reviewed flags.
+        flags = []
+        if res["self_contained"] < 0.5:
+            flags.append("Not self-contained")
+        # Ambiguity is only meaningful for prompts that carry a skill label.
+        if record["gold"] is not None and res["multiple_defensible"] >= 0.5:
+            flags.append("Multiple labels defensible")
+
+        if flags:
+            flagged += 1
+            print("FLAGGED")
+            for f in flags:
+                print(f"    - {f}")
+        else:
+            print("OK")
+
     print(f"\nCompleted in {total_time:.1f}s using {total_tokens} tokens.")
-    print(f"Flagged {flagged}/{len(records)} prompts for human review.")
+    print(f"Flagged {flagged}/{len(records)} prompts for human review; {failed} failed.")
+    if failed:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
