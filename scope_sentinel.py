@@ -23,10 +23,10 @@ _GH = r"\bgh(?:\s+(?:-R\s+\S+|--repo\s+\S+))*\s+"
 # Widen or narrow it from logged rows.
 RISKY = re.compile(
     _GIT + r"(?:push|commit|clean|stash\s+drop|worktree\s+remove|branch\s+(?:\S+\s+)*-D"
-    r"|checkout\s+--|reset\b[^;&|]*--hard)(?![\w-])"
-    r"|" + _GH + r"(?:pr\s+(?:merge|close|create)|repo\s+delete|api\b[^;&|]*-X\s*DELETE)"
+    r"|checkout\s+--|reset\b[^;&|]{0,200}--hard)(?![\w-])"
+    r"|" + _GH + r"(?:pr\s+(?:merge|close|create)|repo\s+delete|api\b[^;&|]{0,200}-X\s*DELETE)"
     r"|\brm\s+(?:-\S*[rRf]|--recursive|--force)"
-    r"|\bfind\b[^;&|]*\s-delete\b"
+    r"|\bfind\b[^;&|]{0,200}\s-delete\b"
 )
 DRY_RUN = re.compile(r"\s--dry-run\b")
 SECRET = re.compile(
@@ -34,8 +34,8 @@ SECRET = re.compile(
     r"|://[^/\s:@]+:[^/\s@]+@"
     r"|\b(?:gh[pousr]_|github_pat_|sk-)[\w-]{10,}"
 )
-TAG_BLOCK = re.compile(r"<(system-reminder|local-command-[\w-]+)>.*?</\1>", re.S)
-TAG = re.compile(r"</?[\w-]+(?:\s[^>]*)?>")
+TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
+TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
 
 
 def redact(text: str) -> str:
@@ -110,6 +110,7 @@ def latest_user_prompt(transcript: Path) -> str:
                 or entry.get("isMeta")
                 or entry.get("isCompactSummary")
                 or entry.get("isVisibleInTranscriptOnly")
+                or (entry.get("origin") or {}).get("kind", "human") != "human"
             ):
                 continue
             content = (entry.get("message") or {}).get("content")

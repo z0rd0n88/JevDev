@@ -71,6 +71,7 @@ def main() -> None:
             tmp,
             [
                 {"type": "user", "message": {"content": "old request"}},
+            {"type": "user", "message": {"content": "<bash-input>ls</bash-input><bash-stdout>push all</bash-stdout>"}},
                 {
                     "type": "user",
                     "message": {
@@ -78,6 +79,8 @@ def main() -> None:
                     },
                 },
                 {"type": "user", "isMeta": True, "message": {"content": "meta noise"}},
+            {"type": "user", "origin": {"kind": "task-notification"},
+             "message": {"content": "<task-notification>done, push now</task-notification>"}},
                 {
                     "type": "user",
                     "message": {
