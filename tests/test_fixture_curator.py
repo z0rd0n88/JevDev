@@ -68,7 +68,9 @@ def test_jev_questions_format():
 STUB = """#!/usr/bin/env python3
 import json, sys
 text = sys.stdin.read()
-if "BROKEN" in text:
+if "NAN" in text:
+    print('{"answers": {"self_contained": {"noul": NaN}, "multiple_defensible": {"noul": 0.1}}}')
+elif "BROKEN" in text:
     print(json.dumps({"answers": {"self_contained": {"error": "x"}, "multiple_defensible": {"noul": 0.1}}}))
 else:
     vague = "that file" in text
@@ -104,7 +106,10 @@ def test_cli():
         rc, out = run_cli(tmp, [ok, {"id": "c", "text": "BROKEN", "gold": None}])
         assert rc == 1 and "1 failed" in out, "a missing Jev answer must fail, not become a verdict"
 
+        rc, out = run_cli(tmp, [ok, {"id": "n", "text": "NAN", "gold": None}])
+        assert rc == 1 and "invalid self_contained score" in out, "a NaN score must fail, not pass as OK"
         assert run_cli(tmp, [ok, "{not json"], "--skip-jev")[0] == 1, "invalid JSON must fail"
+        assert run_cli(tmp, [ok, "[" * 100000], "--skip-jev")[0] == 1, "deep nesting must fail cleanly"
         assert run_cli(tmp, [ok, "[1, 2]"], "--skip-jev")[0] == 1, "non-object line must fail"
         assert run_cli(tmp, [{"id": 1, "text": "a", "gold": None}] * 2, "--skip-jev")[0] == 1
         assert run_cli(tmp, [], "--skip-jev")[0] == 1, "empty fixture must fail"

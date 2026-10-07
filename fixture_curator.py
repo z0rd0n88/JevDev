@@ -8,6 +8,7 @@ and uses Jev to flag prompts that are not self-contained or where multiple skill
 import argparse
 import collections
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -55,6 +56,14 @@ def build_curator_questions() -> dict:
     }
 
 
+def score(answers: dict, key: str) -> float:
+    """Strict noul read: a missing, non-numeric, NaN or out-of-range score is an error, never a verdict."""
+    value = answers[key]["noul"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0.0 <= value <= 1.0):
+        raise ValueError(f"invalid {key} score: {value!r}")
+    return float(value)
+
+
 def curate_with_jev(record: dict) -> dict:
     """Invoke Jev to evaluate the prompt."""
     if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
@@ -84,8 +93,8 @@ def curate_with_jev(record: dict) -> dict:
     response = json.loads(process.stdout)
     answers = response["answers"]  # strict: a missing answer is an error, never a 0.0 verdict
     return {
-        "self_contained": float(answers["self_contained"]["noul"]),
-        "multiple_defensible": float(answers["multiple_defensible"]["noul"]),
+        "self_contained": score(answers, "self_contained"),
+        "multiple_defensible": score(answers, "multiple_defensible"),
         "elapsed": elapsed,
         "input_tokens": int((response.get("usage") or {}).get("input_tokens") or 0),
     }
@@ -108,7 +117,7 @@ def main():
                     continue
                 try:
                     record = json.loads(line)
-                except json.JSONDecodeError as e:
+                except (ValueError, RecursionError) as e:
                     has_errors = True
                     print(f"ERROR: Line {line_num}: Invalid JSON - {e}")
                     continue
