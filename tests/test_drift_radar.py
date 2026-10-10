@@ -34,9 +34,23 @@ def test_missing_diff():
     except FileNotFoundError:
         pass
 
+def test_jev_questions():
+    module = load_module()
+    questions = module.build_jev_questions()
+    
+    assert "drift" in questions
+    assert questions["drift"]["type"] == "choice"
+    
+    criteria = questions["drift"]["criteria"]
+    assert "implements" in criteria
+    assert "contradicts" in criteria
+    assert "unaddressed" in criteria
+    assert "defers" in criteria
+
 def main():
     test_load_diff()
     test_missing_diff()
+    test_jev_questions()
     print("All tests passed.")
 
 if __name__ == "__main__":
