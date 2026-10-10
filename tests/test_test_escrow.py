@@ -24,8 +24,19 @@ def test_load_diff():
     finally:
         test_diff.unlink()
 
+def test_jev_questions():
+    module = load_module()
+    
+    questions = module.build_jev_questions()
+    
+    assert "intent" in questions
+    assert questions["intent"]["type"] == "choice"
+    assert "weakened" in questions["intent"]["criteria"]
+    assert "protects" in questions["intent"]["criteria"]
+
 def main():
     test_load_diff()
+    test_jev_questions()
     print("All tests passed.")
 
 if __name__ == "__main__":
