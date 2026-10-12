@@ -35,6 +35,24 @@ def format_report(data: dict) -> str:
     return str(data)
 """
 
+DECORATED_AND_MULTILINE_CODE = """\"\"\"Advanced module.\"\"\"
+
+@property
+def user_id(self) -> int:
+    \"\"\"User unique identifier.\"\"\"
+    return self._id
+
+@decorator_a
+@decorator_b(flag=True)
+def complex_query(
+    user_id: int,
+    start_date: str,
+    end_date: str = "2026-12-31"
+) -> list[dict]:
+    \"\"\"Run a complex query spanning multiple dates.\"\"\"
+    return []
+"""
+
 
 class TestASTSymbolRanker(unittest.TestCase):
 
@@ -72,39 +90,99 @@ class TestASTSymbolRanker(unittest.TestCase):
         self.assertIn("return f\"connected to {host}:{port}\"", source)
         self.assertNotIn("UserManager", source)
 
+    def test_decorated_function_includes_decorators_in_source(self):
+        symbols = ast_symbol_ranker.extract_symbols(DECORATED_AND_MULTILINE_CODE)
+        cq = next(s for s in symbols if s["name"] == "complex_query")
+        source = ast_symbol_ranker.extract_symbol_source(DECORATED_AND_MULTILINE_CODE, cq)
+        
+        # Must include both decorators
+        self.assertIn("@decorator_a", source)
+        self.assertIn("@decorator_b(flag=True)", source)
+        self.assertIn("def complex_query(", source)
+
+    def test_multiline_signature_captured(self):
+        symbols = ast_symbol_ranker.extract_symbols(DECORATED_AND_MULTILINE_CODE)
+        cq = next(s for s in symbols if s["name"] == "complex_query")
+        sig = cq["signature"]
+        
+        # Multi-line signature should contain parameters and return type
+        self.assertIn("user_id: int", sig)
+        self.assertIn("start_date: str", sig)
+        self.assertIn("-> list[dict]:", sig)
+
     def test_build_choice_question(self):
         symbols = ast_symbol_ranker.extract_symbols(SAMPLE_CODE)
         questions = ast_symbol_ranker.build_choice_questions(symbols, "how to connect to database?")
         
-        self.assertIn("which_symbol", questions)
-        q = questions["which_symbol"]
+        self.assertIn("which_symbol::0", questions)
+        q = questions["which_symbol::0"]
         self.assertEqual(q["type"], "choice")
         self.assertIn("criteria", q)
-        self.assertIn("connect_db", q["criteria"])
+        # Unique IDs are used for criteria
+        criteria_keys = list(q["criteria"].keys())
+        self.assertTrue(any(k.startswith("connect_db#") for k in criteria_keys))
         self.assertIn("__none__", q["criteria"])
 
     def test_rank_symbols_mock(self):
         symbols = ast_symbol_ranker.extract_symbols(SAMPLE_CODE)
+        connect_id = f"connect_db#{symbols[0]['start_line']}"
         mock_response = {
             "answers": {
-                "which_symbol": {
+                "which_symbol::0": {
                     "probabilities": {
-                        "connect_db": 0.88,
-                        "UserManager.find_user_by_email": 0.08,
-                        "format_report": 0.02,
-                        "UserManager": 0.01,
-                        "UserManager.__init__": 0.01,
-                        "__none__": 0.00
+                        connect_id: 0.88,
+                        "__none__": 0.05
                     }
                 }
             },
             "usage": {"input_tokens": 350}
         }
         
-        ranked, tokens = ast_symbol_ranker.process_ranking_response(symbols, mock_response)
+        ranked, none_score, tokens = ast_symbol_ranker.process_ranking_response(symbols, mock_response)
         self.assertEqual(tokens, 350)
         self.assertEqual(ranked[0]["name"], "connect_db")
         self.assertAlmostEqual(ranked[0]["score"], 0.88)
+        self.assertAlmostEqual(none_score, 0.05)
+
+    def test_rank_symbols_none_wins(self):
+        symbols = ast_symbol_ranker.extract_symbols(SAMPLE_CODE)
+        connect_id = f"connect_db#{symbols[0]['start_line']}"
+        mock_response = {
+            "answers": {
+                "which_symbol::0": {
+                    "probabilities": {
+                        "__none__": 0.95,
+                        connect_id: 0.05
+                    }
+                }
+            },
+            "usage": {"input_tokens": 350}
+        }
+        
+        ranked, none_score, tokens = ast_symbol_ranker.process_ranking_response(symbols, mock_response)
+        self.assertEqual(ranked, [])
+        self.assertAlmostEqual(none_score, 0.95)
+
+    def test_large_symbol_count_sharding(self):
+        # Create 70 synthetic symbols
+        large_symbols = [
+            {
+                "id": f"func_{i}#{i*3}",
+                "name": f"func_{i}",
+                "kind": "function",
+                "signature": f"def func_{i}():",
+                "docstring": f"Function {i}",
+                "start_line": i * 3,
+                "end_line": i * 3 + 2,
+            }
+            for i in range(70)
+        ]
+        questions = ast_symbol_ranker.build_choice_questions(large_symbols, "query")
+        # Should be sharded across multiple Choice questions
+        self.assertTrue(len(questions) > 1)
+        for key in questions:
+            self.assertTrue(key.startswith("which_symbol::"))
+            self.assertIn("__none__", questions[key]["criteria"])
 
 
 if __name__ == "__main__":
