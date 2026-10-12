@@ -41,7 +41,7 @@ The full pilot invokes up to 300 agent sessions per host and can take hours. Cla
 
 `scope_sentinel.py` asks Jev whether a proposed agent action is `covered`, `ambiguous`, or in `conflict` with the user's latest instruction. `demo_scope_sentinel.sh` runs three example cases through the CLI.
 
-The project's Claude `PreToolUse` hook runs it in shadow mode, and only when `SCOPE_SENTINEL=1` is set in Claude's environment. It never blocks a command. For risky Bash commands (pushes, commits, PR create/merge/close, destructive git/gh/rm/find), it starts a detached judge and returns immediately. The judge sends the redacted command and the latest typed prompt (each clipped to about 2000 characters) to the Jev provider, then appends one row to `.local/sentinel.jsonl`, which is created with mode 0600. Rows with an `error` field show missed verdicts, such as a missing key. Label logged rows before choosing any blocking threshold.
+The project's Claude `PreToolUse` hook runs it in shadow mode, and only when `SCOPE_SENTINEL=1` is set in Claude's environment. It never blocks a command. For risky Bash commands (pushes, commits, PR create/merge/close, destructive git/gh/rm/find), it starts a detached judge and returns immediately. The judge sends the redacted command and the latest typed prompt (each clipped to about 2000 characters) to the Jev provider, then appends one row to `.local/sentinel.jsonl`, which is created with mode 0600. Both project Claude hooks load `~/.secrets` before running, so the Jev key does not need to be in Claude's own environment. Rows with an `error` field show missed verdicts, such as a missing key. Label logged rows before choosing any blocking threshold.
 
 ```bash
 python3 tests/test_sentinel.py
