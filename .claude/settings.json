@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR}/skill_router.py\" --host claude hook",
+            "command": "bash -c '[ -r \"$HOME/.secrets\" ] && . \"$HOME/.secrets\" >/dev/null 2>&1; exec python3 \"$CLAUDE_PROJECT_DIR/skill_router.py\" --host claude hook'",
             "timeout": 90
           }
         ]
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR}/scope_sentinel.py\" hook || true",
+            "command": "bash -c '[ -r \"$HOME/.secrets\" ] && . \"$HOME/.secrets\" >/dev/null 2>&1; exec python3 \"$CLAUDE_PROJECT_DIR/scope_sentinel.py\" hook' || true",
             "timeout": 10
           }
         ]
