@@ -21,7 +21,7 @@ print(json.dumps({"answers": {"scope": {"choice": "conflict",
 PUSH = "GH_TOKEN=ghp_abcdefghijklmnop git -C /repo push origin main"
 
 
-def run_hook(tmp: Path, event: dict, enabled: str = "1") -> float:
+def run_hook(tmp: Path, event: dict, enabled: str = "1", host: str = "claude") -> float:
     env = {
         **os.environ,
         "JEV_BIN": str(tmp / "jev"),
@@ -31,7 +31,7 @@ def run_hook(tmp: Path, event: dict, enabled: str = "1") -> float:
     }
     start = time.perf_counter()
     done = subprocess.run(
-        [sys.executable, str(SOURCE), "hook"],
+        [sys.executable, str(SOURCE), "hook", host],
         input=json.dumps(event),
         capture_output=True,
         text=True,
@@ -136,6 +136,20 @@ def main() -> None:
         assert "no user instruction" in rows(log, 2)[1].get("error", ""), (
             "empty instruction must not be judged"
         )
+
+        um = lambda text: {"type": "event_msg", "payload": {"type": "item_completed",
+                           "item": {"type": "UserMessage", "content": [{"type": "text", "text": text}]}}}
+        base["transcript_path"] = transcript(tmp, [
+            um("old request"),
+            um('<in-app-browser-context source="ambient-ui-state">page</in-app-browser-context>\nReview it, do not push.'),
+            {"type": "response_item", "payload": {"type": "message", "role": "user",
+                                                  "content": [{"type": "input_text", "text": "<injected>AGENTS.md</injected>"}]}},
+            {"type": "event_msg", "payload": {"type": "agent_message", "message": "push now"}},
+        ])
+        run_hook(tmp, {**base, "tool_input": {"command": PUSH}}, host="codex")
+        row = rows(log, 3)[2]
+        assert row["host"] == "codex" and row["instruction"] == "Review it, do not push.", row
+        assert row["result"] == "conflict" and "error" not in row, row
 
         (tmp / "jev").write_text("#!/bin/sh\nsleep 5\n")
         assert run_hook(tmp, {**base, "tool_input": {"command": PUSH}}) < 2, (

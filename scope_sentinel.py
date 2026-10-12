@@ -35,6 +35,8 @@ SECRET = re.compile(
     r"|\b(?:gh[pousr]_|github_pat_|sk-)[\w-]{10,}"
 )
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
+# Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
+CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
 TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
 
 
@@ -95,8 +97,8 @@ def check_scope(instruction: str, constraints: str, action: str) -> dict:
     }
 
 
-def latest_user_prompt(transcript: Path) -> str:
-    """Last typed user message in a Claude transcript; wrappers are stripped, tool results skipped."""
+def latest_user_prompt(transcript: Path, host: str = "claude") -> str:
+    """Last typed user message in a host transcript; wrappers are stripped, tool results skipped."""
     prompt = ""
     with transcript.open(errors="replace") as f:
         for line in f:
@@ -104,6 +106,9 @@ def latest_user_prompt(transcript: Path) -> str:
                 entry = json.loads(line)
             except ValueError:
                 continue  # blank or half-flushed line
+            if host == "codex":
+                prompt = codex_user_text(entry) or prompt
+                continue
             if (
                 not isinstance(entry, dict)
                 or entry.get("type") != "user"
@@ -126,7 +131,24 @@ def latest_user_prompt(transcript: Path) -> str:
     return prompt
 
 
-def run_hook(log: Path) -> None:
+def codex_user_text(entry) -> str:
+    """Typed text of a Codex rollout entry. Only UserMessage items: role=user messages carry injected context."""
+    payload = entry.get("payload") if isinstance(entry, dict) else None
+    if not isinstance(payload, dict) or entry.get("type") != "event_msg":
+        return ""
+    if payload.get("type") == "user_message":  # older rollouts
+        text = payload.get("message")
+    elif payload.get("type") == "item_completed" and (payload.get("item") or {}).get("type") == "UserMessage":
+        text = "\n".join(
+            b.get("text", "") for b in payload["item"].get("content") or []
+            if isinstance(b, dict) and b.get("type") in ("text", "input_text")
+        )
+    else:
+        return ""
+    return CODEX_AMBIENT.sub("", text).strip() if isinstance(text, str) else ""
+
+
+def run_hook(log: Path, host: str) -> None:
     """Opt-in PreToolUse hook: hand risky Bash commands to a detached judge and return at once."""
     if os.environ.get("SCOPE_SENTINEL") != "1":
         return
@@ -142,7 +164,7 @@ def run_hook(log: Path) -> None:
         ):
             return
         judge = subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "judge", str(log)],
+            [sys.executable, str(Path(__file__).resolve()), "judge", str(log), host],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -154,15 +176,15 @@ def run_hook(log: Path) -> None:
         pass  # shadow mode never blocks or slows a tool call
 
 
-def run_judge(log: Path) -> None:
+def run_judge(log: Path, host: str) -> None:
     """Detached half of the hook: judge one event with Jev and append one redacted row."""
-    row = {"host": "claude", "sentinel_version": SENTINEL_VERSION,
+    row = {"host": host, "sentinel_version": SENTINEL_VERSION,
            "model": os.environ.get("JEV_MODEL") or DEFAULT_MODEL, "ts": time.time()}
     try:
         event = json.load(sys.stdin)
         row.update(session_id=event.get("session_id"),
                    command=clip(redact(event["tool_input"]["command"])))
-        row["instruction"] = clip(redact(latest_user_prompt(Path(event["transcript_path"]))))
+        row["instruction"] = clip(redact(latest_user_prompt(Path(event["transcript_path"]), host)))
         if not row["instruction"]:
             raise RuntimeError("no user instruction found in transcript")
         row.update(check_scope(row["instruction"], "None", row["command"]))
@@ -178,12 +200,12 @@ def run_judge(log: Path) -> None:
 
 
 def main():
-    if sys.argv[1:] == ["hook"]:
+    if sys.argv[1:2] == ["hook"] and sys.argv[2:] in ([], ["claude"], ["codex"]):
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
-        run_hook(root / ".local" / "sentinel.jsonl")
+        run_hook(root / ".local" / "sentinel.jsonl", (sys.argv[2:] or ["claude"])[0])
         return
     if sys.argv[1:2] == ["judge"]:
-        run_judge(Path(sys.argv[2]))
+        run_judge(Path(sys.argv[2]), sys.argv[3])
         return
 
     parser = argparse.ArgumentParser(
