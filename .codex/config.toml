@@ -2,7 +2,7 @@
 
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = '''bash -c '[ -r "$HOME/.secrets" ] && . "$HOME/.secrets" >/dev/null 2>&1; exec python3 "$(git rev-parse --show-toplevel)/skill_router.py" --host codex hook' '''
+command = '''bash -c 'r=$(git rev-parse --show-toplevel) && exec bash "$r/with_jev_key.sh" python3 "$r/skill_router.py" --host codex hook' '''
 timeout = 90
 statusMessage = "Checking for a matching skill with Jev"
 
@@ -11,5 +11,5 @@ matcher = "Bash"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = '''bash -c '[ -r "$HOME/.secrets" ] && . "$HOME/.secrets" >/dev/null 2>&1; SCOPE_SENTINEL=1 exec python3 "$(git rev-parse --show-toplevel)/scope_sentinel.py" hook codex' || true'''
+command = '''bash -c 'r=$(git rev-parse --show-toplevel) && SCOPE_SENTINEL=1 exec bash "$r/with_jev_key.sh" python3 "$r/scope_sentinel.py" hook codex' || true'''
 timeout = 10
