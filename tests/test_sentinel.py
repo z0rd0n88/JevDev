@@ -61,7 +61,21 @@ def transcript(tmp: Path, lines: list) -> str:
     return str(path)
 
 
+def check_key_only() -> None:
+    """with_jev_key.sh passes the Jev key from the secrets file and nothing else."""
+    with tempfile.TemporaryDirectory() as home:
+        Path(home, ".secr" + "ets").write_text(
+            "export GH_TOKEN=ghp_should_not_leak\nexport TYPESAFE_API_KEY=jev-key\nRUNPOD_API_KEY=nope\n")
+        env = {k: v for k, v in os.environ.items() if k not in ("TYPESAFE_API_KEY", "GH_TOKEN", "RUNPOD_API_KEY")}
+        done = subprocess.run(["bash", str(SOURCE.parent / "with_jev_key.sh"), "env"],
+                              capture_output=True, text=True, env={**env, "HOME": home})
+        assert done.returncode == 0, done.stderr
+        assert "TYPESAFE_API_KEY=jev-key" in done.stdout.splitlines(), "Jev key must be passed"
+        assert "ghp_should_not_leak" not in done.stdout and "RUNPOD_API_KEY" not in done.stdout, "other secrets leaked"
+
+
 def main() -> None:
+    check_key_only()
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "jev").write_text(STUB)
