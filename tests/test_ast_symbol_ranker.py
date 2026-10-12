@@ -55,17 +55,16 @@ def complex_query(
 
 
 class TestASTSymbolRanker(unittest.TestCase):
-
     def test_extract_symbols(self):
         symbols = ast_symbol_ranker.extract_symbols(SAMPLE_CODE)
         names = [s["name"] for s in symbols]
-        
+
         self.assertIn("connect_db", names)
         self.assertIn("UserManager", names)
         self.assertIn("UserManager.__init__", names)
         self.assertIn("UserManager.find_user_by_email", names)
         self.assertIn("format_report", names)
-        
+
         # Check metadata for connect_db
         db_sym = next(s for s in symbols if s["name"] == "connect_db")
         self.assertEqual(db_sym["kind"], "function")
@@ -87,14 +86,16 @@ class TestASTSymbolRanker(unittest.TestCase):
         db_sym = next(s for s in symbols if s["name"] == "connect_db")
         source = ast_symbol_ranker.extract_symbol_source(SAMPLE_CODE, db_sym)
         self.assertIn("def connect_db", source)
-        self.assertIn("return f\"connected to {host}:{port}\"", source)
+        self.assertIn('return f"connected to {host}:{port}"', source)
         self.assertNotIn("UserManager", source)
 
     def test_decorated_function_includes_decorators_in_source(self):
         symbols = ast_symbol_ranker.extract_symbols(DECORATED_AND_MULTILINE_CODE)
         cq = next(s for s in symbols if s["name"] == "complex_query")
-        source = ast_symbol_ranker.extract_symbol_source(DECORATED_AND_MULTILINE_CODE, cq)
-        
+        source = ast_symbol_ranker.extract_symbol_source(
+            DECORATED_AND_MULTILINE_CODE, cq
+        )
+
         # Must include both decorators
         self.assertIn("@decorator_a", source)
         self.assertIn("@decorator_b(flag=True)", source)
@@ -104,7 +105,7 @@ class TestASTSymbolRanker(unittest.TestCase):
         symbols = ast_symbol_ranker.extract_symbols(DECORATED_AND_MULTILINE_CODE)
         cq = next(s for s in symbols if s["name"] == "complex_query")
         sig = cq["signature"]
-        
+
         # Multi-line signature should contain parameters and return type
         self.assertIn("user_id: int", sig)
         self.assertIn("start_date: str", sig)
@@ -112,8 +113,10 @@ class TestASTSymbolRanker(unittest.TestCase):
 
     def test_build_choice_question(self):
         symbols = ast_symbol_ranker.extract_symbols(SAMPLE_CODE)
-        questions = ast_symbol_ranker.build_choice_questions(symbols, "how to connect to database?")
-        
+        questions = ast_symbol_ranker.build_choice_questions(
+            symbols, "how to connect to database?"
+        )
+
         self.assertIn("which_symbol::0", questions)
         q = questions["which_symbol::0"]
         self.assertEqual(q["type"], "choice")
@@ -129,16 +132,15 @@ class TestASTSymbolRanker(unittest.TestCase):
         mock_response = {
             "answers": {
                 "which_symbol::0": {
-                    "probabilities": {
-                        connect_id: 0.88,
-                        "__none__": 0.05
-                    }
+                    "probabilities": {connect_id: 0.88, "__none__": 0.05}
                 }
             },
-            "usage": {"input_tokens": 350}
+            "usage": {"input_tokens": 350},
         }
-        
-        ranked, none_score, tokens = ast_symbol_ranker.process_ranking_response(symbols, mock_response)
+
+        ranked, none_score, tokens = ast_symbol_ranker.process_ranking_response(
+            symbols, mock_response
+        )
         self.assertEqual(tokens, 350)
         self.assertEqual(ranked[0]["name"], "connect_db")
         self.assertAlmostEqual(ranked[0]["score"], 0.88)
@@ -150,16 +152,15 @@ class TestASTSymbolRanker(unittest.TestCase):
         mock_response = {
             "answers": {
                 "which_symbol::0": {
-                    "probabilities": {
-                        "__none__": 0.95,
-                        connect_id: 0.05
-                    }
+                    "probabilities": {"__none__": 0.95, connect_id: 0.05}
                 }
             },
-            "usage": {"input_tokens": 350}
+            "usage": {"input_tokens": 350},
         }
-        
-        ranked, none_score, tokens = ast_symbol_ranker.process_ranking_response(symbols, mock_response)
+
+        ranked, none_score, tokens = ast_symbol_ranker.process_ranking_response(
+            symbols, mock_response
+        )
         self.assertEqual(ranked, [])
         self.assertAlmostEqual(none_score, 0.95)
 
@@ -167,7 +168,7 @@ class TestASTSymbolRanker(unittest.TestCase):
         # Create 70 synthetic symbols
         large_symbols = [
             {
-                "id": f"func_{i}#{i*3}",
+                "id": f"func_{i}#{i * 3}",
                 "name": f"func_{i}",
                 "kind": "function",
                 "signature": f"def func_{i}():",
@@ -183,6 +184,55 @@ class TestASTSymbolRanker(unittest.TestCase):
         for key in questions:
             self.assertTrue(key.startswith("which_symbol::"))
             self.assertIn("__none__", questions[key]["criteria"])
+
+
+SAMPLE_MARKDOWN = """# Spec
+
+Intro paragraph.
+
+## Install
+
+Run the installer.
+
+```bash
+# not a header
+pip install x
+```
+
+### Options
+
+Flags go here.
+
+## Usage
+
+Call it.
+"""
+
+
+class TestMarkdownSections(unittest.TestCase):
+    def test_sections_span_until_next_same_or_higher_header(self):
+        sections = ast_symbol_ranker.extract_markdown_sections(SAMPLE_MARKDOWN)
+        by_name = {s["name"]: s for s in sections}
+        self.assertEqual(list(by_name), ["Spec", "Install", "Options", "Usage"])
+        # Install includes its ### subsection and the fenced block, stops before ## Usage
+        install = by_name["Install"]
+        self.assertEqual((install["start_line"], install["end_line"]), (5, 17))
+        self.assertEqual(install["kind"], "h2")
+        self.assertEqual(install["docstring"], "Run the installer.")
+        self.assertEqual(by_name["Spec"]["end_line"], 20)
+        self.assertEqual(by_name["Usage"]["end_line"], 20)
+
+    def test_fenced_hash_lines_are_not_headers(self):
+        sections = ast_symbol_ranker.extract_markdown_sections(SAMPLE_MARKDOWN)
+        self.assertNotIn("not a header", [s["name"] for s in sections])
+
+    def test_section_source_slice(self):
+        sections = ast_symbol_ranker.extract_markdown_sections(SAMPLE_MARKDOWN)
+        options = next(s for s in sections if s["name"] == "Options")
+        self.assertEqual(
+            ast_symbol_ranker.extract_symbol_source(SAMPLE_MARKDOWN, options),
+            "### Options\n\nFlags go here.\n",
+        )
 
 
 if __name__ == "__main__":
