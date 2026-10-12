@@ -1,4 +1,7 @@
 {
+  "env": {
+    "SCOPE_SENTINEL": "1"
+  },
   "hooks": {
     "UserPromptSubmit": [
       {
