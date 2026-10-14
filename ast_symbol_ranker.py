@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Jev AST Symbol Ranker.
 
-Parses Python source files using standard AST, extracts symbol outlines
-(functions, classes, methods), and uses balanced Jev Choice requests to
+Outlines Python source (functions, classes, methods via AST) or Markdown
+(header sections), and uses balanced Jev Choice requests to
 rank which symbol is most relevant to a query.
 """
 
@@ -13,6 +13,7 @@ import ast
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -33,17 +34,17 @@ def _extract_signature(lines: list[str], node: ast.AST) -> str:
     """Extract normalized signature, supporting multi-line definitions."""
     if not lines or not hasattr(node, "lineno"):
         return getattr(node, "name", "")
-    
+
     start_idx = max(0, node.lineno - 1)
     sig_lines = []
-    
+
     # Scan from the def/class statement until the line ending with ':'
     for idx in range(start_idx, min(start_idx + 8, len(lines))):
         line = lines[idx].strip()
         sig_lines.append(line)
         if line.endswith(":") or "):" in line:
             break
-            
+
     normalized = " ".join(" ".join(sig_lines).split())
     return normalized
 
@@ -65,15 +66,17 @@ def extract_symbols(code: str) -> list[dict]:
             )
             end_line = getattr(node, "end_lineno", None) or node.lineno
             sym_id = f"{node.name}#{start_line}"
-            symbols.append({
-                "id": sym_id,
-                "name": node.name,
-                "kind": "function",
-                "signature": sig,
-                "docstring": summary,
-                "start_line": start_line,
-                "end_line": end_line,
-            })
+            symbols.append(
+                {
+                    "id": sym_id,
+                    "name": node.name,
+                    "kind": "function",
+                    "signature": sig,
+                    "docstring": summary,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                }
+            )
         elif isinstance(node, ast.ClassDef):
             class_summary = _get_doc_summary(node)
             class_sig = _extract_signature(lines, node)
@@ -84,15 +87,17 @@ def extract_symbols(code: str) -> list[dict]:
             )
             class_end_line = getattr(node, "end_lineno", None) or node.lineno
             class_id = f"{node.name}#{class_start_line}"
-            symbols.append({
-                "id": class_id,
-                "name": node.name,
-                "kind": "class",
-                "signature": class_sig,
-                "docstring": class_summary,
-                "start_line": class_start_line,
-                "end_line": class_end_line,
-            })
+            symbols.append(
+                {
+                    "id": class_id,
+                    "name": node.name,
+                    "kind": "class",
+                    "signature": class_sig,
+                    "docstring": class_summary,
+                    "start_line": class_start_line,
+                    "end_line": class_end_line,
+                }
+            )
             for child in node.body:
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     method_summary = _get_doc_summary(child)
@@ -105,17 +110,72 @@ def extract_symbols(code: str) -> list[dict]:
                     method_end_line = getattr(child, "end_lineno", None) or child.lineno
                     method_name = f"{node.name}.{child.name}"
                     method_id = f"{method_name}#{method_start_line}"
-                    symbols.append({
-                        "id": method_id,
-                        "name": method_name,
-                        "kind": "method",
-                        "signature": method_sig,
-                        "docstring": method_summary,
-                        "start_line": method_start_line,
-                        "end_line": method_end_line,
-                    })
+                    symbols.append(
+                        {
+                            "id": method_id,
+                            "name": method_name,
+                            "kind": "method",
+                            "signature": method_sig,
+                            "docstring": method_summary,
+                            "start_line": method_start_line,
+                            "end_line": method_end_line,
+                        }
+                    )
 
     return symbols
+
+
+MARKDOWN_SUFFIXES = {".md", ".markdown"}
+HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+
+
+def extract_markdown_sections(text: str) -> list[dict]:
+    """Extract ATX header sections; each spans until the next same-or-higher header."""
+    lines = text.splitlines()
+    headers = []
+    fence = None
+    for idx, line in enumerate(lines, 1):
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            fence = None if fence == marker else fence or marker
+            continue
+        match = None if fence else HEADER_RE.match(line)
+        if match:
+            headers.append((idx, len(match.group(1)), match.group(2)))
+
+    sections = []
+    for pos, (start, level, title) in enumerate(headers):
+        end = next(
+            (s - 1 for s, lvl, _ in headers[pos + 1 :] if lvl <= level), len(lines)
+        )
+        first_line = next(
+            (
+                l.strip()
+                for l in lines[start:end]
+                if l.strip() and not HEADER_RE.match(l)
+            ),
+            "",
+        )
+        sections.append(
+            {
+                "id": f"{title}#{start}",
+                "name": title,
+                "kind": f"h{level}",
+                "signature": lines[start - 1].strip(),
+                "docstring": first_line[:80],
+                "start_line": start,
+                "end_line": end,
+            }
+        )
+    return sections
+
+
+def extract_outline(path: Path, text: str) -> list[dict]:
+    """Pick the outliner by file type: Markdown headers or Python AST symbols."""
+    if path.suffix.lower() in MARKDOWN_SUFFIXES:
+        return extract_markdown_sections(text)
+    return extract_symbols(text)
 
 
 def extract_symbol_source(code: str, symbol: dict) -> str:
@@ -126,7 +186,9 @@ def extract_symbol_source(code: str, symbol: dict) -> str:
     return "\n".join(lines[start:end])
 
 
-def symbol_shards(symbols: list[dict], shard_size: int = SHARD_SIZE) -> list[list[dict]]:
+def symbol_shards(
+    symbols: list[dict], shard_size: int = SHARD_SIZE
+) -> list[list[dict]]:
     """Partition symbols into near-equal balanced shards."""
     if not symbols:
         return []
@@ -143,9 +205,11 @@ def build_choice_questions(symbols: list[dict], query: str) -> dict:
     for shard_idx, shard in enumerate(shards):
         criteria = {}
         for sym in shard:
-            summary_part = f" - {sym['docstring']}" if sym['docstring'] else ""
+            summary_part = f" - {sym['docstring']}" if sym["docstring"] else ""
             sym_key = sym.get("id") or f"{sym['name']}#{sym['start_line']}"
-            criteria[sym_key] = f"[{sym['kind']}] {sym['signature']}{summary_part}"[:140]
+            criteria[sym_key] = f"[{sym['kind']}] {sym['signature']}{summary_part}"[
+                :140
+            ]
 
         criteria["__none__"] = "None of these symbols are relevant to the query."
 
@@ -222,7 +286,15 @@ def evaluate_symbols_with_jev(
     start = time.perf_counter()
     try:
         process = subprocess.run(
-            [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", "ast_symbol_ranker"],
+            [
+                str(JEV),
+                "-m",
+                model,
+                "-q",
+                json.dumps(questions),
+                "-j",
+                "ast_symbol_ranker",
+            ],
             input=state_content,
             capture_output=True,
             text=True,
@@ -231,7 +303,7 @@ def evaluate_symbols_with_jev(
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("jev timed out while evaluating symbol choice questions")
-        
+
     elapsed = time.perf_counter() - start
 
     if process.returncode:
@@ -250,8 +322,8 @@ def format_outline(symbols: list[dict]) -> str:
     rows.append("-" * 65)
     for s in symbols:
         line_range = f"{s['start_line']}-{s['end_line']}".ljust(12)
-        kind = s['kind'].ljust(11)
-        summary = f" # {s['docstring']}" if s['docstring'] else ""
+        kind = s["kind"].ljust(11)
+        summary = f" # {s['docstring']}" if s["docstring"] else ""
         rows.append(f"{line_range} {kind} {s['signature']}{summary}")
     return "\n".join(rows)
 
@@ -260,11 +332,24 @@ def main():
     parser = argparse.ArgumentParser(
         description="Jev AST Symbol Ranker - Locate relevant code symbols via AST and Jev Choice"
     )
-    parser.add_argument("file", help="Path to Python source file")
+    parser.add_argument("file", help="Path to a Python or Markdown file")
     parser.add_argument("--query", help="Goal or query to find relevant symbols for")
-    parser.add_argument("--top-k", type=int, default=1, help="Number of top symbols to output (default: 1)")
-    parser.add_argument("--outline-only", action="store_true", help="Print symbol outline table and exit")
-    parser.add_argument("--skip-jev", action="store_true", help="Skip Jev evaluation and show outline only")
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=1,
+        help="Number of top symbols to output (default: 1)",
+    )
+    parser.add_argument(
+        "--outline-only",
+        action="store_true",
+        help="Print symbol outline table and exit",
+    )
+    parser.add_argument(
+        "--skip-jev",
+        action="store_true",
+        help="Skip Jev evaluation and show outline only",
+    )
 
     args = parser.parse_args()
 
@@ -275,13 +360,13 @@ def main():
 
     try:
         code = path.read_text(encoding="utf-8")
-        symbols = extract_symbols(code)
+        symbols = extract_outline(path, code)
     except Exception as e:
         print(f"Error parsing {path}: {e}", file=sys.stderr)
         sys.exit(1)
 
     if not symbols:
-        print(f"No symbols (functions or classes) found in {path}.", file=sys.stderr)
+        print(f"No symbols (functions, classes, or headers) found in {path}.", file=sys.stderr)
         sys.exit(0)
 
     if args.outline_only or args.skip_jev or not args.query:
@@ -291,19 +376,25 @@ def main():
 
     print(f"Extracted {len(symbols)} symbols. Evaluating with Jev...", file=sys.stderr)
     try:
-        ranked, none_score, tokens, elapsed = evaluate_symbols_with_jev(symbols, args.query)
+        ranked, none_score, tokens, elapsed = evaluate_symbols_with_jev(
+            symbols, args.query
+        )
         print(f"Evaluated in {elapsed:.2f}s using {tokens} tokens.\n", file=sys.stderr)
     except Exception as e:
         print(f"Jev evaluation failed: {e}", file=sys.stderr)
         sys.exit(1)
 
     if not ranked:
-        print(f"No relevant symbols found for query {args.query!r} (None/abstain score: {none_score:.2f}).")
+        print(
+            f"No relevant symbols found for query {args.query!r} (None/abstain score: {none_score:.2f})."
+        )
         sys.exit(0)
 
-    top_symbols = ranked[:args.top_k]
+    top_symbols = ranked[: args.top_k]
     for idx, sym in enumerate(top_symbols, 1):
-        print(f"=== Rank {idx}: {sym['name']} (score: {sym.get('score', 0):.2f}, lines {sym['start_line']}-{sym['end_line']}) ===")
+        print(
+            f"=== Rank {idx}: {sym['name']} (score: {sym.get('score', 0):.2f}, lines {sym['start_line']}-{sym['end_line']}) ==="
+        )
         print(extract_symbol_source(code, sym))
         print()
 
