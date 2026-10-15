@@ -120,3 +120,5 @@ python3 tests/test_ask_jev_files.py
 | agy | `.agents/skills/hyper-jev` | `/hyper-jev <request>` |
 
 The skill's `$ARGUMENTS` placeholder is filled by Claude's slash form; Codex and agy pass the rest of the prompt as ordinary text, so state the request in the same message. `templates/` (the TypeScript starter) is inert reference material: nothing here runs it. Smoke: `bash smoke.sh <claude|agy|codex> skill` asks the host for the Purpose line (Codex prints manual steps).
+
+`ask-jev` is authored here (`.agents/skills/ask-jev/SKILL.md`) and documents `ask_jev_files.py`: the three subcommands, the three question types, and three runnable recipes (triage a failure, judge a diff, classify a request). It loads the same way as `hyper-jev`: `/ask-jev <request>` in Claude and agy, `$ask-jev <request>` in Codex. Smoke: `bash smoke.sh <claude|agy|codex> ask-skill` asks the host to triage `python3 tests/test_sentinel.py`; the reply names a `kind` with a confidence and the script prints the host's `ask_jev_files.py ask` sentinel row (Codex prints manual steps).
