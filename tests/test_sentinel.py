@@ -38,6 +38,14 @@ if cfg.get("sleep"):
     time.sleep(cfg["sleep"])
 if cfg.get("exit"):
     sys.exit(cfg["exit"])
+if "kind" in json.loads(sys.argv[sys.argv.index("-q") + 1]):  # write gate: kind + contains_secret
+    kind = cfg.get("kind", "config")
+    print(json.dumps({"model": "typesafe/jev-stub-1", "answers": {
+        "kind": {"type": "choice", "choice": kind, "confidence": cfg.get("kind_confidence", 0.7),
+                 "probabilities": {kind: 0.6}},
+        "contains_secret": {"type": "noul", "noul": cfg.get("secret", 0.9)}},
+        "usage": {"input_tokens": 7}}))
+    sys.exit(0)
 effect, conf = cfg.get("effect", "irreversible"), cfg.get("effect_confidence", 0.9)
 print(json.dumps({"model": "typesafe/jev-stub-1", "answers": {
     "scope": {"type": "choice", "choice": "covered", "confidence": 0.6,
@@ -285,11 +293,164 @@ def check_bash_gate() -> None:
     assert ignored.returncode == 0, "transcripts/ must be git-ignored"
 
 
+def check_write_helpers() -> None:
+    """Pure write-gate pieces: gate_write boundaries, inside_repo, redact_count, tool_target write branches."""
+    s = load_sentinel()
+    ans = lambda kind, kc, secret: {"kind": {"choice": kind, "confidence": kc}, "contains_secret": {"noul": secret}}
+    assert s.WRITE_THRESHOLDS == {"secret": 0.7}
+    assert s.gate_write(ans("config", 0.5, 0.7))[0], "secret at exactly 0.7 blocks"
+    assert not s.gate_write(ans("config", 0.5, 0.69))[0]
+    assert s.gate_write(ans("config", 0.5, 0.9))[1].startswith("contains a credential (0.90)")
+    assert s.gate_write(ans("secrets", 0.8, 0.0))[0], "secrets kind at exactly 0.8 blocks"
+    assert not s.gate_write(ans("secrets", 0.79, 0.0))[0]
+    assert not s.gate_write(ans("config", 0.99, 0.0))[0], "only the secrets kind blocks on kind"
+    assert s.gate_write(ans("secrets", 0.85, 0.0))[1].startswith("a secrets file (0.85)")
+    assert s.gate_write(ans("docs", 0.9, 0.1)) == (False, "docs (0.90), secret 0.10")
+    try:
+        s.gate_write({"kind": {"choice": "x", "confidence": 1}})
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("gate_write must raise KeyError on a missing answer")
+    assert set(s.WRITE_QUESTIONS) == {"kind", "contains_secret"}
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        repo = new_repo(tmp)
+        assert s.inside_repo("notes.txt", str(repo), repo) == "notes.txt"
+        assert s.inside_repo(str(repo / "sub" / "a.py"), str(repo), repo) == "sub/a.py"
+        assert s.inside_repo("a.py", str(repo / "sub"), repo) == "sub/a.py", "relative paths resolve against cwd"
+        assert s.inside_repo("../outside.txt", str(repo), repo) is None, ".. must not escape the repo"
+        assert s.inside_repo("/etc/hosts", str(repo), repo) is None
+        assert s.inside_repo(str(repo), str(repo), repo) is None, "the repo root itself is not a file"
+        assert s.inside_repo(".", str(repo), repo) is None
+
+    text, hits = s.redact_count("TOKEN=abc123 and nothing else")
+    assert "abc123" not in text and hits >= 1, (text, hits)
+    assert s.redact_count("plain text") == ("plain text", 0)
+
+    wt = lambda tool, **inp: s.tool_target({"tool_name": tool, "tool_input": inp, "cwd": "/w"}, "claude")
+    assert wt("Write", file_path="/w/a", content="c") == {"gate": "write", "path": "/w/a", "content": "c", "cwd": "/w"}
+    assert wt("Edit", file_path="/w/a", old_string="o", new_string="n")["content"] == "n"
+    assert wt("Edit", file_path="/w/a", old_string="o", new_string="")["content"] == "", "a deleting edit is still a write"
+    assert wt("NotebookEdit", notebook_path="/w/n.ipynb", new_source="src")["path"] == "/w/n.ipynb"
+    assert wt("Write", content="c") is None, "no path, no target"
+    assert wt("Read", file_path="/w/a") is None
+    patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch"
+    cx = lambda tool, cmd: s.tool_target({"tool_name": tool, "tool_input": {"command": cmd}, "cwd": "/w"}, "codex")
+    assert cx("apply_patch", patch) == {"gate": "write", "path": "README.md", "content": patch, "cwd": "/w"}
+    assert cx("apply_patch", "*** Begin Patch\n*** Add File: new.txt\n+x\n*** End Patch")["path"] == "new.txt"
+    assert cx("apply_patch", "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch")["path"] == "old.txt"
+    assert cx("apply_patch", "no headers here") is None
+    agy = lambda name, **args: s.tool_target({"toolCall": {"name": name, "args": args}, "cwd": "/e"}, "agy")
+    assert agy("write_to_file", TargetFile="/w/a", CodeContent="c", Cwd="'/w'") == \
+        {"gate": "write", "path": "/w/a", "content": "c", "cwd": "/w"}
+    assert agy("replace_file_content", TargetFile="/w/a", ReplacementContent="r")["content"] == "r"
+    multi = agy("multi_replace_file_content", TargetFile="/w/a",
+                ReplacementChunks=[{"ReplacementContent": "x"}, {"ReplacementContent": "y"}])
+    assert multi["content"] == "x\ny" and multi["cwd"] == "/e", multi
+    assert agy("write_to_file", CodeContent="c") is None
+
+
+def check_write_gate() -> None:
+    """AC-3.1 to AC-3.3: redaction before Jev, per-host targets, outside-repo block without a Jev call."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "jev").write_text(REC_STUB)
+        (tmp / "jev").chmod(0o755)
+        log = tmp / ".local" / "sentinel.jsonl"
+        repo = new_repo(tmp)
+        write = lambda path, content, tool="Write": {"session_id": "s1", "tool_name": tool, "cwd": str(repo),
+                                                     "tool_input": {"file_path": path, "content": content}}
+        marker = tmp / "rec.json"
+
+        # AC-3.1: the credential is masked before Jev sees it, and never logged
+        assert run_hook(tmp, write(str(repo / "notes.txt"), "TOKEN=abc123def456ghi789")) < 2
+        row = rows(log, 1)[0]
+        rec = json.loads(marker.read_text())
+        state = json.loads(rec["stdin"])
+        assert sorted(state) == ["content", "path"], state
+        assert "[REDACTED]" in state["content"] and "abc123" not in rec["stdin"], state
+        assert state["path"] == "notes.txt", state
+        questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
+        assert list(questions) == ["kind", "contains_secret"], questions
+        assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
+        assert row["sentinel_version"] == "shadow-v4" and row["gate"] == "write" and "error" not in row, row
+        assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
+        assert "content" not in row and "abc123" not in json.dumps(row), row
+        assert row["would_block"] is True and row["block_reason"].startswith("contains a credential (0.90)"), row
+        assert row["kind"] == "config" and row["kind_confidence"] == 0.7 and row["contains_secret"] == 0.9, row
+        assert row["repo"] == str(repo) and row["cwd"] == str(repo), row
+        assert row["jev_model"] == "typesafe/jev-stub-1" and row["host"] == "claude", row
+
+        # long content is clipped to 4000 characters plus an ellipsis line
+        (tmp / "cfg.json").write_text(json.dumps({"secret": 0.1}))
+        run_hook(tmp, write("notes.md", "x" * 5000))
+        row = rows(log, 2)[1]
+        sent = json.loads(json.loads(marker.read_text())["stdin"])["content"]
+        assert sent == "x" * 4000 + "\n…", len(sent)
+        assert row["would_block"] is False and row["redacted_hits"] == 0, row
+
+        # AC-3.2: Codex apply_patch and agy multi-chunk edits
+        patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch"
+        run_hook(tmp, {"session_id": "c", "tool_name": "apply_patch", "tool_input": {"command": patch},
+                       "cwd": str(repo)}, host="codex")
+        row = rows(log, 3)[2]
+        assert row["host"] == "codex" and row["gate"] == "write" and row["path"] == "README.md", row
+        assert json.loads(json.loads(marker.read_text())["stdin"])["content"] == patch
+        run_hook(tmp, {"conversationId": "c1", "toolCall": {"name": "multi_replace_file_content", "args": {
+            "TargetFile": str(repo / "a.txt"), "Cwd": json.dumps(str(repo)),
+            "ReplacementChunks": [{"ReplacementContent": "x"}, {"ReplacementContent": "y"}]}}}, host="agy")
+        row = rows(log, 4)[3]
+        assert json.loads(json.loads(marker.read_text())["stdin"])["content"] == "x\ny"
+        assert row["host"] == "agy" and row["repo"] == str(repo) and row["path"] == "a.txt", row
+        assert row["session_id"] == "c1" and "error" not in row, row
+
+        # AC-3.3: outside the repo, or the repo root itself: blocked locally, Jev never called
+        for target in ("/etc/hosts", str(repo)):
+            marker.unlink(missing_ok=True)
+            run_hook(tmp, write(target, "127.0.0.1 x"))
+            row = rows(log, 5 if target == "/etc/hosts" else 6)[-1]
+            assert row["would_block"] is True and row["block_reason"] == f"outside the repo: {target}", row
+            assert row["gate"] == "write" and "kind" not in row and "content" not in row, row
+            assert not marker.exists(), "Jev must not be called for an outside-repo write"
+
+        # fail open: a failing jev leaves an attributable error row
+        (tmp / "cfg.json").write_text(json.dumps({"exit": 1}))
+        run_hook(tmp, write(str(repo / "n.txt"), "hello"))
+        row = rows(log, 7)[-1]
+        assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
+
+
+def check_write_configs() -> None:
+    """AC-3.4: the three host configs carry the write matchers and keep the wrapper and fail-open tail."""
+    import tomllib
+    root = SOURCE.parent
+    claude = json.loads((root / ".claude/settings.json").read_text())["hooks"]["PreToolUse"]
+    codex = tomllib.loads((root / ".codex/config.toml").read_text())["hooks"]["PreToolUse"]
+    agy = json.loads((root / ".agents/hooks.json").read_text())["jev-scope-sentinel"]["PreToolUse"]
+    by = lambda entries, matcher: [e for e in entries if e["matcher"] == matcher]
+    assert "scope_sentinel.py" in by(claude, "Write|Edit|NotebookEdit")[0]["hooks"][0]["command"]
+    assert "scope_sentinel.py" in by(codex, "apply_patch")[0]["hooks"][0]["command"]
+    tools = [e for e in agy if all(t in e["matcher"] for t in
+                                   ("write_to_file", "replace_file_content", "multi_replace_file_content"))]
+    assert tools and "scope_sentinel.py" in tools[0]["hooks"][0]["command"], agy
+    for entries in (claude, codex, agy):
+        for entry in entries:
+            for hook in entry["hooks"]:
+                cmd = hook["command"].strip()
+                assert "with_jev_key.sh" in cmd and cmd.endswith("|| true"), cmd
+                assert hook["timeout"] == 10, hook
+
+
 def main() -> None:
     check_patterns()
     check_key_only()
     check_helpers()
     check_bash_gate()
+    check_write_helpers()
+    check_write_gate()
+    check_write_configs()
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "jev").write_text(STUB)

@@ -51,6 +51,20 @@ Codex runs the same shadow hook from `.codex/config.toml` (`scope_sentinel.py ho
 
 Antigravity (`agy`) runs it from `.agents/hooks.json` (`scope_sentinel.py hook agy`) on `run_command` tool calls, with the same Jev key loading. It reads the `<USER_REQUEST>` block of the latest `USER_INPUT` step in the conversation transcript and logs rows with `"host": "agy"`. `agy` loads this project hooks file without a trust prompt. The skill router has no `agy` host yet.
 
+### Write gate
+
+The same shadow hook also judges file writes, in one Jev call with two questions: `kind` (`source_code`, `config`, `secrets`, `docs`, `data`) and `contains_secret` (a probability). A path outside the repo, or the repo root itself, is marked `would_block` locally with `outside the repo: <path>` and never reaches Jev. Content is redacted before Jev sees it (first 4000 characters) and is never logged; rows carry `gate` `write`, the repo-relative `path`, `kind`, `kind_confidence`, `contains_secret`, `redacted_hits`, `would_block`, `block_reason`. `would_block` means a credential at 0.7 or more, or a `secrets` file at 0.8 or more. Nothing acts on it yet.
+
+| Host | Tools (hook matcher) | Config |
+|---|---|---|
+| Claude Code | `Write`, `Edit`, `NotebookEdit` (`Edit` sends `new_string`, which may be a fragment) | `.claude/settings.json` |
+| Codex | `apply_patch` (path from the first `*** Add/Update/Delete File:` header) | `.codex/config.toml` |
+| agy | `write_to_file`, `replace_file_content`, `multi_replace_file_content` | `.agents/hooks.json` |
+
+Codex write gate: wired, unavailable on this machine (exec-routed patches). Here Codex sends patches through its `exec` tool as JavaScript, so the native `apply_patch` matcher never fires; parsing patches embedded in `exec` is out of scope. Codex marks an edited hook command as untrusted: re-trust in `/hooks` after pulling this change.
+
+Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh agy bash` run a canned prompt and print the newest matching row. `bash smoke.sh codex bash` prints the manual steps.
+
 ```bash
 python3 tests/test_sentinel.py
 ```

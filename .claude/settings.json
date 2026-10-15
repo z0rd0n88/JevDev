@@ -24,6 +24,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/with_jev_key.sh\" python3 \"${CLAUDE_PROJECT_DIR}/scope_sentinel.py\" hook || true",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
