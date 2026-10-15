@@ -37,6 +37,7 @@ SECRET = re.compile(
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
+AGY_REQUEST = re.compile(r"<USER_REQUEST>(.*?)</USER_REQUEST>", re.S)
 TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
 
 
@@ -109,6 +110,9 @@ def latest_user_prompt(transcript: Path, host: str = "claude") -> str:
             if host == "codex":
                 prompt = codex_user_text(entry) or prompt
                 continue
+            if host == "agy":
+                prompt = agy_user_text(entry) or prompt
+                continue
             if (
                 not isinstance(entry, dict)
                 or entry.get("type") != "user"
@@ -148,6 +152,22 @@ def codex_user_text(entry) -> str:
     return CODEX_AMBIENT.sub("", text).strip() if isinstance(text, str) else ""
 
 
+def agy_user_text(entry) -> str:
+    """Typed text of an Antigravity transcript entry: the <USER_REQUEST> block of a USER_INPUT step."""
+    if not isinstance(entry, dict) or entry.get("type") != "USER_INPUT" or not isinstance(entry.get("content"), str):
+        return ""
+    match = AGY_REQUEST.search(entry["content"])
+    return (match.group(1) if match else entry["content"]).strip()
+
+
+def tool_command(event: dict, host: str):
+    """Shell command of a pre-tool event, or None when the tool is not a shell command."""
+    if host == "agy":
+        call = event.get("toolCall") or {}
+        return (call.get("args") or {}).get("CommandLine") if call.get("name") == "run_command" else None
+    return (event.get("tool_input") or {}).get("command") if event.get("tool_name") == "Bash" else None
+
+
 def run_hook(log: Path, host: str) -> None:
     """Opt-in PreToolUse hook: hand risky Bash commands to a detached judge and return at once."""
     if os.environ.get("SCOPE_SENTINEL") != "1":
@@ -155,10 +175,9 @@ def run_hook(log: Path, host: str) -> None:
     try:
         raw = sys.stdin.read()
         event = json.loads(raw)
-        command = (event.get("tool_input") or {}).get("command")
+        command = tool_command(event, host)
         if (
-            event.get("tool_name") != "Bash"
-            or not isinstance(command, str)
+            not isinstance(command, str)
             or not RISKY.search(command)
             or DRY_RUN.search(command)
         ):
@@ -182,9 +201,10 @@ def run_judge(log: Path, host: str) -> None:
            "model": os.environ.get("JEV_MODEL") or DEFAULT_MODEL, "ts": time.time()}
     try:
         event = json.load(sys.stdin)
-        row.update(session_id=event.get("session_id"),
-                   command=clip(redact(event["tool_input"]["command"])))
-        row["instruction"] = clip(redact(latest_user_prompt(Path(event["transcript_path"]), host)))
+        row.update(session_id=event.get("session_id") or event.get("conversationId"),
+                   command=clip(redact(tool_command(event, host))))
+        transcript = event.get("transcript_path") or event["transcriptPath"]
+        row["instruction"] = clip(redact(latest_user_prompt(Path(transcript), host)))
         if not row["instruction"]:
             raise RuntimeError("no user instruction found in transcript")
         row.update(check_scope(row["instruction"], "None", row["command"]))
@@ -200,7 +220,7 @@ def run_judge(log: Path, host: str) -> None:
 
 
 def main():
-    if sys.argv[1:2] == ["hook"] and sys.argv[2:] in ([], ["claude"], ["codex"]):
+    if sys.argv[1:2] == ["hook"] and sys.argv[2:] in ([], ["claude"], ["codex"], ["agy"]):
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
         run_hook(root / ".local" / "sentinel.jsonl", (sys.argv[2:] or ["claude"])[0])
         return

@@ -45,6 +45,8 @@ The project's Claude `PreToolUse` hook runs it in shadow mode, and only when `SC
 
 Codex runs the same shadow hook from `.codex/config.toml` (`scope_sentinel.py hook codex`), which turns itself on and loads the Jev key the same way. It reads the typed text from the rollout's `UserMessage` items, drops Codex desktop's ambient browser context, and logs rows with `"host": "codex"`. Codex runs project hooks only after you trust them: open Codex in this repo and choose "Trust all and continue", or review them in `/hooks`. Re-trust after any change to the hook commands.
 
+Antigravity (`agy`) runs it from `.agents/hooks.json` (`scope_sentinel.py hook agy`) on `run_command` tool calls, with the same Jev key loading. It reads the `<USER_REQUEST>` block of the latest `USER_INPUT` step in the conversation transcript and logs rows with `"host": "agy"`. `agy` loads this project hooks file without a trust prompt. The skill router has no `agy` host yet.
+
 ```bash
 python3 tests/test_sentinel.py
 ```
