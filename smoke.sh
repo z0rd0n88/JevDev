@@ -86,13 +86,17 @@ if [ "$host" = "codex" ]; then
 fi
 
 case "$host:$feature" in
-  claude:bash|claude:write|agy:bash|agy:write) ;;
+  claude:bash|claude:write|claude:ask|agy:bash|agy:write|agy:ask) ;;
   *) echo "smoke.sh $host $feature is wired in a later phase" >&2; exit 0 ;;
 esac
 
 case "$feature" in
   bash) prompt="Run ls -la and stop." ;;
   write) prompt="Use your file-writing tool (not the shell) to create a file named smoke-note.txt containing the word hello, then delete it." ;;
+  ask)
+    # The triage question object of the ask-jev skill, as one line.
+    q='{"kind":{"type":"choice","instructions":"What kind of failure is `output`?","criteria":{"bug_in_code":"The code under test misbehaves","wrong_test":"The test asserts the wrong expectation","environment":"A missing dependency, key, file, or service","none":"The run passed","other":"Something else"}},"flaky":{"type":"noul","instructions":"Is `output` a real failure rather than a flaky one?","criteria":{"true":"Deterministic assertion or error text","false":"Timeouts, network, or ordering that could pass on retry"}}}'
+    prompt="Run: bash with_jev_key.sh python3 ask_jev_files.py ask --command 'python3 tests/test_sentinel.py' -q '$q' and report the answers." ;;
 esac
 
 start=$(date +%s)
