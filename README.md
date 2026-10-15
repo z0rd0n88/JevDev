@@ -122,3 +122,22 @@ python3 tests/test_ask_jev_files.py
 The skill's `$ARGUMENTS` placeholder is filled by Claude's slash form; Codex and agy pass the rest of the prompt as ordinary text, so state the request in the same message. `templates/` (the TypeScript starter) is inert reference material: nothing here runs it. Smoke: `bash smoke.sh <claude|agy|codex> skill` asks the host for the Purpose line (Codex prints manual steps).
 
 `ask-jev` is authored here (`.agents/skills/ask-jev/SKILL.md`) and documents `ask_jev_files.py`: the three subcommands, the three question types, and three runnable recipes (triage a failure, judge a diff, classify a request). It loads the same way as `hyper-jev`: `/ask-jev <request>` in Claude and agy, `$ask-jev <request>` in Codex. Smoke: `bash smoke.sh <claude|agy|codex> ask-skill` asks the host to triage `python3 tests/test_sentinel.py`; the reply names a `kind` with a confidence and the script prints the host's `ask_jev_files.py ask` sentinel row (Codex prints manual steps).
+
+## Install check
+
+`python3 check_install.py` prints a feature × host table showing whether each feature is wired at project scope. It only reads configs; it never edits them or trusts a Codex hook. `--root PATH` and `--home PATH` override the repo and home directories; `--scope user` is reserved for a later phase and exits 2 with "not implemented".
+
+| Cell | Meaning |
+|---|---|
+| `ok` | wired (and, for Codex hooks, trusted) |
+| `ok (unavailable here)` | wired, but the host never fires it on this machine (Codex write gate: no native `apply_patch`) |
+| `n/a (unavailable)` | the host has no such feature (agy compaction advisor) |
+| `missing` | config absent, malformed, or lacking the entry; exit code 1 |
+| `untrusted` | Codex has no `hooks.state` trust entry for the hook in `~/.codex/config.toml`; trust it in `codex` via `/hooks`. Alone it keeps exit code 0 |
+
+```bash
+python3 tests/test_check_install.py
+for t in tests/test_*.py; do python3 "$t" || echo "FAIL $t"; done   # full suite
+```
+
+`ast_symbol_ranker.py` and its test were removed: whole-file questions (`ask_jev_files.py`) replace AST symbol slicing, so the postmortem's slicing recommendation is superseded.
