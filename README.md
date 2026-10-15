@@ -85,6 +85,30 @@ Lines are absolute tokens: 80 000 (notice), 110 000 (recommend), 160 000 (reques
 python3 tests/test_compact.py
 ```
 
+## ask_jev_files.py CLI
+
+`ask_jev_files.py` asks Jev typed questions about files, one chosen file, or one situation, and prints JSON, so an agent branches on numbers without reading the files. Whole files only (no chunking). It runs from any repo: "the repo" is the git toplevel of the current directory, and paths in the output are repo-relative.
+
+```
+python3 /home/alex/JevDev/ask_jev_files.py files [-r] -q QUESTIONS_JSON PATH_OR_GLOB...
+python3 /home/alex/JevDev/ask_jev_files.py pick  -q QUESTION_TEXT PATH...
+python3 /home/alex/JevDev/ask_jev_files.py ask   -q QUESTIONS_JSON [--state TEXT] [--paths P...] [--command CMD]
+```
+
+- `files` runs one Jev call per file (16 at a time) and returns `results` sorted by path, `skipped` with a reason each, `calls`, and `model`. A directory without `-r` means `dir/*` (dotfiles excluded); up to 255 files, each under 240 000 bytes. Empty, binary, lock, and `node_modules`-style files are skipped.
+- `pick` chooses one of the paths you give it (no expansion) and returns `path`, or null when Jev says `none` or is under 0.3 confident.
+- `ask` judges one situation from your own `--state` (up to 8000 chars), up to 20 `--paths` files, and the output of `--command`. The command is judged first by the live bash gate and never runs when blocked; each gate decision is logged to `sentinel.jsonl` (`host` `cli`, `source` `ask_jev_files`) under `JEV_LOG_DIR` or `<repo>/.local`. Over 60 000 tokens it refuses and prints a `split`; nothing is truncated.
+
+Recursive then pick: `files -r -q '<one noul question>' .` fans out over a tree, keep the paths whose answer clears your bar, then `pick -q '<question>' <those paths>` chooses one.
+
+Exit codes: 0 ok; 2 refused or failed (stdout is `{"error": …}`); 64 usage error; 78 no Jev key (`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY`; run through `with_jev_key.sh`). Questions are validated before any file is read.
+
+Smoke: `bash smoke.sh claude ask` and `bash smoke.sh agy ask` have the host run the triage question over `python3 tests/test_sentinel.py`; the host's reply holds the `kind` and `flaky` answers and the script prints the host's sentinel row. Codex: run `codex` here, trust the hooks, send the same prompt, then `bash smoke.sh codex ask --read`.
+
+```bash
+python3 tests/test_ask_jev_files.py
+```
+
 ## Skills
 
 `hyper-jev` is the upstream [ten-levels-of-jev](https://github.com/disler/ten-levels-of-jev) skill at commit `777adaf`, vendored unedited under `.agents/skills/hyper-jev/` (MIT; upstream `LICENSE` sits beside `SKILL.md`). One copy serves all hosts:
