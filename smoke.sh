@@ -65,6 +65,16 @@ if [ "$feature" = "skill" ]; then
   exit $?
 fi
 
+ask_skill_prompt="/ask-jev Triage the result of python3 tests/test_sentinel.py and tell me the kind of failure with its confidence."
+if [ "$feature" = "ask-skill" ] && [ "$host" = "codex" ]; then
+  echo "Codex cannot run a skill headless from here. Steps:"
+  echo "  1. Open 'codex' in this repo, trust the hooks in /hooks, and confirm /skills lists ask-jev."
+  echo "  2. Type: \$ask-jev Triage the result of python3 tests/test_sentinel.py and tell me the kind of failure with its confidence."
+  echo "  3. Expect: a reply naming a kind label with a confidence."
+  echo "  4. Run: bash smoke.sh codex ask-skill --read"
+  exit 0
+fi
+
 if [ "$feature" = "compact" ]; then
   if [ "$host" = "agy" ]; then echo "The compaction advisor is not wired for agy." >&2; exit 0; fi
   echo "The advisor fires at Stop and needs an interactive session. Steps:"
@@ -86,7 +96,7 @@ if [ "$host" = "codex" ]; then
 fi
 
 case "$host:$feature" in
-  claude:bash|claude:write|claude:ask|agy:bash|agy:write|agy:ask) ;;
+  claude:bash|claude:write|claude:ask|claude:ask-skill|agy:bash|agy:write|agy:ask|agy:ask-skill) ;;
   *) echo "smoke.sh $host $feature is wired in a later phase" >&2; exit 0 ;;
 esac
 
@@ -101,10 +111,17 @@ esac
 
 start=$(date +%s)
 cd "$here" || exit 1
+if [ "$feature" = "ask-skill" ]; then
+  case "$host" in
+    claude) claude -p --dangerously-skip-permissions --output-format text "$ask_skill_prompt" </dev/null ;;
+    agy) agy --dangerously-skip-permissions -p "$ask_skill_prompt" </dev/null ;;
+  esac
+else
 case "$host" in
   claude) claude -p --dangerously-skip-permissions --output-format text "$prompt" </dev/null >/dev/null ;;
   agy) agy --dangerously-skip-permissions -p "$prompt" </dev/null >/dev/null ;;
 esac
+fi
 rm -f "$here/smoke-note.txt"
 for _ in $(seq 1 30); do
   newest "$start" && exit 0
