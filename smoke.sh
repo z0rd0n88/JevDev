@@ -39,7 +39,7 @@ for line in lines:
     hit = row
 if hit is None:
     sys.exit(1)
-keys = ("host", "host_model", "jev_model", "gate", "would_block", "tier", "error")
+keys = ("host", "host_model", "jev_model", "gate", "would_block", "tier", "printed", "error")
 print(" ".join(f"{k}={hit[k]}" for k in keys if k in hit))
 PY
 }
@@ -63,6 +63,18 @@ if [ "$feature" = "skill" ]; then
       ;;
   esac
   exit $?
+fi
+
+if [ "$feature" = "compact" ]; then
+  if [ "$host" = "agy" ]; then echo "The compaction advisor is not wired for agy." >&2; exit 0; fi
+  echo "The advisor fires at Stop and needs an interactive session. Steps:"
+  echo "  1. In your shell: export JEV_COMPACT_LINES=1000,2000,3000"
+  echo "  2. Open '$host' interactively in this repo$( [ "$host" = codex ] && echo " and trust the hooks in /hooks")."
+  echo "  3. Send two short prompts on different topics (for example: 'say hi', then 'write a haiku about rain')."
+  echo "  4. After the second turn, look for the advisor's message in the host UI."
+  echo "  5. Run: bash smoke.sh $host compact --read"
+  echo "  6. Expect tier other than silent, printed=True, jev_model typesafe/jev-…; note 'message seen: yes/no'."
+  exit 0
 fi
 
 if [ "$host" = "codex" ]; then

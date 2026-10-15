@@ -35,6 +35,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/with_jev_key.sh\" python3 \"${CLAUDE_PROJECT_DIR}/compact_advisor.py\" hook claude || true",
+            "timeout": 45
+          }
+        ]
+      }
     ]
   }
 }

@@ -306,27 +306,60 @@ def claude_user_text(entry) -> str:
     return "" if text.startswith("[Request interrupted") else text
 
 
+def _blocks(content, kind: str) -> list[dict]:
+    return [b for b in content if isinstance(b, dict) and b.get("type") == kind] if isinstance(content, list) else []
+
+
 def scan_transcript(transcript: Path, host: str = "claude") -> dict:
-    """One pass over a host transcript: typed prompts, and the Claude model of the last main-chain reply."""
+    """One pass over a host transcript: typed prompts, the Claude model of the last main-chain reply, and
+    (Claude and Codex only) the compaction-advisor inputs: tokens, window, last reply text, tools used since the
+    last prompt, and the last compact summary."""
     prompts, last_model = [], None
     user_text = {"codex": codex_user_text, "agy": agy_user_text}.get(host, claude_user_text)
+    extra = {"tokens": 0, "window": None, "last_assistant_text": "", "tools_after_last_prompt": [], "compact_summary": ""}
     try:
         f = transcript.open(errors="replace")
     except OSError:
-        return {"prompts": prompts, "last_model": last_model}
+        return {"prompts": prompts, "last_model": last_model}  # unreadable: the advisor reads keys with .get
     with f:
         for line in f:
             try:
                 entry = json.loads(line)
             except ValueError:
                 continue  # blank or half-flushed line
+            if not isinstance(entry, dict):
+                continue
             text = user_text(entry)
             if text:
                 prompts.append(text)
-            if host == "claude" and isinstance(entry, dict) and entry.get("type") == "assistant" \
-                    and not entry.get("isSidechain"):
-                last_model = (entry.get("message") or {}).get("model") or last_model
-    return {"prompts": prompts, "last_model": last_model}
+                extra["tools_after_last_prompt"] = []
+            payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+            if host == "claude":
+                if entry.get("type") == "user" and entry.get("isCompactSummary"):
+                    content = (entry.get("message") or {}).get("content")
+                    extra["compact_summary"] = content if isinstance(content, str) else "\n".join(
+                        b.get("text", "") for b in _blocks(content, "text"))
+                elif entry.get("type") == "assistant" and not entry.get("isSidechain"):
+                    msg = entry.get("message") or {}
+                    last_model = msg.get("model") or last_model
+                    usage = msg.get("usage")
+                    if isinstance(usage, dict):
+                        extra["tokens"] = sum(int(usage.get(k) or 0) for k in (
+                            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"))
+                    extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(msg.get("content"), "text"))
+                    extra["tools_after_last_prompt"] += [b.get("name", "") for b in _blocks(msg.get("content"), "tool_use")]
+            elif host == "codex":
+                if entry.get("type") == "event_msg" and payload.get("type") == "token_count":
+                    info = payload.get("info") or {}
+                    extra["tokens"] = int((info.get("last_token_usage") or {}).get("total_tokens") or 0)
+                    window = info.get("model_context_window")
+                    extra["window"] = window if isinstance(window, int) else None
+                elif entry.get("type") == "response_item":
+                    if payload.get("type") in ("function_call", "custom_tool_call"):
+                        extra["tools_after_last_prompt"].append(payload.get("name", ""))
+                    elif payload.get("type") == "message" and payload.get("role") == "assistant":
+                        extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(payload.get("content"), "output_text"))
+    return {"prompts": prompts, "last_model": last_model, **({} if host == "agy" else extra)}
 
 
 def user_prompts(transcript: Path, host: str = "claude") -> list[str]:

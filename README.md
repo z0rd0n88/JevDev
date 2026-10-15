@@ -69,6 +69,22 @@ Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh a
 python3 tests/test_sentinel.py
 ```
 
+## Compaction advisor
+
+`compact_advisor.py` is a `Stop` hook (Claude and Codex) that asks Jev, once per turn and only above the notice line, whether this is a good moment to compact. It prints `{"systemMessage": …}` for you to read, or nothing; it never compacts for you and never blocks. A `Stop` hook is synchronous, so a stalled provider can delay the prompt by up to 40 s once. Four questions over a JSON state (`current_request`, `previous_work` = the 20 most recent earlier prompts, `recent_turn`, `tools_this_turn`): `switched_gears`, `at_boundary`, `needs_history`, `mid_operation`. Tiers: `notice` (below the recommend line), `recommend`, `request`.
+
+| Host | Token source | Window |
+|---|---|---|
+| Claude | last main-chain assistant `message.usage`: input + cache creation + cache read + output | unknown, so no percentage |
+| Codex | last `token_count` event, `last_token_usage.total_tokens` | `model_context_window` |
+| agy | unavailable: not wired (no usage, no compact action) | |
+
+Lines are absolute tokens: 80 000 (notice), 110 000 (recommend), 160 000 (request). Override with `JEV_COMPACT_LINES=notice,recommend,request`; a 1M-window model wants higher lines. Below the notice line, or on the first request, no Jev call is made. Rows go to `.local/compact.jsonl` (`tier`, `reason`, `tokens`, `window`, `answers`, `printed`, `error`). Codex runs project hooks only after trust: re-trust in `/hooks`. Manual check: `bash smoke.sh claude compact` or `bash smoke.sh codex compact` prints the interactive steps; add `--read` for the newest row.
+
+```bash
+python3 tests/test_compact.py
+```
+
 ## Skills
 
 `hyper-jev` is the upstream [ten-levels-of-jev](https://github.com/disler/ten-levels-of-jev) skill at commit `777adaf`, vendored unedited under `.agents/skills/hyper-jev/` (MIT; upstream `LICENSE` sits beside `SKILL.md`). One copy serves all hosts:

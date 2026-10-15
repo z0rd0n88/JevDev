@@ -203,7 +203,7 @@ def check_helpers() -> None:
             {"type": "assistant", "isSidechain": False, "message": {"model": "claude-b"}},
         ]) + "\nnot json\n")
         scan = s.scan_transcript(path, "claude")
-        assert scan == {"prompts": ["first", "second"], "last_model": "claude-b"}, scan
+        assert {k: scan[k] for k in ("prompts", "last_model")} == {"prompts": ["first", "second"], "last_model": "claude-b"}, scan
         assert s.latest_user_prompt(path, "claude") == "second"
         assert s.host_model({}, "claude", scan) == "claude-b"
     assert s.host_model({"model": "gpt-x"}, "codex", {}) == "gpt-x"
