@@ -73,17 +73,26 @@ if [ "$host" = "codex" ]; then
   exit 0
 fi
 
-if [ "$host" != "claude" ] || [ "$feature" != "bash" ]; then
-  echo "smoke.sh $host $feature is wired in a later phase" >&2
-  exit 0
-fi
+case "$host:$feature" in
+  claude:bash|claude:write|agy:bash|agy:write) ;;
+  *) echo "smoke.sh $host $feature is wired in a later phase" >&2; exit 0 ;;
+esac
+
+case "$feature" in
+  bash) prompt="Run ls -la and stop." ;;
+  write) prompt="Use your file-writing tool (not the shell) to create a file named smoke-note.txt containing the word hello, then delete it." ;;
+esac
 
 start=$(date +%s)
 cd "$here" || exit 1
-claude -p --dangerously-skip-permissions --output-format text "Run ls -la and stop." </dev/null >/dev/null
+case "$host" in
+  claude) claude -p --dangerously-skip-permissions --output-format text "$prompt" </dev/null >/dev/null ;;
+  agy) agy --dangerously-skip-permissions -p "$prompt" </dev/null >/dev/null ;;
+esac
+rm -f "$here/smoke-note.txt"
 for _ in $(seq 1 30); do
   newest "$start" && exit 0
   sleep 0.5
 done
-echo "no claude bash row after 15 s in $logdir/$file" >&2
+echo "no $host $feature row after 15 s in $logdir/$file" >&2
 exit 1
