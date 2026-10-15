@@ -21,3 +21,10 @@ matcher = "apply_patch"
 type = "command"
 command = '''bash -c 'r=$(git rev-parse --show-toplevel) && SCOPE_SENTINEL=1 exec bash "$r/with_jev_key.sh" python3 "$r/scope_sentinel.py" hook codex' || true'''
 timeout = 10
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = '''bash -c 'r=$(git rev-parse --show-toplevel) && exec bash "$r/with_jev_key.sh" python3 "$r/compact_advisor.py" hook codex' || true'''
+timeout = 45
