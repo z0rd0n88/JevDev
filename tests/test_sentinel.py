@@ -165,6 +165,20 @@ def main() -> None:
         assert row["host"] == "codex" and row["instruction"] == "Review it, do not push.", row
         assert row["result"] == "conflict" and "error" not in row, row
 
+        req = lambda text: {"type": "USER_INPUT", "source": "USER_EXPLICIT",
+                            "content": f"<USER_REQUEST>\n{text}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>x</ADDITIONAL_METADATA>"}
+        agy_transcript = transcript(tmp, [req("old request"), req("Review it, do not push."),
+                                          {"type": "PLANNER_RESPONSE", "content": "push now"}])
+        agy_event = {"conversationId": "c1", "transcriptPath": agy_transcript,
+                     "toolCall": {"name": "run_command", "args": {"CommandLine": PUSH, "Cwd": str(tmp)}}}
+        run_hook(tmp, {**agy_event, "toolCall": {"name": "view_file", "args": {"CommandLine": PUSH}}}, host="agy")
+        run_hook(tmp, agy_event, host="agy")
+        row = rows(log, 4)[3]
+        time.sleep(0.5)
+        assert len(log.read_text().splitlines()) == 4, "a non-shell agy tool must not be judged"
+        assert row["host"] == "agy" and row["session_id"] == "c1", row
+        assert row["instruction"] == "Review it, do not push." and row["result"] == "conflict", row
+
         (tmp / "jev").write_text("#!/bin/sh\nsleep 5\n")
         assert run_hook(tmp, {**base, "tool_input": {"command": PUSH}}) < 2, (
             "hook must not wait on Jev"
