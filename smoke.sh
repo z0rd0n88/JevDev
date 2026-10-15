@@ -49,6 +49,22 @@ if [ "$read_only" -eq 1 ]; then
   exit $?
 fi
 
+skill_prompt="/hyper-jev Reply with only the first line of the Purpose section of this skill."
+if [ "$feature" = "skill" ]; then
+  cd "$here" || exit 1
+  case "$host" in
+    claude) claude -p --output-format text "$skill_prompt" </dev/null ;;
+    agy) agy -p "$skill_prompt" </dev/null ;;
+    codex)
+      echo "Codex cannot run a skill headless from here. Steps:"
+      echo "  1. Open 'codex' in this repo and confirm /skills lists hyper-jev."
+      echo "  2. Type: \$hyper-jev Reply with only the first line of the Purpose section of this skill."
+      echo "  3. Expect: Turn the user's request into a small, tested Jev integration."
+      ;;
+  esac
+  exit $?
+fi
+
 if [ "$host" = "codex" ]; then
   echo "Codex cannot run headless with project hooks from here. Steps:"
   echo "  1. Run 'codex' interactively in this repo and trust the hooks in /hooks."

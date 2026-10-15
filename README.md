@@ -54,3 +54,15 @@ Antigravity (`agy`) runs it from `.agents/hooks.json` (`scope_sentinel.py hook a
 ```bash
 python3 tests/test_sentinel.py
 ```
+
+## Skills
+
+`hyper-jev` is the upstream [ten-levels-of-jev](https://github.com/disler/ten-levels-of-jev) skill at commit `777adaf`, vendored unedited under `.agents/skills/hyper-jev/` (MIT; upstream `LICENSE` sits beside `SKILL.md`). One copy serves all hosts:
+
+| Host | Loads from | Invoke |
+|---|---|---|
+| Claude Code | `.claude/skills/hyper-jev` (symlink to the `.agents` copy) | `/hyper-jev <request>` |
+| Codex | `.agents/skills/hyper-jev` | `$hyper-jev <request>`; `/skills` lists it |
+| agy | `.agents/skills/hyper-jev` | `/hyper-jev <request>` |
+
+The skill's `$ARGUMENTS` placeholder is filled by Claude's slash form; Codex and agy pass the rest of the prompt as ordinary text, so state the request in the same message. `templates/` (the TypeScript starter) is inert reference material: nothing here runs it. Smoke: `bash smoke.sh <claude|agy|codex> skill` asks the host for the Purpose line (Codex prints manual steps).
