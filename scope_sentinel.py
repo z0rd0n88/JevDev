@@ -6,6 +6,7 @@ returning whether the action is covered, ambiguous, or in conflict with the scop
 """
 
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -16,24 +17,40 @@ import time
 
 DEFAULT_MODEL = "jev-latest"
 JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
-SENTINEL_VERSION = "shadow-v2"
-_GIT = r"\bgit(?:\s+(?:-[Cc]\s+\S+|--\S+))*\s+"
-_GH = r"\bgh(?:\s+(?:-R\s+\S+|--repo\s+\S+))*\s+"
+SENTINEL_VERSION = "shadow-v3"
+MAX_JUDGES = 4  # concurrent detached Jev calls; extra risky commands log a "skipped" row
+_ARG = r"""(?>"[^"]*"|'[^']*'|\S+)"""
+# At most 8 global options, matched possessively, keep scanning linear on long or quote-heavy commands.
+_GIT = r"\bgit(?:\s+(?>-[Cc]\s+" + _ARG + r"|--\S+)){0,8}+\s+"
+_GH = r"\bgh(?:\s+(?>-R\s+\S+|--repo[=\s]\S+)){0,8}+\s+"
+_NEAR = r"[^;&|]{0,200}"
 # ponytail: regex picks which Bash commands get judged; text inside quotes still matches.
 # Widen or narrow it from logged rows.
 RISKY = re.compile(
-    _GIT + r"(?:push|commit|clean|stash\s+drop|worktree\s+remove|branch\s+(?:\S+\s+)*-D"
-    r"|checkout\s+--|reset\b[^;&|]{0,200}--hard)(?![\w-])"
-    r"|" + _GH + r"(?:pr\s+(?:merge|close|create)|repo\s+delete|api\b[^;&|]{0,200}-X\s*DELETE)"
-    r"|\brm\s+(?:-\S*[rRf]|--recursive|--force)"
-    r"|\bfind\b[^;&|]{0,200}\s-delete\b"
+    _GIT + r"(?:push|commit|clean|restore|stash\s+(?:drop|clear)|worktree\s+remove|checkout\s+--"
+    r"|branch\b" + _NEAR + r"(?:-D\b|--delete\b" + _NEAR + r"--force|--force\b" + _NEAR + r"--delete)"
+    r"|reset\b" + _NEAR + r"--hard)(?![\w-])"
+    r"|" + _GH + r"(?:pr\s+(?:merge|close|create)|repo\s+delete|api\b" + _NEAR + r"(?:-X\s*|--method[=\s]+)DELETE)"
+    r"|\brm\s+(?:-\S+\s+)*(?:-\S*[rRf]|--recursive|--force)"
+    r"|\bfind\b" + _NEAR + r"\s-delete\b"
 )
 DRY_RUN = re.compile(r"\s--dry-run\b")
-SECRET = re.compile(
-    r"(?i)(authorization:\s*\S+\s+|bearer\s+|(?:token|secret|password|passwd|api[_-]?key)\w*[=:]\s*)\S+"
-    r"|://[^/\s:@]+:[^/\s@]+@"
-    r"|\b(?:gh[pousr]_|github_pat_|sk-)[\w-]{10,}"
-)
+SEGMENT = re.compile(r"&&|\|\||[;|\n]")
+_VALUE = r"""[^\s'"]+"""
+# Each pattern keeps group 1 (possibly empty) and replaces the rest of the match.
+SECRETS = [re.compile(p) for p in (
+    r"(?i)(authorization:\s*\S+\s+)" + _VALUE,
+    r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{16,}",
+    r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w*[=:]\s*)" + _VALUE,
+    r"""(?i)("(?:token|secret|password|passwd|api[_-]?key)\w*"\s*:\s*")[^"]+""",
+    r"(?i)(--(?:password|passwd|token|secret|api[-_]?key)[=\s]+)" + _VALUE,
+    r"(\s-u\s+[^\s:'\"]+:)" + _VALUE,
+    r"(://[^/\s:@]+:)[^/\s@]+(?=@)",
+    r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
+    r"()\bsk-(?=[\w-]*\d)[\w-]{20,}",
+    r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
+    r"()\bxox[abposr]-[\w-]{10,}",
+)]
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
@@ -42,7 +59,41 @@ TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>"
 
 
 def redact(text: str) -> str:
-    return SECRET.sub(lambda m: f"{m.group(1)}[REDACTED]" if m.group(1) else "[REDACTED]", text)
+    for pattern in SECRETS:
+        text = pattern.sub(lambda m: f"{m.group(1)}[REDACTED]", text)
+    return text
+
+
+def is_risky(command: str) -> bool:
+    """A risky segment that is not itself a dry run; one --dry-run no longer hides the rest of a chain."""
+    return any(RISKY.search(seg) and not DRY_RUN.search(seg) for seg in SEGMENT.split(command))
+
+
+def project_constraints(root: Path) -> tuple[str, list[str]]:
+    """The repo's own agent instruction files, deduplicated, as scope constraints for Jev."""
+    texts, names = [], []
+    for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        try:
+            text = (root / name).read_text(errors="replace").strip()
+        except OSError:
+            continue
+        if text and text not in texts:
+            texts.append(text)
+            names.append(name)
+    return "\n\n".join(texts), names
+
+
+def acquire_slot(directory: Path):
+    """Hold one of MAX_JUDGES lock files for this process's lifetime, or None when all are busy."""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for i in range(MAX_JUDGES):
+        handle = open(directory / f".judge-{i}.lock", "w")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except OSError:
+            handle.close()
+    return None
 
 
 def clip(text: str, limit: int = 2000) -> str:
@@ -176,11 +227,7 @@ def run_hook(log: Path, host: str) -> None:
         raw = sys.stdin.read()
         event = json.loads(raw)
         command = tool_command(event, host)
-        if (
-            not isinstance(command, str)
-            or not RISKY.search(command)
-            or DRY_RUN.search(command)
-        ):
+        if not isinstance(command, str) or not is_risky(command):
             return
         judge = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "judge", str(log), host],
@@ -207,7 +254,11 @@ def run_judge(log: Path, host: str) -> None:
         row["instruction"] = clip(redact(latest_user_prompt(Path(transcript), host)))
         if not row["instruction"]:
             raise RuntimeError("no user instruction found in transcript")
-        row.update(check_scope(row["instruction"], "None", row["command"]))
+        slot = acquire_slot(log.parent)
+        if slot is None:
+            raise RuntimeError(f"skipped: {MAX_JUDGES} judges already running")
+        constraints, row["constraint_files"] = project_constraints(Path(__file__).resolve().parent)
+        row.update(check_scope(row["instruction"], clip(redact(constraints)) or "None", row["command"]))
     except Exception as e:
         # Fails open; the error row keeps silent gaps visible.
         row["error"] = f"{type(e).__name__}: {e}"

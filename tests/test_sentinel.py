@@ -74,7 +74,34 @@ def check_key_only() -> None:
         assert "ghp_should_not_leak" not in done.stdout and "RUNPOD_API_KEY" not in done.stdout, "other secrets leaked"
 
 
+def check_patterns() -> None:
+    """Risky-command and redaction rules, including the forms earlier reviews found missing or mangled."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("scope_sentinel", SOURCE)
+    sentinel = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sentinel)
+    risky = ["gh --repo=o/r pr merge 1", 'git -C "/a b" push', "git stash clear", "git restore .",
+             "git branch --delete --force x", "rm -v -rf /x", "gh api --method DELETE repos/x",
+             "git commit -m x && git push --dry-run", "git push --force; echo --dry-run"]
+    safe = ["git push --dry-run", "git commit-tree abc", "git branch -d x", "git restore-thing", "cat deploy.md"]
+    assert [c for c in risky if not sentinel.is_risky(c)] == [], "risky form missed"
+    assert [c for c in safe if sentinel.is_risky(c)] == [], "safe form judged"
+    secrets = {"mysql --password hunter2": "hunter2", "curl -u user:hunter2 u": "hunter2",
+               'curl -d \'{"token": "abc123"}\'': "abc123", "AKIAIOSFODNN7EXAMPLE": "AKIA",
+               "xoxb-123456789012-abcdefghij": "xoxb", "glpat-abcdefghij1234567890": "glpat"}
+    for text, secret in secrets.items():
+        assert secret not in sentinel.redact(text), text
+    for text in ("git commit -m 'fix bearer token parsing'", "git checkout sk-feature-branch-name"):
+        assert sentinel.redact(text) == text, "ordinary text must not be redacted"
+    assert sentinel.redact("https://u:pw@host") == "https://u:[REDACTED]@host"
+    start = time.perf_counter()
+    for text in ("git -C " * 20000, "gh -R " * 20000, 'git -C "' * 20000, "find " * 20000):
+        sentinel.is_risky(text)
+    assert time.perf_counter() - start < 2, "risky check must stay fast on long commands"
+
+
 def main() -> None:
+    check_patterns()
     check_key_only()
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -140,6 +167,7 @@ def main() -> None:
         row = rows(log, 1)[0]
         assert row["instruction"] == "review  Review it, do not push.", row
         assert row["result"] == "conflict" and row["confidence"] == 0.8, row
+        assert row["constraint_files"] == ["AGENTS.md"], "the repo's AGENTS.md must reach Jev as constraints"
         assert "ghp_" not in row["command"] and "error" not in row, row
         assert oct(log.stat().st_mode & 0o777) == "0o600", oct(log.stat().st_mode)
 
@@ -178,6 +206,18 @@ def main() -> None:
         assert len(log.read_text().splitlines()) == 4, "a non-shell agy tool must not be judged"
         assert row["host"] == "agy" and row["session_id"] == "c1", row
         assert row["instruction"] == "Review it, do not push." and row["result"] == "conflict", row
+
+        import fcntl
+        held = []
+        for i in range(4):
+            held.append(open(log.parent / f".judge-{i}.lock", "w"))
+            fcntl.flock(held[-1], fcntl.LOCK_EX | fcntl.LOCK_NB)
+        n = len(log.read_text().splitlines())
+        run_hook(tmp, {**base, "transcript_path": transcript(tmp, [{"type": "user", "message": {"content": "do not push"}}]),
+                      "tool_input": {"command": PUSH}})
+        assert "skipped: 4 judges" in rows(log, n + 1)[n].get("error", ""), "a fifth judge must not call Jev"
+        for handle in held:
+            handle.close()
 
         (tmp / "jev").write_text("#!/bin/sh\nsleep 5\n")
         assert run_hook(tmp, {**base, "tool_input": {"command": PUSH}}) < 2, (
