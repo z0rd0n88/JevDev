@@ -16,6 +16,8 @@ from scope_sentinel import (
     JEV,
     append_row,
     host_model,
+    log_dir,
+    project_hooked,
     redact,
     repo_root,
     scan_transcript,
@@ -170,7 +172,7 @@ def ask_jev(state: dict) -> tuple[dict, dict, float]:
     return response["answers"], response, elapsed
 
 
-def run_hook(host: str, log: Path) -> None:
+def run_hook(host: str, log: Path, user: bool = False) -> None:
     """Stop hook: write one row; print {"systemMessage": ...} only when the tier is not silent. Never raises."""
     row = {
         "host": host,
@@ -186,6 +188,8 @@ def run_hook(host: str, log: Path) -> None:
     try:
         event = json.loads(sys.stdin.read())
         cwd = event.get("cwd") or os.getcwd()
+        if user and project_hooked(repo_root(cwd), host, Path(__file__).name):
+            return  # the repo's own Stop hook logs this turn; never log twice
         row.update(
             session_id=event.get("session_id"), cwd=cwd, repo=str(repo_root(cwd))
         )
@@ -229,9 +233,10 @@ def run_hook(host: str, log: Path) -> None:
 
 
 def main() -> None:
-    if sys.argv[1:2] == ["hook"] and sys.argv[2:] in (["claude"], ["codex"]):
+    hook_args = [a for a in sys.argv[2:] if a != "--user"]
+    if sys.argv[1:2] == ["hook"] and hook_args in (["claude"], ["codex"]):
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
-        run_hook(sys.argv[2], root / ".local" / "compact.jsonl")
+        run_hook(hook_args[0], log_dir(root) / "compact.jsonl", "--user" in sys.argv[2:])
     # Anything else (agy, no args): exit 0 silently; a Stop hook must never break the turn.
 
 

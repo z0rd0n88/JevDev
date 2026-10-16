@@ -78,9 +78,11 @@ EXPECTED_QUESTIONS = {
 PUSH = "GH_TOKEN=ghp_abcdefghijklmnop git -C /repo push origin main"
 
 
-def run_hook(tmp: Path, event: dict, enabled: str = "1", host: str = "claude") -> float:
+def run_hook(tmp: Path, event: dict, enabled: str = "1", host: str = "claude", user: bool = False,
+             extra_env: dict | None = None) -> float:
     env = {
         **os.environ,
+        **(extra_env or {}),
         "JEV_BIN": str(tmp / "jev"),
         "TYPESAFE_API_KEY": "stub",
         "CLAUDE_PROJECT_DIR": str(tmp),
@@ -88,7 +90,7 @@ def run_hook(tmp: Path, event: dict, enabled: str = "1", host: str = "claude") -
     }
     start = time.perf_counter()
     done = subprocess.run(
-        [sys.executable, str(SOURCE), "hook", host],
+        [sys.executable, str(SOURCE), "hook", host, *(["--user"] if user else [])],
         input=json.dumps(event),
         capture_output=True,
         text=True,
@@ -422,6 +424,77 @@ def check_write_gate() -> None:
         assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
 
 
+def check_user_scope() -> None:
+    """AC-8.2 and AC-8.3 (first half): --user dedupes against project hooks and logs to JEV_LOG_DIR."""
+    s = load_sentinel()
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "jev").write_text(REC_STUB)
+        (tmp / "jev").chmod(0o755)
+        central = tmp / "central"
+        prompt = transcript(tmp, [{"type": "user", "message": {"content": "tidy up"}}])
+        env = {"JEV_LOG_DIR": str(central)}
+        event = lambda repo: {"session_id": "s1", "transcript_path": prompt, "tool_name": "Bash",
+                              "tool_input": {"command": "ls"}, "cwd": str(repo)}
+
+        # project_hooked / log_dir helpers
+        hooked = tmp / "hooked"
+        (hooked / ".claude").mkdir(parents=True)
+        (hooked / ".claude/settings.json").write_text('{"hooks": {"x": "scope_sentinel.py"}}')
+        (hooked / ".codex").mkdir()
+        (hooked / ".codex/config.toml").write_text("# other.py only\n")
+        assert s.project_hooked(hooked, "claude", "scope_sentinel.py") is True
+        assert s.project_hooked(hooked, "codex", "scope_sentinel.py") is False, "wrong script"
+        assert s.project_hooked(hooked, "agy", "scope_sentinel.py") is False, "missing config"
+        assert s.project_hooked(hooked, "claude", "compact_advisor.py") is False
+        assert s.log_dir(tmp) == tmp / ".local"
+        os.environ["JEV_LOG_DIR"] = str(central)
+        try:
+            assert s.log_dir(tmp) == central
+        finally:
+            del os.environ["JEV_LOG_DIR"]
+
+        # A repo whose project config already runs the script: --user spawns nothing and writes nothing.
+        subprocess.run(["git", "init", "-q", str(hooked)], check=True)
+        run_hook(tmp, event(hooked), user=True, extra_env=env)
+        time.sleep(0.7)
+        assert not central.exists() and not (tmp / ".local").exists(), "deduped repo must log nowhere"
+        assert not (tmp / "rec.json").exists(), "deduped repo must not call Jev"
+
+        # A plain repo: row lands in $JEV_LOG_DIR with the event repo and its constraints.
+        plain = new_repo(tmp, "never force push\n")
+        run_hook(tmp, event(plain), user=True, extra_env=env)
+        row = rows(central / "sentinel.jsonl", 1)[0]
+        assert row["repo"] == str(plain) and row["constraint_files"] == ["AGENTS.md"] and "error" not in row, row
+        assert "never force push" in json.loads(json.loads((tmp / "rec.json").read_text())["stdin"])["constraints"]
+        assert not (tmp / ".local").exists(), "user scope must not write under CLAUDE_PROJECT_DIR"
+        assert oct(central.stat().st_mode & 0o777) == "0o700" and oct((central / "sentinel.jsonl").stat().st_mode & 0o777) == "0o600"
+
+        # AC-8.3: no --user and no JEV_LOG_DIR keeps the project-scope log path, even in a hooked repo.
+        run_hook(tmp, event(hooked))
+        assert rows(tmp / ".local" / "sentinel.jsonl", 1)[0]["repo"] == str(hooked)
+
+        # JEV_LOG_DIR alone (no --user) also redirects the log.
+        run_hook(tmp, event(plain), extra_env=env)
+        assert len(rows(central / "sentinel.jsonl", 2)) == 2
+
+        # compact_advisor takes the same flag: stands down in a hooked repo, logs centrally in a plain one.
+        advisor = SOURCE.parent / "compact_advisor.py"
+        (hooked / ".claude/settings.json").write_text('{"hooks": {"Stop": "compact_advisor.py hook claude"}}')
+        def advise(repo, *flags, extra=env):
+            subprocess.run([sys.executable, str(advisor), "hook", "claude", *flags], timeout=30, check=True,
+                           input=json.dumps({"session_id": "s1", "cwd": str(repo), "transcript_path": prompt}),
+                           capture_output=True, text=True,
+                           env={**os.environ, "JEV_BIN": str(tmp / "jev"), "CLAUDE_PROJECT_DIR": str(tmp), **extra})
+        advise(hooked, "--user")
+        assert not (central / "compact.jsonl").exists(), "advisor must stand down in a hooked repo"
+        advise(plain, "--user")
+        crow = [json.loads(x) for x in (central / "compact.jsonl").read_text().splitlines()]
+        assert len(crow) == 1 and crow[0]["repo"] == str(plain), crow
+        advise(hooked, extra={})
+        assert (tmp / ".local" / "compact.jsonl").exists(), "no --user, no JEV_LOG_DIR: project-scope path"
+
+
 def check_write_configs() -> None:
     """AC-3.4: the three host configs carry the write matchers and keep the wrapper and fail-open tail."""
     import tomllib
@@ -450,6 +523,7 @@ def main() -> None:
     check_bash_gate()
     check_write_helpers()
     check_write_gate()
+    check_user_scope()
     check_write_configs()
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)

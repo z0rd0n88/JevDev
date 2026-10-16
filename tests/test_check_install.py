@@ -173,18 +173,77 @@ def check_malformed():
         assert r.returncode == 1 and "Traceback" not in r.stderr
 
 
-def check_user_scope():
-    """--scope user is a clear 'not implemented' until Phase 8, exit 2."""
-    r = subprocess.run(
-        [sys.executable, str(ROOT / "check_install.py"), "--scope", "user"],
+def run_user(home):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "check_install.py"), "--scope", "user", "--home", str(home)],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    assert r.returncode == 2 and "not implemented" in (r.stdout + r.stderr), (
-        r.stdout,
-        r.stderr,
-    )
+
+
+def user_home(tmp, trusted=False):
+    """A tmp home populated by install_user.py; optionally with Codex trust for its three hooks."""
+    import install_user
+
+    home = Path(tmp) / "home"
+    result = install_user.install(home, ROOT)
+    if trusted:
+        body = "[hooks.state]\n"
+        for k in HOOK_KEYS:
+            body += f'\n[hooks.state."{home}/.codex/hooks.json:{k}"]\ntrusted_hash = "sha256:abc"\n'
+        (home / ".codex/config.toml").write_text(body)
+    return home, result["claude_snippet"]
+
+
+def apply_claude_snippet(home, snippet):
+    """What the ClaudeConfig PR does: merge the printed hooks into settings.json and add the two symlinks."""
+    hooks = json.loads(snippet[snippet.index("{") : snippet.rindex("}") + 1])
+    (home / ".claude").mkdir(exist_ok=True)
+    (home / ".claude/settings.json").write_text(json.dumps(hooks))
+    (home / ".claude/skills").mkdir()
+    for name in ["hyper-jev", "ask-jev"]:
+        (home / ".claude/skills" / name).symlink_to(ROOT / ".agents/skills" / name)
+
+
+def check_user_scope():
+    """AC-8.4: before the Claude snippet every claude wiring cell is missing; after it, all ok; exit 1 then 0."""
+    with tempfile.TemporaryDirectory() as tmp:
+        home, snippet = user_home(tmp)
+        table = check_install.check(ROOT, home, "user")
+        assert list(table) == FEATURES, list(table)
+        for feature in ["hyper-jev skill", "ask-jev skill", "bash gate", "write gate", "compaction advisor"]:
+            assert table[feature]["claude"] == "missing", (feature, table[feature])
+        for feature in ["hyper-jev skill", "ask-jev skill"]:
+            assert table[feature]["codex"] == table[feature]["agy"] == "ok", table[feature]
+        for feature in ["bash gate", "write gate", "compaction advisor"]:
+            assert table[feature]["codex"] == "untrusted", (feature, table[feature])
+        assert table["bash gate"]["agy"] == table["write gate"]["agy"] == "ok", table
+        assert table["compaction advisor"]["agy"] == "n/a (unavailable)", table
+        r = run_user(home)
+        assert r.returncode == 1 and r.stdout.startswith("jevdev checkout: "), (r.stdout, r.stderr)
+
+        apply_claude_snippet(home, snippet)
+        table = check_install.check(ROOT, home, "user")
+        assert all(cell == "ok" for row in table.values() for cell in [row["claude"]]), table
+        r = run_user(home)
+        assert r.returncode == 0, (r.stdout, r.stderr)  # untrusted alone keeps exit 0
+
+
+def check_user_scope_trusted():
+    """Codex trust is keyed on ~/.codex/hooks.json, not the project config path."""
+    with tempfile.TemporaryDirectory() as tmp:
+        home, snippet = user_home(tmp, trusted=True)
+        apply_claude_snippet(home, snippet)
+        table = check_install.check(ROOT, home, "user")
+        want = {"bash gate": "ok", "write gate": "ok (unavailable here)", "compaction advisor": "ok"}
+        assert {f: table[f]["codex"] for f in want} == want, table
+        (home / ".codex/hooks.json").write_text("{nope")
+        table = check_install.check(ROOT, home, "user")
+        assert table["bash gate"]["codex"] == "missing", table
+        (home / ".gemini/config/hooks.json").write_text("[]")
+        r = run_user(home)
+        assert r.returncode == 1 and "Traceback" not in r.stderr, (r.stdout, r.stderr)
 
 
 if __name__ == "__main__":

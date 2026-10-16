@@ -125,7 +125,7 @@ The skill's `$ARGUMENTS` placeholder is filled by Claude's slash form; Codex and
 
 ## Install check
 
-`python3 check_install.py` prints a feature × host table showing whether each feature is wired at project scope. It only reads configs; it never edits them or trusts a Codex hook. `--root PATH` and `--home PATH` override the repo and home directories; `--scope user` is reserved for a later phase and exits 2 with "not implemented".
+`python3 check_install.py` prints a feature × host table showing whether each feature is wired at project scope. It only reads configs; it never edits them or trusts a Codex hook. `--root PATH` and `--home PATH` override the repo and home directories; `--scope user` reads the user-scope files instead (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/config/hooks.json`, the three user skill dirs).
 
 | Cell | Meaning |
 |---|---|
@@ -134,6 +134,16 @@ The skill's `$ARGUMENTS` placeholder is filled by Claude's slash form; Codex and
 | `n/a (unavailable)` | the host has no such feature (agy compaction advisor) |
 | `missing` | config absent, malformed, or lacking the entry; exit code 1 |
 | `untrusted` | Codex has no `hooks.state` trust entry for the hook in `~/.codex/config.toml`; trust it in `codex` via `/hooks`. Alone it keeps exit code 0 |
+
+## User-scope install
+
+Runs the gates, advisor, and skills in every repo on this machine from the primary checkout, logging to `~/.local/state/jevdev/`. Repos whose project config already carries `scope_sentinel.py` are skipped by `--user`, so no double rows.
+
+1. `python3 install_user.py` (idempotent; `--home` and `--jevdev` override the defaults). It merges `~/.codex/hooks.json`, writes the `jevdev` hook in `~/.gemini/config/hooks.json`, links the four skills, and prints the Claude snippet. A real directory at a skill path is refused (exit 2); nothing changes.
+2. Claude: open a ClaudeConfig PR with the printed snippet (`~/.claude/settings.json` hooks plus two `ln -s` lines). Merge and pull it while no Claude session runs; running sessions rewrite that file.
+3. Codex: open `codex` anywhere and trust the new hooks in `/hooks`.
+4. After every merge here: `git -C ~/JevDev pull` (the hooks run that checkout; keep it on `main`).
+5. Check: `python3 check_install.py --scope user`. Live smoke: `bash smoke.sh <claude|agy> bash --user` (runs from `/home/alex/BotHaus`).
 
 ```bash
 python3 tests/test_check_install.py

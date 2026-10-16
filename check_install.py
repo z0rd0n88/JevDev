@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report whether each Jev feature is wired in each host (Claude, Codex, agy) at project scope.
+"""Report whether each Jev feature is wired in each host (Claude, Codex, agy) at project or user scope.
 
 Read-only: never edits a config and never trusts a Codex hook on the user's behalf.
 Exit 1 when any cell is `missing`; `untrusted` alone keeps exit 0.
@@ -69,16 +69,14 @@ def all_in(names):
     return lambda matcher: all(n in matcher for n in names)
 
 
-def skill_cells(root, name):
-    link = root / ".claude/skills" / name
-    shared = (root / ".agents/skills" / name / "SKILL.md").is_file()
-    return {
-        "claude": "ok"
-        if link.is_symlink() and (link / "SKILL.md").is_file()
-        else "missing",
-        "codex": "ok" if shared else "missing",
-        "agy": "ok" if shared else "missing",
-    }
+def skill_cells(dirs, name, linked):
+    """One cell per host: `dirs` maps host -> skills dir; user scope also requires the entry to be a symlink."""
+
+    def cell(d):
+        entry = d / name
+        return "ok" if (entry / "SKILL.md").is_file() and (entry.is_symlink() or not linked) else "missing"
+
+    return {h: cell(dirs[h]) for h in HOSTS}
 
 
 def trusted(state, config, event, i, j):
@@ -109,14 +107,29 @@ def cli_cell(root):
 
 
 def check(root, home, scope):
-    """feature -> host -> cell for the configs under `root`; Codex trust is read from `home`."""
-    if scope != "project":
-        raise NotImplementedError(f"--scope {scope} is not implemented yet")
+    """feature -> host -> cell. Project scope reads the configs under `root`; user scope reads those under `home`.
+    Codex trust is read from `home` either way; `root` is also where the ask_jev_files CLI lives."""
     root, home = Path(root), Path(home)
-    claude = load(root / ".claude/settings.json", json.load) or {}
-    codex_path = root / ".codex/config.toml"
-    codex = load(codex_path, tomllib.load) or {}
-    agy = load(root / ".agents/hooks.json", json.load) or {}
+    if scope == "user":
+        claude = load(home / ".claude/settings.json", json.load) or {}
+        codex_path = home / ".codex/hooks.json"
+        codex = load(codex_path, json.load) or {}
+        agy = load(home / ".gemini/config/hooks.json", json.load) or {}
+        skill_dirs = {
+            "claude": home / ".claude/skills",
+            "codex": home / ".agents/skills",
+            "agy": home / ".gemini/antigravity-cli/skills",
+        }
+    else:
+        claude = load(root / ".claude/settings.json", json.load) or {}
+        codex_path = root / ".codex/config.toml"
+        codex = load(codex_path, tomllib.load) or {}
+        agy = load(root / ".agents/hooks.json", json.load) or {}
+        skill_dirs = {
+            "claude": root / ".claude/skills",
+            "codex": root / ".agents/skills",
+            "agy": root / ".agents/skills",
+        }
     user = load(home / ".codex/config.toml", tomllib.load)
     state = user.get("hooks", {}).get("state", {}) if isinstance(user, dict) else {}
     state = state if isinstance(state, dict) else {}
@@ -126,8 +139,8 @@ def check(root, home, scope):
     ok = lambda found: "ok" if found else "missing"
     cli = cli_cell(root)
     table = {
-        "hyper-jev skill": skill_cells(root, "hyper-jev"),
-        "ask-jev skill": skill_cells(root, "ask-jev"),
+        "hyper-jev skill": skill_cells(skill_dirs, "hyper-jev", scope == "user"),
+        "ask-jev skill": skill_cells(skill_dirs, "ask-jev", scope == "user"),
         "bash gate": {
             "claude": ok(find(pre(claude), lambda m: m == "Bash", "scope_sentinel.py")),
             "codex": codex_cell(
@@ -201,11 +214,12 @@ def main(argv=None):
     ap.add_argument("--root", default=str(here))
     ap.add_argument("--home", default=str(Path.home()))
     args = ap.parse_args(argv)
-    try:
-        table = check(Path(args.root), Path(args.home), args.scope)
-    except NotImplementedError as e:
-        print(e)
-        return 2
+    table = check(Path(args.root), Path(args.home), args.scope)
+    if args.scope == "user":
+        git = lambda *a: subprocess.run(
+            ["git", "-C", args.root, "rev-parse", *a], capture_output=True, text=True
+        ).stdout.strip()
+        print(f"jevdev checkout: {git('--abbrev-ref', 'HEAD') or '?'} @ {git('--short', 'HEAD') or '?'}")
     print(render(table))
     return (
         1 if any(c == "missing" for row in table.values() for c in row.values()) else 0
