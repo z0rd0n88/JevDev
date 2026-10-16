@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # Live smoke: run one canned prompt in a host, then print the newest matching log row.
-# Usage: smoke.sh <claude|codex|agy> <bash|write|compact|ask|ask-skill|skill> [--read]
+# Usage: smoke.sh <claude|codex|agy> <bash|write|compact|ask|ask-skill|skill> [--read] [--user]
+# --user runs from /home/alex/BotHaus (no project hooks) and reads ~/.local/state/jevdev/.
 # --read skips the host run and prints the newest row for that host and feature.
 # Evidence goes in the PR body; nothing under .local/ is ever committed.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage() { echo "usage: smoke.sh <claude|codex|agy> <bash|write|compact|ask|ask-skill|skill> [--read]" >&2; exit 64; }
-[ $# -ge 2 ] && [ $# -le 3 ] || usage
-host="$1"; feature="$2"; read_only=0
+usage() { echo "usage: smoke.sh <claude|codex|agy> <bash|write|compact|ask|ask-skill|skill> [--read] [--user]" >&2; exit 64; }
+[ $# -ge 2 ] && [ $# -le 4 ] || usage
+host="$1"; feature="$2"; read_only=0; user_scope=0
 case "$host" in claude|codex|agy) ;; *) usage ;; esac
 case "$feature" in bash|write|compact|ask|ask-skill|skill) ;; *) usage ;; esac
-if [ $# -eq 3 ]; then [ "$3" = "--read" ] && read_only=1 || usage; fi
+shift 2
+for a in "$@"; do
+  case "$a" in --read) read_only=1 ;; --user) user_scope=1 ;; *) usage ;; esac
+done
 
-logdir="${JEV_LOG_DIR:-${CLAUDE_PROJECT_DIR:-$here}/.local}"
+workdir="$here"; logdir="${JEV_LOG_DIR:-${CLAUDE_PROJECT_DIR:-$here}/.local}"
+if [ "$user_scope" -eq 1 ]; then workdir=/home/alex/BotHaus; logdir="${JEV_LOG_DIR:-$HOME/.local/state/jevdev}"; fi
 case "$feature" in compact) file=compact.jsonl ;; *) file=sentinel.jsonl ;; esac
 
 # Print the newest row of $file for this host and feature with ts >= $1; exit 0 on a hit, 1 otherwise.
@@ -110,7 +115,7 @@ case "$feature" in
 esac
 
 start=$(date +%s)
-cd "$here" || exit 1
+cd "$workdir" || exit 1
 if [ "$feature" = "ask-skill" ]; then
   case "$host" in
     claude) claude -p --dangerously-skip-permissions --output-format text "$ask_skill_prompt" </dev/null ;;

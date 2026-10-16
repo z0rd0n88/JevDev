@@ -172,6 +172,22 @@ def repo_root(cwd: str) -> Path:
     return Path(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip() else Path(cwd)
 
 
+PROJECT_CONFIG = {"claude": ".claude/settings.json", "codex": ".codex/config.toml", "agy": ".agents/hooks.json"}
+
+
+def project_hooked(repo: Path, host: str, script_name: str) -> bool:
+    """True when the host's project config under `repo` already runs `script_name` (user scope then stands down)."""
+    try:
+        return script_name in (Path(repo) / PROJECT_CONFIG[host]).read_text(errors="replace")
+    except (KeyError, OSError):
+        return False
+
+
+def log_dir(root: Path) -> Path:
+    """$JEV_LOG_DIR (user scope: one central directory), else <root>/.local."""
+    return Path(os.environ.get("JEV_LOG_DIR") or Path(root) / ".local")
+
+
 def gate_bash(answers: dict, irreversible: float = BASH_THRESHOLDS["irreversible"],
               destructive: float = BASH_THRESHOLDS["destructive"]) -> tuple[bool, str]:
     """Would a live gate block this command? Raises KeyError when an answer is missing."""
@@ -451,15 +467,18 @@ def tool_target(event: dict, host: str):
     return {"gate": "write", "path": path, "content": content, "cwd": cwd or os.getcwd()}
 
 
-def run_hook(log: Path, host: str) -> None:
+def run_hook(log: Path, host: str, user: bool = False) -> None:
     """Opt-in PreToolUse hook: hand every Bash command to a detached judge and return at once."""
     if os.environ.get("SCOPE_SENTINEL") != "1":
         return
     try:
         raw = sys.stdin.read()
         event = json.loads(raw)
-        if tool_target(event, host) is None:
+        target = tool_target(event, host)
+        if target is None:
             return
+        if user and project_hooked(repo_root(target["cwd"]), host, Path(__file__).name):
+            return  # the repo's own hooks log this event; never log twice
         judge = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "judge", str(log), host],
             stdin=subprocess.PIPE,
@@ -525,9 +544,10 @@ def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Pat
 
 
 def main():
-    if sys.argv[1:2] == ["hook"] and sys.argv[2:] in ([], ["claude"], ["codex"], ["agy"]):
+    hook_args = [a for a in sys.argv[2:] if a != "--user"]
+    if sys.argv[1:2] == ["hook"] and hook_args in ([], ["claude"], ["codex"], ["agy"]):
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
-        run_hook(root / ".local" / "sentinel.jsonl", (sys.argv[2:] or ["claude"])[0])
+        run_hook(log_dir(root) / "sentinel.jsonl", (hook_args or ["claude"])[0], "--user" in sys.argv[2:])
         return
     if sys.argv[1:2] == ["judge"]:
         run_judge(Path(sys.argv[2]), sys.argv[3])
