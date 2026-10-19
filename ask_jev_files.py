@@ -21,11 +21,10 @@ import subprocess
 import sys
 import time
 
+from jev_patterns import DEFAULT_MODEL, JEV
 from scope_sentinel import (
     BASH_QUESTIONS,
     BLOCK_NOTICE,
-    DEFAULT_MODEL,
-    JEV,
     SENTINEL_VERSION,
     append_row,
     gate_bash,

@@ -11,9 +11,8 @@ import subprocess
 import sys
 import time
 
+from jev_patterns import DEFAULT_MODEL, JEV
 from scope_sentinel import (
-    DEFAULT_MODEL,
-    JEV,
     append_row,
     host_model,
     log_dir,
