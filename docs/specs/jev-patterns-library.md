@@ -139,9 +139,9 @@ Jev request `{"model", "state", "questions"}` and response `{"model", "answers":
 - GC5: `str(JevError)` never contains `jev`'s stderr; stderr is reachable only as `JevError.stderr` (first non-empty line, at most 200 characters). The only caller that emits it is `ask_jev_files.py`, through `scope_sentinel.redact`.
 - GC6: `JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")`, `DEFAULT_MODEL = "jev-latest"`, `NO_KEY = "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"` are defined once, in `jev_patterns.py`, at import time.
 - GC7: No row key in `sentinel.jsonl` or `compact.jsonl` is renamed or removed; `SENTINEL_VERSION`, `ADVISOR_VERSION`, `ROUTER_VERSION` are unchanged.
-- GC8: Every pre-existing `tests/test_*.py` passes; the only permitted edit to one is a single `sys.path.insert(0, <repo root>)` line in its module loader.
+- GC8: Every pre-existing `tests/test_*.py` passes; the only permitted edits to one are a single `sys.path.insert(0, <repo root>)` line in its module loader and adding `"jev_patterns.py"` to a fixture that copies a migrated module into a temp repo (`tests/test_check_install.py` `make_root`, user-confirmed 2026-10-20). Assertions never change.
 - GC9: No hook emits `permissionDecision`, `decision`, or `updatedInput`; hook stdout stays empty in shadow mode.
-- GC10: No PR adds a file under `.local/` or `transcripts/`, or a string matching `scope_sentinel.SECRETS`.
+- GC10: No PR adds a file under `.local/` or `transcripts/`, or a string matching `scope_sentinel.SECRETS` outside `tests/`. Under `tests/`, only made-up placeholder values like AC-1.2's `Bearer secret_leaked_key` are allowed.
 - GC11: One PR per phase from a worktree on `feat/jev-patterns-p<n>-<slug>` off `main`; each PR body carries the test command last lines and the phase's live smoke line.
 
 ## 5. Target Design
@@ -300,6 +300,7 @@ The sentinel row prefix changes from `RuntimeError:` to `JevError:` for transpor
 | Create | `tests/test_jev_patterns.py` | stub-`jev` tests for every `call` branch and helper | 1 |
 | Modify | `scope_sentinel.py` | delete `run_jev`, `DEFAULT_MODEL`, `JEV`; call the library in `judge_write`, `judge_bash`, `run_judge` | 1 |
 | Modify | `tests/test_sentinel.py` | one module-level `sys.path.insert` line after `SOURCE` (`:11`), serving both in-process loaders (`:138-141`, `:162-167`) | 1 |
+| Modify | `tests/test_check_install.py` | add `"jev_patterns.py"` to the `make_root` copy list: its temp repo runs `ask_jev_files.py --help`, which now imports the library | 1 |
 | Modify | `ask_jev_files.py` | Phase 1: import `DEFAULT_MODEL, JEV` from `jev_patterns`; Phase 2: delete `jev_call`, `has_key`, `model_of`, `NO_KEY`; call the library | 1, 2 |
 | Modify | `compact_advisor.py` | Phase 1: import `DEFAULT_MODEL, JEV` from `jev_patterns`; Phase 3: delete `ask_jev`; call the library | 1, 3 |
 | Modify | `README.md` | Phase 1: library paragraph and test command; Phase 4: `## Jev from code` section | 1, 4 |

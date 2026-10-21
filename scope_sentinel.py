@@ -15,8 +15,8 @@ import subprocess
 import sys
 import time
 
-DEFAULT_MODEL = "jev-latest"
-JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
+from jev_patterns import call, input_tokens, model_name
+
 SENTINEL_VERSION = "shadow-v4"
 MAX_JUDGES = 4  # concurrent detached Jev calls; extra commands log a "skipped" row
 _ARG = r"""(?>"[^"]*"|'[^']*'|\S+)"""
@@ -229,33 +229,9 @@ def redact_count(text: str) -> tuple[str, int]:
     return text, total
 
 
-def run_jev(questions: dict, state: dict) -> tuple[dict, float]:
-    """One Jev call (GC2): returns the parsed response and the elapsed seconds."""
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError(
-            "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-        )
-    model = os.environ.get("JEV_MODEL") or DEFAULT_MODEL
-    start = time.perf_counter()
-    process = subprocess.run(
-        [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", "scope_sentinel"],
-        input=json.dumps(state),
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
-    )
-    elapsed = time.perf_counter() - start
-    if process.returncode:
-        raise RuntimeError(
-            f"jev exited {process.returncode}; inspect provider access and limits locally"
-        )
-    return json.loads(process.stdout), elapsed
-
-
 def judge_write(rel_path: str, content: str) -> dict:
     """Judge one write; content must already be redacted and clipped by the caller."""
-    response, elapsed = run_jev(WRITE_QUESTIONS, {"path": rel_path, "content": content})
+    response = call({"path": rel_path, "content": content}, WRITE_QUESTIONS, job="scope_sentinel")
     answers = response["answers"]
     would_block, block_reason = gate_write(answers)
     return {
@@ -264,8 +240,8 @@ def judge_write(rel_path: str, content: str) -> dict:
         "contains_secret": answers["contains_secret"]["noul"],
         "would_block": would_block,
         "block_reason": block_reason,
-        "elapsed": elapsed,
-        "input_tokens": int(response.get("usage", {}).get("input_tokens") or 0),
+        "elapsed": response["elapsed"],
+        "input_tokens": input_tokens(response),
         "jev_model": response.get("model"),
     }
 
@@ -273,7 +249,7 @@ def judge_write(rel_path: str, content: str) -> dict:
 def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> dict:
     state = {"instruction": clip(redact(instruction)), "constraints": clip(redact(constraints)) or "None",
              "command": clip(redact(command)), "cwd": cwd}
-    response, elapsed = run_jev({"scope": SCOPE_QUESTION, **BASH_QUESTIONS}, state)
+    response = call(state, {"scope": SCOPE_QUESTION, **BASH_QUESTIONS}, job="scope_sentinel")
     answers = response["answers"]
     answer = answers["scope"]
     would_block, block_reason = gate_bash(answers)
@@ -285,8 +261,8 @@ def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> di
         "destructive_intent": answers["destructive_intent"]["noul"],
         "would_block": would_block,
         "block_reason": block_reason,
-        "elapsed": elapsed,
-        "input_tokens": int(response.get("usage", {}).get("input_tokens") or 0),
+        "elapsed": response["elapsed"],
+        "input_tokens": input_tokens(response),
         "jev_model": response.get("model"),
     }
 
@@ -495,7 +471,7 @@ def run_hook(log: Path, host: str, user: bool = False) -> None:
 def run_judge(log: Path, host: str) -> None:
     """Detached half of the hook: judge one event with Jev and append one redacted row."""
     row = {"host": host, "sentinel_version": SENTINEL_VERSION,
-           "model": os.environ.get("JEV_MODEL") or DEFAULT_MODEL, "ts": time.time()}
+           "model": model_name(), "ts": time.time()}
     try:
         event = json.load(sys.stdin)
         target = tool_target(event, host)

@@ -34,6 +34,7 @@ def make_root(tmp):
         ".agents/skills/ask-jev/SKILL.md",
         "ask_jev_files.py",
         "scope_sentinel.py",
+        "jev_patterns.py",
     ]:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / rel, root / rel)

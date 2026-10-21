@@ -9,6 +9,7 @@ import tempfile
 import time
 
 SOURCE = Path(__file__).parents[1] / "scope_sentinel.py"
+sys.path.insert(0, str(SOURCE.parent))
 STUB = """#!/usr/bin/env python3
 import json, sys
 state = sys.stdin.read()

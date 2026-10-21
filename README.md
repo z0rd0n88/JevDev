@@ -69,6 +69,12 @@ Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh a
 python3 tests/test_sentinel.py
 ```
 
+`jev_patterns.py` is the only Jev transport the sentinel uses: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
+
+```bash
+python3 tests/test_jev_patterns.py
+```
+
 ## Compaction advisor
 
 `compact_advisor.py` is a `Stop` hook (Claude and Codex) that asks Jev, once per turn and only above the notice line, whether this is a good moment to compact. It prints `{"systemMessage": …}` for you to read, or nothing; it never compacts for you and never blocks. A `Stop` hook is synchronous, so a stalled provider can delay the prompt by up to 40 s once. Four questions over a JSON state (`current_request`, `previous_work` = the 20 most recent earlier prompts, `recent_turn`, `tools_this_turn`): `switched_gears`, `at_boundary`, `needs_history`, `mid_operation`. Tiers: `notice` (below the recommend line), `recommend`, `request`.
