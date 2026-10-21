@@ -1,14 +1,17 @@
 """Offline check for jev_patterns.call and its helpers, using a stub jev executable."""
 
+import atexit
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tempfile
 
 ROOT = Path(__file__).parents[1]
 TMP = Path(tempfile.mkdtemp())
+atexit.register(shutil.rmtree, TMP, True)
 # DR-7: JEV resolves at import, so JEV_BIN must point at the stub before the import below.
 os.environ["JEV_BIN"] = str(TMP / "jev")
 sys.path.insert(0, str(ROOT))
@@ -18,18 +21,20 @@ from jev_patterns import NO_KEY, JevError, call, input_tokens, model_name  # noq
 
 # Records argv, stdin, and its exact inherited environment, then answers from cfg.json.
 STUB = """#!/usr/bin/env python3
-import json, sys, time
+import json, os, sys, time
 from pathlib import Path
 here = Path(__file__).parent
 state = sys.stdin.read()
 # /proc/self/environ is the block the child was started with, before Python's locale coercion edits it.
 env = dict(kv.split("=", 1) for kv in Path("/proc/self/environ").read_text().split("\\0") if kv)
-(here / "rec.json").write_text(json.dumps({"argv": sys.argv[1:], "stdin": state, "env": env}))
+(here / "rec.json").write_text(json.dumps({"argv": sys.argv[1:], "stdin": state, "env": env, "sid": os.getsid(0)}))
 cfg = json.loads((here / "cfg.json").read_text()) if (here / "cfg.json").exists() else {}
 if cfg.get("sleep"):
     time.sleep(cfg["sleep"])
 if cfg.get("stderr"):
     sys.stderr.write(cfg["stderr"])
+if cfg.get("stderr_hex"):
+    sys.stderr.buffer.write(bytes.fromhex(cfg["stderr_hex"]))
 if cfg.get("exit"):
     sys.exit(cfg["exit"])
 if "stdout" in cfg:
@@ -85,6 +90,8 @@ def raises(
     try:
         call({"a": 1}, QUESTIONS, job="t", timeout=timeout)
     except JevError as e:
+        if not (cfg or {}).get("exit"):
+            assert e.returncode is None and e.stderr == "", (str(e), e.returncode, e.stderr)
         return e
     raise AssertionError(f"call must raise JevError for {cfg}")
 
@@ -117,6 +124,7 @@ def check_call() -> None:
     assert response["answers"] == {"q": {"type": "noul", "noul": 0.8}}, response
     assert isinstance(response["elapsed"], float), response
     assert input_tokens(response) == 42, response
+    assert r["sid"] != os.getsid(0), "jev must run in its own session"
 
     use(TYPESAFE_API_KEY="k")
     call("PROMPT: x", QUESTIONS, job="t", model="m2")
@@ -134,6 +142,8 @@ def check_errors() -> None:
     )
     assert "secret_leaked_key" not in str(e)
     assert len(raises({"exit": 1, "stderr": "x" * 500}).stderr) == 200
+    e = raises({"exit": 2, "stderr_hex": "fffe0a"})
+    assert e.returncode == 2 and e.stderr == "\ufffd\ufffd", (e.returncode, e.stderr)
 
     for env in ({}, {"TYPESAFE_API_KEY": "", "OPENROUTER_API_KEY": ""}):
         use(**env)
@@ -146,6 +156,10 @@ def check_errors() -> None:
                 e.returncode,
             )
         assert not (TMP / "rec.json").exists(), "stub must not run without a key"
+
+    use(TYPESAFE_API_KEY="k", OPENROUTER_API_KEY="k2")
+    call({"a": 1}, QUESTIONS, job="t")
+    assert "OPENROUTER_API_KEY" not in rec()["env"], sorted(rec()["env"])
 
     use(TYPESAFE_API_KEY="", OPENROUTER_API_KEY="k2")
     call({"a": 1}, QUESTIONS, job="t")

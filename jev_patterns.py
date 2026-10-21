@@ -74,6 +74,7 @@ def call(
             input=stdin,
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=timeout,
             env=env,
             start_new_session=True,

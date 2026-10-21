@@ -141,7 +141,7 @@ Jev request `{"model", "state", "questions"}` and response `{"model", "answers":
 - GC7: No row key in `sentinel.jsonl` or `compact.jsonl` is renamed or removed; `SENTINEL_VERSION`, `ADVISOR_VERSION`, `ROUTER_VERSION` are unchanged.
 - GC8: Every pre-existing `tests/test_*.py` passes; the only permitted edits to one are a single `sys.path.insert(0, <repo root>)` line in its module loader and adding `"jev_patterns.py"` to a fixture that copies a migrated module into a temp repo (`tests/test_check_install.py` `make_root`, user-confirmed 2026-10-20). Assertions never change.
 - GC9: No hook emits `permissionDecision`, `decision`, or `updatedInput`; hook stdout stays empty in shadow mode.
-- GC10: No PR adds a file under `.local/` or `transcripts/`, or a string matching `scope_sentinel.SECRETS`.
+- GC10: No PR adds a file under `.local/` or `transcripts/`, or a string matching `scope_sentinel.SECRETS` outside `tests/`. Under `tests/`, only made-up placeholder values like AC-1.2's `Bearer secret_leaked_key` are allowed.
 - GC11: One PR per phase from a worktree on `feat/jev-patterns-p<n>-<slug>` off `main`; each PR body carries the test command last lines and the phase's live smoke line.
 
 ## 5. Target Design
