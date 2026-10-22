@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 
-from jev_patterns import DEFAULT_MODEL, JEV
+from jev_patterns import JevError, NO_KEY, call, has_key, model_name
 from scope_sentinel import (
     BASH_QUESTIONS,
     BLOCK_NOTICE,
@@ -55,9 +55,6 @@ PICK_FLOOR = 0.3
 WORKERS = 16
 BINARY_NAME = re.compile(
     r"\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tgz|woff2?|ttf|mp[34]|mov|lock)$", re.I
-)
-NO_KEY = (
-    "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
 )
 
 
@@ -155,29 +152,6 @@ def parse_questions(text: str) -> dict:
         raise ValueError(f"invalid questions_json: {e}") from None
 
 
-def jev_call(state, questions: dict, job: str, model: str) -> dict:
-    """One Jev call (GC2). Raises RuntimeError with the first line of stderr on failure."""
-    try:
-        done = subprocess.run(
-            [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", job],
-            input=json.dumps(state),
-            capture_output=True,
-            text=True,
-            timeout=40,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as e:
-        raise RuntimeError(f"{type(e).__name__}: {e}") from None
-    if done.returncode:
-        raise RuntimeError(
-            (done.stderr.strip().splitlines() or [f"jev exited {done.returncode}"])[0]
-        )
-    try:
-        return json.loads(done.stdout)
-    except ValueError:
-        raise RuntimeError("jev returned non-JSON output") from None
-
-
 def split_parts(parts: dict[str, int], budget: int) -> list[list[str]]:
     """Greedy largest-first first-fit packing of part names into bins of at most budget tokens."""
     bins = []
@@ -195,16 +169,6 @@ def split_parts(parts: dict[str, int], budget: int) -> list[list[str]]:
 def emit(obj: dict, code: int = 0) -> int:
     print(json.dumps(obj))
     return code
-
-
-def has_key() -> bool:
-    return bool(
-        os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
-    )
-
-
-def model_of(args) -> str:
-    return args.model or os.environ.get("JEV_MODEL") or DEFAULT_MODEL
 
 
 def redact_deep(value):
@@ -231,7 +195,7 @@ def cmd_files(args) -> int:
     cwd = Path(os.getcwd())
     root = repo_root(str(cwd))
     kept, skipped = prune(expand(args.paths, cwd, args.recursive), root)
-    model = model_of(args)
+    model = model_name(args.model)
 
     def one(rel):
         try:
@@ -241,9 +205,14 @@ def cmd_files(args) -> int:
         except OSError as e:
             return rel, None, f"unreadable: {e.strerror}", False
         try:
-            return rel, jev_call(state, questions, "ask_jev_files", model), None, True
-        except RuntimeError as e:
-            return rel, None, f"jev: {e}", True
+            return (
+                rel,
+                call(state, questions, job="ask_jev_files", model=model),
+                None,
+                True,
+            )
+        except JevError as e:
+            return rel, None, f"jev: {redact(e.stderr) or e}", True
 
     results, calls, jev_model = [], 0, None
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -282,14 +251,16 @@ def cmd_pick(args) -> int:
         }
     }
     try:
-        answer = jev_call(
+        answer = call(
             {"question": args.q, "files": kept},
             questions,
-            "ask_jev_pick",
-            model_of(args),
+            job="ask_jev_pick",
+            model=model_name(args.model),
         )["answers"]["pick"]
     except (RuntimeError, KeyError) as e:
-        return emit({"error": f"pick failed: {e}"}, 2)
+        return emit(
+            {"error": f"pick failed: {redact(getattr(e, 'stderr', '')) or e}"}, 2
+        )
     choice, confidence = answer["choice"], answer["confidence"]
     path = None if choice == "none" or confidence < PICK_FLOOR else choice
     return emit(
@@ -317,11 +288,11 @@ def parse_own_state(text: str) -> dict:
 
 def gate_command(command: str, cwd: Path, root: Path, model: str):
     """Judge command live and log the decision. Returns (blocked, reason); raises RuntimeError or KeyError."""
-    response = jev_call(
+    response = call(
         {"command": redact(command)[:2000], "cwd": str(root)},
         BASH_QUESTIONS,
-        "ask_jev_gate",
-        model,
+        job="ask_jev_gate",
+        model=model,
     )
     answers = response["answers"]
     blocked, reason = gate_bash(answers)
@@ -372,7 +343,7 @@ def cmd_ask(args) -> int:
         return emit({"error": NO_KEY}, 78)
     cwd = Path(os.getcwd())
     root = repo_root(str(cwd))
-    model = model_of(args)
+    model = model_name(args.model)
     own = redact_deep(parse_own_state(args.state)) if args.state is not None else {}
     files, rels = {}, []
     if args.paths:
@@ -395,7 +366,12 @@ def cmd_ask(args) -> int:
         try:
             blocked, reason = gate_command(args.command, cwd, root, model)
         except (RuntimeError, KeyError) as e:
-            return emit({"error": f"gate failed, command not run: {e}"}, 2)
+            return emit(
+                {
+                    "error": f"gate failed, command not run: {redact(getattr(e, 'stderr', '')) or e}"
+                },
+                2,
+            )
         if blocked:
             return emit({"error": f"blocked: {reason}. {BLOCK_NOTICE}"}, 2)
         try:
@@ -441,9 +417,9 @@ def cmd_ask(args) -> int:
         **({"output": output} if output is not None else {}),
     }
     try:
-        response = jev_call(state, questions, "ask_jev", model)
-    except RuntimeError as e:
-        return emit({"error": f"jev: {e}"}, 2)
+        response = call(state, questions, job="ask_jev", model=model)
+    except JevError as e:
+        return emit({"error": f"jev: {redact(e.stderr) or e}"}, 2)
     return emit(
         {
             "answers": response["answers"],

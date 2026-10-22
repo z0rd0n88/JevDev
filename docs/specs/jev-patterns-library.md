@@ -175,7 +175,7 @@ def call(state, questions: dict, *, job: str, model: str | None = None,
 3. `subprocess.run([str(JEV), "-m", model_name(model), "-q", json.dumps(questions), "-j", job], input=stdin, capture_output=True, text=True, timeout=timeout, env=env, start_new_session=True, check=False)` timed with `time.perf_counter()`.
 4. `OSError` (missing or non-executable binary) → `JevError(f"{type(e).__name__}: {e}")`. `subprocess.TimeoutExpired` → `JevError(f"jev timed out after {timeout:g}s")`.
 5. Non-zero exit → `JevError(f"jev exited {rc}; inspect provider access and limits locally", returncode=rc, stderr=<first non-empty stderr line>[:200])`.
-6. `json.loads(stdout)` failing → `JevError("jev returned non-JSON output")`; a non-dict → `JevError("jev response is not an object")`.
+6. `json.loads(stdout)` raising `ValueError` (a `JSONDecodeError`, or an integer literal over Python's 4300-digit limit) or `RecursionError` → `JevError("jev returned non-JSON output")`; a non-dict → `JevError("jev response is not an object")`.
 7. `response.get("answers")` not a dict → `JevError("jev response missing 'answers' object")`; for every id in `questions`, `answers[id]` absent or not a dict → `JevError(f"jev response missing answer {id!r}")`. Nothing else is validated (DR-5).
 8. `response["elapsed"] = <seconds around step 3>`; return `response`.
 
@@ -208,7 +208,7 @@ README gains a `## Jev from code` section (Phase 4) that names, per level, the i
 | non-JSON stdout | `jev returned non-JSON output` | `None` | `""` | same pattern | same | `jev: jev returned non-JSON output` |
 | `answers` missing or an id missing | `jev response missing answer 'effect'` | `None` | `""` | same pattern | same | `jev: jev response missing answer 'relevant'` |
 
-The sentinel row prefix changes from `RuntimeError:` to `JevError:` for transport failures (`scope_sentinel.py:524` formats the type name); the row key set is unchanged (GC7).
+The sentinel row prefix changes from `RuntimeError:` to `JevError:` for transport failures (`scope_sentinel.py:524` formats the type name); the row key set is unchanged (GC7). In `ask_jev_files.py`, `pick` and the `--command` gate print the same redacted line after their own prefixes (`pick failed: `, `gate failed, command not run: `).
 
 ## 6. Decision Records
 
@@ -350,13 +350,13 @@ The sentinel row prefix changes from `RuntimeError:` to `JevError:` for transpor
   - Delete: `ask_jev_files.py:60-62` (`NO_KEY`), `:159-179` (`jev_call`), `:201-208` (`has_key`, `model_of`).
   - Modify: `ask_jev_files.py:235,290,376` — `model_of(args)` → `model_name(args.model)`.
   - Modify: `ask_jev_files.py:244-247` — `return rel, call(state, questions, job="ask_jev_files", model=model), None, True` and `except JevError as e: return rel, None, f"jev: {redact(e.stderr) or e}", True`.
-  - Modify: `ask_jev_files.py:285-293` — `call({"question": args.q, "files": kept}, questions, job="ask_jev_pick", model=model_name(args.model))["answers"]["pick"]`; the `except (RuntimeError, KeyError)` stays (a `JevError` is a `RuntimeError`; `KeyError` still covers `answer["choice"]` at `:294`).
+  - Modify: `ask_jev_files.py:285-293` — `call({"question": args.q, "files": kept}, questions, job="ask_jev_pick", model=model_name(args.model))["answers"]["pick"]`; the `except (RuntimeError, KeyError)` stays (a `JevError` is a `RuntimeError`) and formats `f"pick failed: {redact(getattr(e, 'stderr', '')) or e}"` (DR-3; added in the #43 review, `getattr` because the handler also catches `KeyError`). `answer["choice"]` sits outside the `try`, so a malformed answer is still a traceback (#44).
   - Modify: `ask_jev_files.py:321-326` — `call({"command": …, "cwd": str(root)}, BASH_QUESTIONS, job="ask_jev_gate", model=model)`.
   - Modify: `ask_jev_files.py:444-447` — `call(state, questions, job="ask_jev", model=model)`; `except JevError as e: return emit({"error": f"jev: {redact(e.stderr) or e}"}, 2)`.
   - Test: `tests/test_ask_jev_files.py` (unchanged; `:113` already inserts the repo root).
 - Interfaces:
   - Consumes (from `jev_patterns`): `call(state, questions, *, job, model=None, timeout=40.0) -> dict` raising `JevError` with `.stderr`; `has_key() -> bool`; `model_name(model: str | None) -> str`; `NO_KEY: str`. From `scope_sentinel`: `redact(text: str) -> str` (`:61-64`, already imported at `:33`).
-  - Produces: no new symbols. `cmd_files` skip reason and `cmd_ask` error text are `f"jev: {redact(e.stderr) or e}"`.
+  - Produces: no new symbols. `cmd_files` skip reason and `cmd_ask` error text are `f"jev: {redact(e.stderr) or e}"`; `cmd_pick` and the `--command` gate keep their prefixes (`pick failed: `, `gate failed, command not run: `) followed by `redact(getattr(e, 'stderr', '')) or e`.
   - Unchanged: exit codes 0 / 2 / 64 / 78; `{"error": NO_KEY}` with exit 78 before any file is read (`:230-231`, `:273-274`, `:372-373`); `validate_questions`; the sentinel row written by `gate_command` (`:334-356`); `import subprocess` and `time` stay for `--command` (`:403-413`, `:341`).
 - Gotchas: `tests/test_ask_jev_files.py:165-170` expects `jev: HTTP 429 rate limited` from a stub that prints two stderr lines and exits 2 — `.stderr` is the first line, so the text matches only through `e.stderr`, never `str(e)`. The `files` worker runs in a thread pool (`:250`); `JevError` must be caught inside `one()` so a provider failure stays a `skipped` entry.
 - Complexity: mechanical
@@ -471,8 +471,8 @@ All tests are stdlib, run as `python3 tests/test_<name>.py`, and replace Jev wit
 
 **Sequence.** Four phases, four PRs after this spec PR, each from its own worktree off `main`:
 
-1. `feat/jev-patterns-p1-library-sentinel` — adds `jev_patterns.py`, its test, migrates the sentinel, moves two import lines. Claude, Codex, and agy project hooks pick up the new transport at the next tool call with no config change and no Codex re-trust (§4). After merge: `git -C ~/JevDev pull --ff-only` so user-scope hooks import the module.
-2. `feat/jev-patterns-p2-ask-jev-files` — CLI only; the ask-jev skill's recipes keep working (`tests/test_ask_jev_skill.py` runs the fenced blocks with the stub).
+1. `feat/jev-patterns-p1-library-sentinel` — adds `jev_patterns.py`, its test, migrates the sentinel, moves two import lines. Claude, Codex, and agy project hooks pick up the new transport at the next tool call with no config change and no Codex re-trust (§4). After merge: `git -C ~/JevDev pull --ff-only` so user-scope hooks import the module. **Shipped: #39.**
+2. `feat/jev-patterns-p2-ask-jev-files` — CLI only; the ask-jev skill's recipes keep working (`tests/test_ask_jev_skill.py` runs the fenced blocks with the stub). **Shipped: #43** (review follow-ups: #44).
 3. `feat/jev-patterns-p3-compact-advisor` — Stop hook; no config change.
 4. `feat/jev-patterns-p4-router-curator-handoff` — the three CLIs plus the router hook, three loader lines, README section. Independent of 2 and 3; lands last so the GC2 grep is the merge check.
 

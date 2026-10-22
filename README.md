@@ -69,7 +69,7 @@ Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh a
 python3 tests/test_sentinel.py
 ```
 
-`jev_patterns.py` is the only Jev transport the sentinel uses: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
+`jev_patterns.py` is the only Jev transport the sentinel and `ask_jev_files.py` use: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
 
 ```bash
 python3 tests/test_jev_patterns.py
@@ -107,7 +107,7 @@ python3 /home/alex/JevDev/ask_jev_files.py ask   -q QUESTIONS_JSON [--state TEXT
 
 Recursive then pick: `files -r -q '<one noul question>' .` fans out over a tree, keep the paths whose answer clears your bar, then `pick -q '<question>' <those paths>` chooses one.
 
-Exit codes: 0 ok; 2 refused or failed (stdout is `{"error": …}`); 64 usage error; 78 no Jev key (`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY`; run through `with_jev_key.sh`). Questions are validated before any file is read.
+Exit codes: 0 ok; 2 refused or failed (stdout is `{"error": …}`); 64 usage error; 78 no Jev key (`TYPESAFE_API_KEY` or `OPENROUTER_API_KEY`; run through `with_jev_key.sh`). Questions are validated before any file is read. When Jev fails, the reason is the first line of `jev`'s stderr with secrets redacted (for example `jev: HTTP 429 rate limited`), or the library's safe message when there is none.
 
 Smoke: `bash smoke.sh claude ask` and `bash smoke.sh agy ask` have the host run the triage question over `python3 tests/test_sentinel.py`; the host's reply holds the `kind` and `flaky` answers and the script prints the host's sentinel row. Codex: run `codex` here, trust the hooks, send the same prompt, then `bash smoke.sh codex ask --read`.
 
