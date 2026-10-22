@@ -170,6 +170,9 @@ def check_errors() -> None:
 
     assert str(raises({"sleep": 3}, timeout=0.5)) == "jev timed out after 0.5s"
     assert str(raises({"stdout": "not json"})) == "jev returned non-JSON output"
+    # Python 3.12 rejects int literals over 4300 digits with a plain ValueError, not a JSONDecodeError.
+    huge = '{"answers": {"q": {"noul": ' + "1" * 5000 + "}}}"
+    assert str(raises({"stdout": huge})) == "jev returned non-JSON output"
     assert str(raises({"stdout": "[1]"})) == "jev response is not an object"
     assert str(raises({"stdout": "{}"})) == "jev response missing 'answers' object"
     assert (

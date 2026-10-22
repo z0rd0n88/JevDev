@@ -258,7 +258,9 @@ def cmd_pick(args) -> int:
             model=model_name(args.model),
         )["answers"]["pick"]
     except (RuntimeError, KeyError) as e:
-        return emit({"error": f"pick failed: {e}"}, 2)
+        return emit(
+            {"error": f"pick failed: {redact(getattr(e, 'stderr', '')) or e}"}, 2
+        )
     choice, confidence = answer["choice"], answer["confidence"]
     path = None if choice == "none" or confidence < PICK_FLOOR else choice
     return emit(
@@ -364,7 +366,12 @@ def cmd_ask(args) -> int:
         try:
             blocked, reason = gate_command(args.command, cwd, root, model)
         except (RuntimeError, KeyError) as e:
-            return emit({"error": f"gate failed, command not run: {e}"}, 2)
+            return emit(
+                {
+                    "error": f"gate failed, command not run: {redact(getattr(e, 'stderr', '')) or e}"
+                },
+                2,
+            )
         if blocked:
             return emit({"error": f"blocked: {reason}. {BLOCK_NOTICE}"}, 2)
         try:

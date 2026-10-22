@@ -94,7 +94,7 @@ def call(
         )
     try:
         response = json.loads(process.stdout)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         raise JevError("jev returned non-JSON output") from None
     if not isinstance(response, dict):
         raise JevError("jev response is not an object")
