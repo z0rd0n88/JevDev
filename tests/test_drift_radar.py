@@ -1,10 +1,16 @@
-"""Tests for Decision Drift Radar (Slice 1)."""
+"""Tests for Decision Drift Radar."""
 
+import importlib.util
+import json
 import os
 from pathlib import Path
-import importlib.util
+import subprocess
+import sys
+import tempfile
+from unittest import mock
 
 SOURCE = Path(__file__).parents[1] / "drift_radar.py"
+
 
 def load_module():
     spec = importlib.util.spec_from_file_location("drift_radar", SOURCE)
@@ -12,46 +18,389 @@ def load_module():
     spec.loader.exec_module(module)
     return module
 
+
 def test_load_diff():
     module = load_module()
-    
+
     # Test valid file
-    test_diff = Path("test_dummy.diff")
-    test_diff.write_text("--- a/file\n+++ b/file\n+ added line")
-    
-    try:
+    with tempfile.TemporaryDirectory() as d:
+        test_diff = Path(d) / "test_dummy.diff"
+        test_diff.write_text("--- a/file\n+++ b/file\n+ added line")
         content = module.load_diff_file(str(test_diff))
         assert "added line" in content
-    finally:
-        test_diff.unlink()
+
 
 def test_missing_diff():
     module = load_module()
-    
+
     try:
         module.load_diff_file("nonexistent.diff")
         assert False, "Should have raised FileNotFoundError"
     except FileNotFoundError:
         pass
 
+
+def test_binary_and_regular_file_checks():
+    module = load_module()
+
+    # Path is directory or empty
+    try:
+        module.load_diff_file("")
+        assert False, "Should have raised ValueError for empty path / directory"
+    except ValueError as e:
+        assert "not a regular file" in str(e)
+
+    with tempfile.TemporaryDirectory() as d:
+        binary_file = Path(d) / "binary.diff"
+        binary_file.write_bytes(b"GIT binary patch\x00\x01\x02")
+        try:
+            module.load_diff_file(str(binary_file))
+            assert False, "Should have raised ValueError on binary file"
+        except ValueError as e:
+            assert "binary" in str(e).lower()
+
+        latin1_file = Path(d) / "latin1.diff"
+        latin1_file.write_bytes(b"--- a/f\n+++ b/f\n+ accent \xe9\n")
+        content = module.load_diff_file(str(latin1_file))
+        assert "accent" in content
+
+
+def test_size_ceiling_and_secret_redaction():
+    module = load_module()
+    with tempfile.TemporaryDirectory() as d:
+        large = Path(d) / "oversized.diff"
+        large.write_text("+" * (1024 * 1024 + 1))
+        try:
+            module.load_diff_file(str(large))
+            assert False, "Should have raised ValueError on oversized diff"
+        except ValueError as e:
+            assert "exceeds maximum allowed size" in str(e)
+
+        secret_file = Path(d) / "secret.diff"
+        secret_file.write_text(
+            "+ token = ghp_abcdef12345678901234\n+ key = sk-1234567890abcdef1234567890\n"
+        )
+        content = module.load_diff_file(str(secret_file))
+        assert "ghp_abcdef12345678901234" not in content
+        assert "sk-1234567890abcdef1234567890" not in content
+        assert "[REDACTED]" in content
+
+
+def test_prompt_injection_defense():
+    module = load_module()
+    questions = module.build_jev_questions()
+    instructions = questions["drift"]["instructions"]
+    assert "untrusted" in instructions.lower() or "passive" in instructions.lower()
+    content = module.format_state_content("decision text", "diff hunk text")
+    assert "<owner_decision>\ndecision text\n</owner_decision>" in content
+    assert "<untrusted_diff_hunk>\ndiff hunk text\n</untrusted_diff_hunk>" in content
+
+
 def test_jev_questions():
     module = load_module()
     questions = module.build_jev_questions()
-    
+
     assert "drift" in questions
     assert questions["drift"]["type"] == "choice"
-    
+
     criteria = questions["drift"]["criteria"]
     assert "implements" in criteria
     assert "contradicts" in criteria
     assert "unaddressed" in criteria
     assert "defers" in criteria
+    assert "unclear" in criteria
+
+
+def test_cli_drift_flags_and_json():
+    module = load_module()
+    with tempfile.TemporaryDirectory() as d:
+        diff_file = Path(d) / "sample.diff"
+        diff_file.write_text("--- a/f\n+++ b/f\n+line\n")
+
+        # Mock evaluate_drift to return defers
+        orig_evaluate = module.evaluate_drift
+        orig_argv = sys.argv
+        try:
+            module.evaluate_drift = lambda decision, diff: {
+                "result": "defers",
+                "confidence": 0.9,
+                "elapsed": 0.1,
+                "input_tokens": 50,
+            }
+
+            # Test --json flag
+            import io
+
+            buf = io.StringIO()
+            sys.argv = [
+                "drift_radar.py",
+                "--decision",
+                "Defer X",
+                "--diff",
+                str(diff_file),
+                "--json",
+            ]
+            with mock.patch("sys.stdout", buf):
+                module.main()
+            parsed = json.loads(buf.getvalue())
+            assert parsed["result"] == "defers"
+            assert parsed["confidence"] == 0.9
+
+            # Test --fail-on-drift flag exits with 2
+            sys.argv = [
+                "drift_radar.py",
+                "--decision",
+                "Defer X",
+                "--diff",
+                str(diff_file),
+                "--fail-on-drift",
+            ]
+            try:
+                with mock.patch("sys.stdout", io.StringIO()):
+                    module.main()
+                assert False, (
+                    "Should have exited with status 2 on drift with --fail-on-drift"
+                )
+            except SystemExit as e:
+                assert e.code == 2, f"Expected exit code 2, got {e.code}"
+        finally:
+            module.evaluate_drift = orig_evaluate
+            sys.argv = orig_argv
+
+
+def test_confidence_and_json_traversal():
+    module = load_module()
+    mock_response = {
+        "answers": {
+            "drift": {
+                "choice": "implements",
+                "probabilities": {
+                    "implements": 0.88,
+                    "contradicts": 0.08,
+                    "unaddressed": 0.04,
+                    "defers": 0.0,
+                    "unclear": 0.0,
+                },
+            }
+        },
+        "usage": None,
+    }
+
+    class MockProcess:
+        returncode = 0
+        stdout = json.dumps(mock_response)
+        stderr = ""
+
+    with mock.patch("subprocess.run", return_value=MockProcess()):
+        with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+            res = module.evaluate_drift("decision", "diff")
+            assert res["result"] == "implements"
+            assert res["confidence"] == 0.88, f"Expected 0.88, got {res['confidence']}"
+            assert res["input_tokens"] == 0, f"Expected 0, got {res['input_tokens']}"
+
+
+def test_error_sanitization_and_timeout():
+    module = load_module()
+
+    class FailingProcess:
+        returncode = 1
+        stdout = ""
+        stderr = "HTTP 401 Unauthorized: Bearer sk-ant-secret-123456"
+
+    with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+        with mock.patch("subprocess.run", return_value=FailingProcess()):
+            try:
+                module.evaluate_drift("decision", "diff")
+                assert False, "Should have raised RuntimeError on failure"
+            except RuntimeError as e:
+                assert "sk-ant-secret-123456" not in str(e)
+                assert "inspect provider access and limits locally" in str(e)
+
+        with mock.patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="jev", timeout=40),
+        ):
+            try:
+                module.evaluate_drift("decision", "diff")
+                assert False, "Should have caught TimeoutExpired"
+            except RuntimeError as e:
+                assert "jev timed out while evaluating drift" in str(e)
+
+
+STUB_JEV = """#!/usr/bin/env python3
+import json, sys
+state = sys.stdin.read()
+if "FAIL_EXIT" in state:
+    sys.stderr.write("jev mock failure\\n")
+    sys.exit(2)
+if "contradicts" in state:
+    print(json.dumps({"answers": {"drift": {"choice": "contradicts", "probabilities": {"contradicts": 0.85}}}, "usage": {"input_tokens": 50}}))
+elif "unaddressed" in state:
+    print(json.dumps({"answers": {"drift": {"choice": "unaddressed", "probabilities": {"unaddressed": 0.75}}}, "usage": {"input_tokens": 45}}))
+elif "defers" in state:
+    print(json.dumps({"answers": {"drift": {"choice": "defers", "probabilities": {"defers": 0.90}}}, "usage": {"input_tokens": 55}}))
+else:
+    print(json.dumps({"answers": {"drift": {"choice": "implements", "probabilities": {"implements": 0.95}}}, "usage": {"input_tokens": 42}}))
+"""
+
+
+def test_evaluate_drift_offline_stub():
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        stub_jev = tmp / "jev"
+        stub_jev.write_text(STUB_JEV)
+        stub_jev.chmod(0o755)
+
+        env_backup = dict(os.environ)
+        os.environ["JEV_BIN"] = str(stub_jev)
+        os.environ["TYPESAFE_API_KEY"] = "mock-key"
+        try:
+            module = load_module()
+
+            res = module.evaluate_drift("fulfill decision", "--- a/x\n+++ b/x\n+1")
+            assert res["result"] == "implements"
+            assert res["confidence"] == 0.95
+            assert res["input_tokens"] == 42
+            assert res["elapsed"] >= 0.0
+
+            res = module.evaluate_drift("contradicts decision", "--- a/x\n+++ b/x\n-1")
+            assert res["result"] == "contradicts"
+            assert res["confidence"] == 0.85
+
+            try:
+                module.evaluate_drift("FAIL_EXIT", "diff")
+                assert False, "Should have raised RuntimeError on non-zero exit"
+            except RuntimeError as e:
+                assert "jev exited 2" in str(e)
+                assert "inspect provider access and limits locally" in str(e)
+        finally:
+            os.environ.clear()
+            os.environ.update(env_backup)
+
+
+def test_evaluate_drift_missing_key():
+    env_backup = dict(os.environ)
+    os.environ.pop("TYPESAFE_API_KEY", None)
+    os.environ.pop("OPENROUTER_API_KEY", None)
+    try:
+        module = load_module()
+        try:
+            module.evaluate_drift("decision", "diff")
+            assert False, "Should have raised RuntimeError when no API keys are present"
+        except RuntimeError as e:
+            assert "Jev key unavailable in environment" in str(e)
+    finally:
+        os.environ.clear()
+        os.environ.update(env_backup)
+
+
+def test_cli_subprocess_integration():
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        stub_jev = tmp / "jev"
+        stub_jev.write_text(STUB_JEV)
+        stub_jev.chmod(0o755)
+
+        diff_file = tmp / "sample.diff"
+        diff_file.write_text("--- a/foo\n+++ b/foo\n+line")
+
+        env = {
+            **os.environ,
+            "JEV_BIN": str(stub_jev),
+            "TYPESAFE_API_KEY": "mock-key",
+        }
+
+        # 1. Successful implements verdict
+        cmd = [
+            sys.executable,
+            str(SOURCE),
+            "--decision",
+            "fulfill requirement",
+            "--diff",
+            str(diff_file),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, proc.stderr
+        assert "Verdict:  IMPLEMENTS (confidence 0.95)" in proc.stdout
+        assert "WARNING: Review required!" not in proc.stdout
+
+        # 2. Contradicts verdict with warning
+        cmd = [
+            sys.executable,
+            str(SOURCE),
+            "--decision",
+            "contradicts requirement",
+            "--diff",
+            str(diff_file),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, proc.stderr
+        assert "Verdict:  CONTRADICTS (confidence 0.85)" in proc.stdout
+        assert "WARNING: Review required! Drift detected." in proc.stdout
+
+        # 3. Fail on drift flag with contradicts verdict
+        cmd = [
+            sys.executable,
+            str(SOURCE),
+            "--decision",
+            "contradicts requirement",
+            "--diff",
+            str(diff_file),
+            "--fail-on-drift",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 2, f"Expected returncode 2, got {proc.returncode}"
+
+        # 4. JSON output format
+        cmd = [
+            sys.executable,
+            str(SOURCE),
+            "--decision",
+            "fulfill requirement",
+            "--diff",
+            str(diff_file),
+            "--json",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, proc.stderr
+        data = json.loads(proc.stdout)
+        assert data["result"] == "implements"
+        assert data["confidence"] == 0.95
+
+        # 5. Missing required args
+        cmd = [sys.executable, str(SOURCE), "--decision", "some decision"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 2
+
+        # 6. Non-existent diff file
+        cmd = [
+            sys.executable,
+            str(SOURCE),
+            "--decision",
+            "decision",
+            "--diff",
+            str(tmp / "nonexistent.diff"),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 1
+        assert "Diff file not found" in proc.stderr
+
 
 def main():
     test_load_diff()
     test_missing_diff()
+    test_binary_and_regular_file_checks()
+    test_size_ceiling_and_secret_redaction()
+    test_prompt_injection_defense()
     test_jev_questions()
+    test_cli_drift_flags_and_json()
+    test_confidence_and_json_traversal()
+    test_error_sanitization_and_timeout()
+    test_evaluate_drift_offline_stub()
+    test_evaluate_drift_missing_key()
+    test_cli_subprocess_integration()
     print("All tests passed.")
+
 
 if __name__ == "__main__":
     main()
