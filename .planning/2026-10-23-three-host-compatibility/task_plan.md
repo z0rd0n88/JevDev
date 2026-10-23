@@ -23,8 +23,9 @@ are not part of this work.
 - Check installation reports routing and all supported host integrations.
 
 ## Next Step
-Publish the prepared PR. After merge, review the updated Codex hooks in /hooks
-and run interactive routing smoke checks with an inherited Jev key.
+Review PR https://github.com/z0rd0n88/JevDev/pull/48. After merge, review the
+updated Codex hooks in /hooks and run interactive routing smoke checks with
+an inherited Jev key.
 
 ## Errors Encountered
 - The existing Codex parser returns an empty roster for descriptions between
