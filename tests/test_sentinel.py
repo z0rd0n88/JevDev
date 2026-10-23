@@ -121,17 +121,50 @@ def transcript(tmp: Path, lines: list) -> str:
     return str(path)
 
 
+def wrapper_copy(home: str) -> Path:
+    """A copy of with_jev_key.sh beside a stand-in scope_sentinel.py that prints its environment."""
+    d = Path(home, "jevdev")
+    d.mkdir()
+    (d / "with_jev_key.sh").write_text((SOURCE.parent / "with_jev_key.sh").read_text())
+    (d / "scope_sentinel.py").write_text("import os\nfor k, v in os.environ.items():\n    print(f'{k}={v}')\n")
+    return d
+
+
 def check_key_only() -> None:
     """with_jev_key.sh passes the Jev key from the secrets file and nothing else."""
     with tempfile.TemporaryDirectory() as home:
         Path(home, ".secr" + "ets").write_text(
             "export GH_TOKEN=ghp_should_not_leak\nexport TYPESAFE_API_KEY=jev-key\nRUNPOD_API_KEY=nope\n")
+        d = wrapper_copy(home)
         env = {k: v for k, v in os.environ.items() if k not in ("TYPESAFE_API_KEY", "GH_TOKEN", "RUNPOD_API_KEY")}
-        done = subprocess.run(["bash", str(SOURCE.parent / "with_jev_key.sh"), "env"],
-                              capture_output=True, text=True, env={**env, "HOME": home})
+        env.update(HOME=home, OPENROUTER_API_KEY="sk-or-from-the-repo", JEV_BIN="/tmp/not-jev")
+        done = subprocess.run(["bash", str(d / "with_jev_key.sh"), "python3", str(d / "scope_sentinel.py")],
+                              capture_output=True, text=True, env=env)
         assert done.returncode == 0, done.stderr
-        assert "TYPESAFE_API_KEY=jev-key" in done.stdout.splitlines(), "Jev key must be passed"
+        lines = done.stdout.splitlines()
+        assert "TYPESAFE_API_KEY=jev-key" in lines, "Jev key must be passed"
         assert "ghp_should_not_leak" not in done.stdout and "RUNPOD_API_KEY" not in done.stdout, "other secrets leaked"
+        assert not any(x.startswith(("OPENROUTER_API_KEY=", "JEV_BIN=")) for x in lines), \
+            "a key or JEV_BIN set by the caller must not reach the script"
+
+
+def check_wrapper_refuses() -> None:
+    """with_jev_key.sh runs only JevDev's own Jev scripts beside it, so it can't hand the key to anything else."""
+    with tempfile.TemporaryDirectory() as home:
+        Path(home, ".secr" + "ets").write_text("export TYPESAFE_API_KEY=jev-key\n")
+        d = wrapper_copy(home)
+        other = Path(home, "other")
+        other.mkdir()
+        (other / "scope_sentinel.py").write_text((d / "scope_sentinel.py").read_text())
+        (d / "notes.py").write_text((d / "scope_sentinel.py").read_text())
+        env = {k: v for k, v in os.environ.items() if k not in ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY")}
+        for argv in (["env"], ["printenv", "TYPESAFE_API_KEY"], ["python3", "-c", "import os; print(os.environ)"],
+                     ["python3", str(other / "scope_sentinel.py")], ["python3", str(d / "notes.py")],
+                     ["bash", str(d / "scope_sentinel.py")], ["python3", f"{d}/../other/scope_sentinel.py"], []):
+            done = subprocess.run(["bash", str(d / "with_jev_key.sh"), *argv],
+                                  capture_output=True, text=True, env={**env, "HOME": home})
+            assert done.returncode == 64, (argv, done.returncode, done.stdout, done.stderr)
+            assert "jev-key" not in done.stdout + done.stderr, argv
 
 
 def check_patterns() -> None:
@@ -520,6 +553,7 @@ def check_write_configs() -> None:
 def main() -> None:
     check_patterns()
     check_key_only()
+    check_wrapper_refuses()
     check_helpers()
     check_bash_gate()
     check_write_helpers()

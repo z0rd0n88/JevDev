@@ -51,6 +51,7 @@ MAX_FILES = 255
 MAX_ASK_FILES = 20
 STATE_TOKEN_BUDGET = 60000
 MAX_OWN_STATE_CHARS = 8000
+MAX_COMMAND_CHARS = 2000  # the gate judges the whole command or refuses it; it never runs unjudged text
 PICK_FLOOR = 0.3
 WORKERS = 16
 BINARY_NAME = re.compile(
@@ -339,6 +340,14 @@ def cmd_ask(args) -> int:
             },
             2,
         )
+    if args.command is not None and len(redact(args.command)) > MAX_COMMAND_CHARS:
+        return emit(
+            {
+                "error": f"command too long: {len(redact(args.command))} chars, limit {MAX_COMMAND_CHARS}; "
+                "nothing was judged or run"
+            },
+            2,
+        )
     if not has_key():
         return emit({"error": NO_KEY}, 78)
     cwd = Path(os.getcwd())
@@ -383,7 +392,14 @@ def cmd_ask(args) -> int:
                 capture_output=True,
                 text=True,
                 errors="replace",
-                env={**os.environ, "CI": "1"},
+                env={
+                    **{
+                        k: v
+                        for k, v in os.environ.items()
+                        if k not in ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY")
+                    },
+                    "CI": "1",
+                },
             )
         except subprocess.TimeoutExpired:
             return emit({"error": "command timed out after 60 s"}, 2)

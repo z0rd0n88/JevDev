@@ -327,6 +327,26 @@ def check_ask_blocked(tmp):
     assert rows[0]["block_reason"].startswith("irreversible (0.90)")
 
 
+def check_ask_long_command(tmp):
+    env = Env(tmp)
+    q = json.dumps({"x": {"type": "noul", "instructions": "ok?"}})
+    command = "true <<'EOF'\n" + "x" * 2000 + "\nEOF\ntouch marker-ran"
+    code, out = env.run("ask", "--command", command, "-q", q)
+    assert code == 2 and out["error"].startswith(f"command too long: {len(command)} chars, limit 2000"), out
+    assert not (env.repo / "marker-ran").exists(), "a command longer than the judged text must not run"
+    assert not env.records(), "nothing is sent for a refused command"
+
+
+def check_ask_command_env(tmp):
+    env = Env(tmp)
+    q = json.dumps({"x": {"type": "noul", "instructions": "ok?"}})
+    code, out = env.run("ask", "--command", "printenv > seen-env; true", "-q", q)
+    assert code == 0, out
+    seen = (env.repo / "seen-env").read_text()
+    assert "stub-key" not in seen and "TYPESAFE_API_KEY" not in seen, "the gated command must not get the Jev key"
+    assert "CI=1" in seen.splitlines(), seen
+
+
 def check_ask_limits(tmp):
     env = Env(tmp)
     q = json.dumps({"x": {"type": "noul", "instructions": "ok?"}})
@@ -450,6 +470,8 @@ def main():
         check_ask,
         check_ask_state_shapes,
         check_ask_blocked,
+        check_ask_long_command,
+        check_ask_command_env,
         check_ask_limits,
         check_errors,
     ):
