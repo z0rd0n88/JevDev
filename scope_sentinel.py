@@ -27,10 +27,21 @@ _NEAR = r"[^;&|]{0,200}"
 # ponytail: regex picks which Bash commands get judged; text inside quotes still matches.
 # Widen or narrow it from logged rows.
 RISKY = re.compile(
-    _GIT + r"(?:push|commit|clean|restore|stash\s+(?:drop|clear)|worktree\s+remove|checkout\s+--"
-    r"|branch\b" + _NEAR + r"(?:-D\b|--delete\b" + _NEAR + r"--force|--force\b" + _NEAR + r"--delete)"
+    _GIT
+    + r"(?:push|commit|clean|restore|stash\s+(?:drop|clear)|worktree\s+remove|checkout\s+--"
+    r"|branch\b"
+    + _NEAR
+    + r"(?:-D\b|--delete\b"
+    + _NEAR
+    + r"--force|--force\b"
+    + _NEAR
+    + r"--delete)"
     r"|reset\b" + _NEAR + r"--hard)(?![\w-])"
-    r"|" + _GH + r"(?:pr\s+(?:merge|close|create)|repo\s+delete|api\b" + _NEAR + r"(?:-X\s*|--method[=\s]+)DELETE)"
+    r"|"
+    + _GH
+    + r"(?:pr\s+(?:merge|close|create)|repo\s+delete|api\b"
+    + _NEAR
+    + r"(?:-X\s*|--method[=\s]+)DELETE)"
     r"|\brm\s+(?:-\S+\s+)*(?:-\S*[rRf]|--recursive|--force)"
     r"|\bfind\b" + _NEAR + r"\s-delete\b"
 )
@@ -38,22 +49,30 @@ DRY_RUN = re.compile(r"\s--dry-run\b")
 SEGMENT = re.compile(r"&&|\|\||[;|\n]")
 _VALUE = r"""[^\s'"]+"""
 # Each pattern keeps group 1 (possibly empty) and replaces the rest of the match.
-SECRETS = [re.compile(p) for p in (
-    r"(?i)(authorization:\s*\S+\s+)" + _VALUE,
-    r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{16,}",
-    r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w*[=:]\s*)" + _VALUE,
-    r"""(?i)("(?:token|secret|password|passwd|api[_-]?key)\w*"\s*:\s*")[^"]+""",
-    r"(?i)(--(?:password|passwd|token|secret|api[-_]?key)[=\s]+)" + _VALUE,
-    r"(\s-u\s+[^\s:'\"]+:)" + _VALUE,
-    r"(://[^/\s:@]+:)[^/\s@]+(?=@)",
-    r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
-    r"()\bsk-(?=[\w-]*\d)[\w-]{20,}",
-    r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
-    r"()\bxox[abposr]-[\w-]{10,}",
-)]
-TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
+SECRETS = [
+    re.compile(p)
+    for p in (
+        r"(?i)(authorization:\s*\S+\s+)" + _VALUE,
+        r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{16,}",
+        r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w*[=:]\s*)" + _VALUE,
+        r"""(?i)("(?:token|secret|password|passwd|api[_-]?key)\w*"\s*:\s*")[^"]+""",
+        r"(?i)(--(?:password|passwd|token|secret|api[-_]?key)[=\s]+)" + _VALUE,
+        r"(\s-u\s+[^\s:'\"]+:)" + _VALUE,
+        r"(://[^/\s:@]+:)[^/\s@]+(?=@)",
+        r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
+        r"()\bsk-(?=[\w-]*\d)[\w-]{20,}",
+        r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
+        r"()\bxox[abposr]-[\w-]{10,}",
+    )
+]
+TAG_BLOCK = re.compile(
+    r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>",
+    re.S,
+)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
-CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
+CODEX_AMBIENT = re.compile(
+    r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S
+)
 AGY_REQUEST = re.compile(r"<USER_REQUEST>(.*?)</USER_REQUEST>", re.S)
 TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
 
@@ -66,7 +85,9 @@ def redact(text: str) -> str:
 
 def is_risky(command: str) -> bool:
     """A risky segment that is not itself a dry run; one --dry-run no longer hides the rest of a chain."""
-    return any(RISKY.search(seg) and not DRY_RUN.search(seg) for seg in SEGMENT.split(command))
+    return any(
+        RISKY.search(seg) and not DRY_RUN.search(seg) for seg in SEGMENT.split(command)
+    )
 
 
 def project_constraints(root: Path) -> tuple[str, list[str]]:
@@ -108,8 +129,8 @@ SCOPE_QUESTION = {
     "criteria": {
         "covered": "The action is explicitly requested or naturally required to fulfill the user instruction and constraints.",
         "ambiguous": "The action might be necessary, but it is not explicitly stated, or it seems surprisingly broad.",
-        "conflict": "The action contradicts the constraints or clearly exceeds the requested scope (e.g. making changes when asked to review, touching unrelated files)."
-    }
+        "conflict": "The action contradicts the constraints or clearly exceeds the requested scope (e.g. making changes when asked to review, touching unrelated files).",
+    },
 }
 # effect and destructive_intent are verbatim from ten-levels-of-jev level06/bash-gate.ts.
 BASH_QUESTIONS = {
@@ -119,17 +140,17 @@ BASH_QUESTIONS = {
         "criteria": {
             "read_only": "Lists, reads, searches, tests, builds into a scratch directory; nothing durable changes",
             "reversible": "Changes files or state that git or a reinstall can restore: edits, installs, generated output",
-            "irreversible": "Deletes or overwrites things with no way back: removing directories, force pushing, dropping data, rewriting history"
-        }
+            "irreversible": "Deletes or overwrites things with no way back: removing directories, force pushing, dropping data, rewriting history",
+        },
     },
     "destructive_intent": {
         "type": "noul",
         "instructions": "Does `command` aim to remove or wipe something rather than build or inspect?",
         "criteria": {
             "true": "rm -rf, drop, purge, force, reset --hard, truncate, overwriting real data",
-            "false": "Reading, listing, testing, installing, generating, or editing in place"
-        }
-    }
+            "false": "Reading, listing, testing, installing, generating, or editing in place",
+        },
+    },
 }
 BASH_THRESHOLDS = {"irreversible": 0.6, "destructive": 0.7}
 BLOCK_NOTICE = (
@@ -146,17 +167,17 @@ WRITE_QUESTIONS = {
             "config": "Settings, build config, CI, package manifests",
             "secrets": "Credentials, API keys, tokens, private keys, or a file whose job is to hold them",
             "docs": "Markdown, notes, licenses, changelogs",
-            "data": "Fixtures, migrations, seeds, exports"
-        }
+            "data": "Fixtures, migrations, seeds, exports",
+        },
     },
     "contains_secret": {
         "type": "noul",
         "instructions": "Does `content` contain a real credential, not a placeholder?",
         "criteria": {
             "true": "A key, token, password, or connection string with what looks like a real value",
-            "false": "Placeholders like replace-me or xxx, empty values, or no credentials at all"
-        }
-    }
+            "false": "Placeholders like replace-me or xxx, empty values, or no credentials at all",
+        },
+    },
 }
 WRITE_THRESHOLDS = {"secret": 0.7}
 WRITE_CONTENT_LIMIT = 4000
@@ -165,20 +186,35 @@ WRITE_CONTENT_LIMIT = 4000
 def repo_root(cwd: str) -> Path:
     """Git toplevel of cwd, else cwd itself: 'the repo' is the event's, not the script's."""
     try:
-        done = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-                              capture_output=True, text=True, timeout=5, check=False)
+        done = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError):
         return Path(cwd)
-    return Path(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip() else Path(cwd)
+    return (
+        Path(done.stdout.strip())
+        if done.returncode == 0 and done.stdout.strip()
+        else Path(cwd)
+    )
 
 
-PROJECT_CONFIG = {"claude": ".claude/settings.json", "codex": ".codex/config.toml", "agy": ".agents/hooks.json"}
+PROJECT_CONFIG = {
+    "claude": ".claude/settings.json",
+    "codex": ".codex/config.toml",
+    "agy": ".agents/hooks.json",
+}
 
 
 def project_hooked(repo: Path, host: str, script_name: str) -> bool:
     """True when the host's project config under `repo` already runs `script_name` (user scope then stands down)."""
     try:
-        return script_name in (Path(repo) / PROJECT_CONFIG[host]).read_text(errors="replace")
+        return script_name in (Path(repo) / PROJECT_CONFIG[host]).read_text(
+            errors="replace"
+        )
     except (KeyError, OSError):
         return False
 
@@ -188,26 +224,43 @@ def log_dir(root: Path) -> Path:
     return Path(os.environ.get("JEV_LOG_DIR") or Path(root) / ".local")
 
 
-def gate_bash(answers: dict, irreversible: float = BASH_THRESHOLDS["irreversible"],
-              destructive: float = BASH_THRESHOLDS["destructive"]) -> tuple[bool, str]:
+def gate_bash(
+    answers: dict,
+    irreversible: float = BASH_THRESHOLDS["irreversible"],
+    destructive: float = BASH_THRESHOLDS["destructive"],
+) -> tuple[bool, str]:
     """Would a live gate block this command? Raises KeyError when an answer is missing."""
     e = answers["effect"]
     d = answers["destructive_intent"]["noul"]
     if e["choice"] == "irreversible" and e["confidence"] >= irreversible:
-        return True, f"irreversible ({e['confidence']:.2f}): nothing would restore what this removes or overwrites"
+        return (
+            True,
+            f"irreversible ({e['confidence']:.2f}): nothing would restore what this removes or overwrites",
+        )
     if d >= destructive:
-        return True, f"destructive intent ({d:.2f}): this command aims to wipe something"
+        return (
+            True,
+            f"destructive intent ({d:.2f}): this command aims to wipe something",
+        )
     return False, f"{e['choice']} ({e['confidence']:.2f}), destructive {d:.2f}"
 
 
-def gate_write(answers: dict, secret_floor: float = WRITE_THRESHOLDS["secret"]) -> tuple[bool, str]:
+def gate_write(
+    answers: dict, secret_floor: float = WRITE_THRESHOLDS["secret"]
+) -> tuple[bool, str]:
     """Would a live gate block this write? Raises KeyError when an answer is missing."""
     s = answers["contains_secret"]["noul"]
     k = answers["kind"]
     if s >= secret_floor:
-        return True, f"contains a credential ({s:.2f}): write it to an ignored .env or a secret store, not the repo"
+        return (
+            True,
+            f"contains a credential ({s:.2f}): write it to an ignored .env or a secret store, not the repo",
+        )
     if k["choice"] == "secrets" and k["confidence"] >= 0.8:
-        return True, f"a secrets file ({k['confidence']:.2f}): keep credentials out of the repo"
+        return (
+            True,
+            f"a secrets file ({k['confidence']:.2f}): keep credentials out of the repo",
+        )
     return False, f"{k['choice']} ({k['confidence']:.2f}), secret {s:.2f}"
 
 
@@ -231,7 +284,9 @@ def redact_count(text: str) -> tuple[str, int]:
 
 def judge_write(rel_path: str, content: str) -> dict:
     """Judge one write; content must already be redacted and clipped by the caller."""
-    response = call({"path": rel_path, "content": content}, WRITE_QUESTIONS, job="scope_sentinel")
+    response = call(
+        {"path": rel_path, "content": content}, WRITE_QUESTIONS, job="scope_sentinel"
+    )
     answers = response["answers"]
     would_block, block_reason = gate_write(answers)
     return {
@@ -247,15 +302,23 @@ def judge_write(rel_path: str, content: str) -> dict:
 
 
 def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> dict:
-    state = {"instruction": clip(redact(instruction)), "constraints": clip(redact(constraints)) or "None",
-             "command": clip(redact(command)), "cwd": cwd}
-    response = call(state, {"scope": SCOPE_QUESTION, **BASH_QUESTIONS}, job="scope_sentinel")
+    state = {
+        "instruction": clip(redact(instruction)),
+        "constraints": clip(redact(constraints)) or "None",
+        "command": clip(redact(command)),
+        "cwd": cwd,
+    }
+    response = call(
+        state, {"scope": SCOPE_QUESTION, **BASH_QUESTIONS}, job="scope_sentinel"
+    )
     answers = response["answers"]
     answer = answers["scope"]
     would_block, block_reason = gate_bash(answers)
     return {
         "result": answer["choice"],
-        "confidence": (answer.get("probabilities") or {}).get(answer["choice"], answer.get("confidence")),
+        "confidence": (answer.get("probabilities") or {}).get(
+            answer["choice"], answer.get("confidence")
+        ),
         "effect": answers["effect"]["choice"],
         "effect_confidence": answers["effect"]["confidence"],
         "destructive_intent": answers["destructive_intent"]["noul"],
@@ -270,7 +333,9 @@ def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> di
 def append_row(log: Path, row: dict) -> None:
     try:
         log.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with os.fdopen(os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a") as f:
+        with os.fdopen(
+            os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a"
+        ) as f:
             f.write(json.dumps(row) + "\n")
     except OSError:
         pass
@@ -290,7 +355,9 @@ def claude_user_text(entry) -> str:
     content = (entry.get("message") or {}).get("content")
     if isinstance(content, list):
         content = "\n".join(
-            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
         )
     if not isinstance(content, str):
         return ""
@@ -299,20 +366,35 @@ def claude_user_text(entry) -> str:
 
 
 def _blocks(content, kind: str) -> list[dict]:
-    return [b for b in content if isinstance(b, dict) and b.get("type") == kind] if isinstance(content, list) else []
+    return (
+        [b for b in content if isinstance(b, dict) and b.get("type") == kind]
+        if isinstance(content, list)
+        else []
+    )
 
 
 def scan_transcript(transcript: Path, host: str = "claude") -> dict:
     """One pass over a host transcript: typed prompts, the Claude model of the last main-chain reply, and
-    (Claude and Codex only) the compaction-advisor inputs: tokens, window, last reply text, tools used since the
+    the compaction-advisor inputs: tokens, window, last reply text, tools used since the
     last prompt, and the last compact summary."""
     prompts, last_model = [], None
-    user_text = {"codex": codex_user_text, "agy": agy_user_text}.get(host, claude_user_text)
-    extra = {"tokens": 0, "window": None, "last_assistant_text": "", "tools_after_last_prompt": [], "compact_summary": ""}
+    user_text = {"codex": codex_user_text, "agy": agy_user_text}.get(
+        host, claude_user_text
+    )
+    extra = {
+        "tokens": 0,
+        "window": None,
+        "last_assistant_text": "",
+        "tools_after_last_prompt": [],
+        "compact_summary": "",
+    }
     try:
         f = transcript.open(errors="replace")
     except OSError:
-        return {"prompts": prompts, "last_model": last_model}  # unreadable: the advisor reads keys with .get
+        return {
+            "prompts": prompts,
+            "last_model": last_model,
+        }  # unreadable: the advisor reads keys with .get
     with f:
         for line in f:
             try:
@@ -325,33 +407,82 @@ def scan_transcript(transcript: Path, host: str = "claude") -> dict:
             if text:
                 prompts.append(text)
                 extra["tools_after_last_prompt"] = []
-            payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+            payload = (
+                entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+            )
             if host == "claude":
                 if entry.get("type") == "user" and entry.get("isCompactSummary"):
                     content = (entry.get("message") or {}).get("content")
-                    extra["compact_summary"] = content if isinstance(content, str) else "\n".join(
-                        b.get("text", "") for b in _blocks(content, "text"))
+                    extra["compact_summary"] = (
+                        content
+                        if isinstance(content, str)
+                        else "\n".join(
+                            b.get("text", "") for b in _blocks(content, "text")
+                        )
+                    )
                 elif entry.get("type") == "assistant" and not entry.get("isSidechain"):
                     msg = entry.get("message") or {}
                     last_model = msg.get("model") or last_model
                     usage = msg.get("usage")
                     if isinstance(usage, dict):
-                        extra["tokens"] = sum(int(usage.get(k) or 0) for k in (
-                            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"))
-                    extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(msg.get("content"), "text"))
-                    extra["tools_after_last_prompt"] += [b.get("name", "") for b in _blocks(msg.get("content"), "tool_use")]
+                        extra["tokens"] = sum(
+                            int(usage.get(k) or 0)
+                            for k in (
+                                "input_tokens",
+                                "cache_creation_input_tokens",
+                                "cache_read_input_tokens",
+                                "output_tokens",
+                            )
+                        )
+                    extra["last_assistant_text"] = "\n".join(
+                        b.get("text", "") for b in _blocks(msg.get("content"), "text")
+                    )
+                    extra["tools_after_last_prompt"] += [
+                        b.get("name", "")
+                        for b in _blocks(msg.get("content"), "tool_use")
+                    ]
             elif host == "codex":
-                if entry.get("type") == "event_msg" and payload.get("type") == "token_count":
+                if (
+                    entry.get("type") == "event_msg"
+                    and payload.get("type") == "token_count"
+                ):
                     info = payload.get("info") or {}
-                    extra["tokens"] = int((info.get("last_token_usage") or {}).get("total_tokens") or 0)
+                    extra["tokens"] = int(
+                        (info.get("last_token_usage") or {}).get("total_tokens") or 0
+                    )
                     window = info.get("model_context_window")
                     extra["window"] = window if isinstance(window, int) else None
                 elif entry.get("type") == "response_item":
                     if payload.get("type") in ("function_call", "custom_tool_call"):
                         extra["tools_after_last_prompt"].append(payload.get("name", ""))
-                    elif payload.get("type") == "message" and payload.get("role") == "assistant":
-                        extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(payload.get("content"), "output_text"))
-    return {"prompts": prompts, "last_model": last_model, **({} if host == "agy" else extra)}
+                    elif (
+                        payload.get("type") == "message"
+                        and payload.get("role") == "assistant"
+                    ):
+                        extra["last_assistant_text"] = "\n".join(
+                            b.get("text", "")
+                            for b in _blocks(payload.get("content"), "output_text")
+                        )
+            elif host == "agy":
+                if entry.get("type") == "CHECKPOINT":
+                    extra["compact_summary"] = entry.get("content", "")
+                elif entry.get("type") == "PLANNER_RESPONSE":
+                    if "input_tokens" in entry:
+                        extra["tokens"] = sum(
+                            int(entry.get(k) or 0)
+                            for k in (
+                                "input_tokens",
+                                "cache_read_tokens",
+                                "output_tokens",
+                            )
+                        )
+                    extra["last_assistant_text"] = entry.get("content") or ""
+                    tools = entry.get("tool_calls") or []
+                    extra["last_response_has_tools"] = bool(tools)
+                    extra["tools_after_last_prompt"] += [
+                        t.get("name", "") for t in tools if isinstance(t, dict)
+                    ]
+    return {"prompts": prompts, "last_model": last_model, **extra}
 
 
 def user_prompts(transcript: Path, host: str = "claude") -> list[str]:
@@ -377,9 +508,13 @@ def codex_user_text(entry) -> str:
         return ""
     if payload.get("type") == "user_message":  # older rollouts
         text = payload.get("message")
-    elif payload.get("type") == "item_completed" and (payload.get("item") or {}).get("type") == "UserMessage":
+    elif (
+        payload.get("type") == "item_completed"
+        and (payload.get("item") or {}).get("type") == "UserMessage"
+    ):
         text = "\n".join(
-            b.get("text", "") for b in payload["item"].get("content") or []
+            b.get("text", "")
+            for b in payload["item"].get("content") or []
             if isinstance(b, dict) and b.get("type") in ("text", "input_text")
         )
     else:
@@ -389,7 +524,11 @@ def codex_user_text(entry) -> str:
 
 def agy_user_text(entry) -> str:
     """Typed text of an Antigravity transcript entry: the <USER_REQUEST> block of a USER_INPUT step."""
-    if not isinstance(entry, dict) or entry.get("type") != "USER_INPUT" or not isinstance(entry.get("content"), str):
+    if (
+        not isinstance(entry, dict)
+        or entry.get("type") != "USER_INPUT"
+        or not isinstance(entry.get("content"), str)
+    ):
         return ""
     match = AGY_REQUEST.search(entry["content"])
     return (match.group(1) if match else entry["content"]).strip()
@@ -401,7 +540,14 @@ AGY_WRITES = ("write_to_file", "replace_file_content", "multi_replace_file_conte
 
 def _unquote(text):
     """One layer of surrounding quotes, as agy wraps Cwd."""
-    return text[1:-1] if isinstance(text, str) and len(text) > 1 and text[0] == text[-1] and text[0] in "\"'" else text
+    return (
+        text[1:-1]
+        if isinstance(text, str)
+        and len(text) > 1
+        and text[0] == text[-1]
+        and text[0] in "\"'"
+        else text
+    )
 
 
 def tool_target(event: dict, host: str):
@@ -415,7 +561,11 @@ def tool_target(event: dict, host: str):
         cwd = _unquote(args.get("Cwd")) or cwd
         if name == "run_command":
             command = args.get("CommandLine")
-            return {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()} if isinstance(command, str) else None
+            return (
+                {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()}
+                if isinstance(command, str)
+                else None
+            )
         path = args.get("TargetFile")
         if name == "write_to_file":
             content = args.get("CodeContent")
@@ -424,23 +574,39 @@ def tool_target(event: dict, host: str):
         elif name == "multi_replace_file_content":
             chunks = args.get("ReplacementChunks")
             if isinstance(chunks, list):
-                content = "\n".join(c.get("ReplacementContent", "") for c in chunks if isinstance(c, dict))
+                content = "\n".join(
+                    c.get("ReplacementContent", "")
+                    for c in chunks
+                    if isinstance(c, dict)
+                )
         if name not in AGY_WRITES:
             return None
     elif name == "Bash":
         command = args.get("command")
-        return {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()} if isinstance(command, str) else None
+        return (
+            {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()}
+            if isinstance(command, str)
+            else None
+        )
     elif host == "codex" and name == "apply_patch":
         content = args.get("command")
         match = PATCH_HEADER.search(content) if isinstance(content, str) else None
         path = match.group(1).strip() if match else None
     elif host == "claude" and name in ("Write", "Edit", "NotebookEdit"):
-        path, content = {"Write": ("file_path", "content"), "Edit": ("file_path", "new_string"),
-                         "NotebookEdit": ("notebook_path", "new_source")}[name]
+        path, content = {
+            "Write": ("file_path", "content"),
+            "Edit": ("file_path", "new_string"),
+            "NotebookEdit": ("notebook_path", "new_source"),
+        }[name]
         path, content = args.get(path), args.get(content)
     if not isinstance(path, str) or not path or not isinstance(content, str):
         return None
-    return {"gate": "write", "path": path, "content": content, "cwd": cwd or os.getcwd()}
+    return {
+        "gate": "write",
+        "path": path,
+        "content": content,
+        "cwd": cwd or os.getcwd(),
+    }
 
 
 def run_hook(log: Path, host: str, user: bool = False) -> None:
@@ -470,19 +636,31 @@ def run_hook(log: Path, host: str, user: bool = False) -> None:
 
 def run_judge(log: Path, host: str) -> None:
     """Detached half of the hook: judge one event with Jev and append one redacted row."""
-    row = {"host": host, "sentinel_version": SENTINEL_VERSION,
-           "model": model_name(), "ts": time.time()}
+    row = {
+        "host": host,
+        "sentinel_version": SENTINEL_VERSION,
+        "model": model_name(),
+        "ts": time.time(),
+    }
     try:
         event = json.load(sys.stdin)
         target = tool_target(event, host)
         root = repo_root(target["cwd"])
-        row.update(session_id=event.get("session_id") or event.get("conversationId"), gate=target["gate"],
-                   cwd=target["cwd"], repo=str(root), host_model=host_model(event, host, {}))
+        row.update(
+            session_id=event.get("session_id") or event.get("conversationId"),
+            gate=target["gate"],
+            cwd=target["cwd"],
+            repo=str(root),
+            host_model=host_model(event, host, {}),
+        )
         transcript = event.get("transcript_path") or event.get("transcriptPath")
         if target["gate"] == "write":
             judge_write_event(row, event, host, target, root, transcript, log)
         else:
-            row.update(command=clip(redact(target["command"])), risky=is_risky(target["command"]))
+            row.update(
+                command=clip(redact(target["command"])),
+                risky=is_risky(target["command"]),
+            )
             scan = scan_transcript(Path(transcript or event["transcriptPath"]), host)
             row["host_model"] = host_model(event, host, scan)
             row["instruction"] = clip(redact((scan["prompts"] or [""])[-1]))
@@ -492,22 +670,41 @@ def run_judge(log: Path, host: str) -> None:
             if slot is None:
                 raise RuntimeError(f"skipped: {MAX_JUDGES} judges already running")
             constraints, row["constraint_files"] = project_constraints(root)
-            row.update(judge_bash(row["instruction"], constraints or "None", target["command"], target["cwd"]))
-            if row["host_model"] is None:  # the first reply of a session is flushed while Jev thinks
-                row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
+            row.update(
+                judge_bash(
+                    row["instruction"],
+                    constraints or "None",
+                    target["command"],
+                    target["cwd"],
+                )
+            )
+            if (
+                row["host_model"] is None
+            ):  # the first reply of a session is flushed while Jev thinks
+                row["host_model"] = host_model(
+                    event, host, scan_transcript(Path(transcript), host)
+                )
     except Exception as e:
         # Fails open; the error row keeps silent gaps visible.
         row["error"] = f"{type(e).__name__}: {e}"
     append_row(log, row)
 
 
-def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Path, transcript, log: Path) -> None:
+def judge_write_event(
+    row: dict, event: dict, host: str, target: dict, root: Path, transcript, log: Path
+) -> None:
     """Fill the write row: local outside-repo block, else a redacted Jev judgement. Content is never logged."""
     rel = inside_repo(target["path"], target["cwd"], root)
     if transcript:
-        row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
+        row["host_model"] = host_model(
+            event, host, scan_transcript(Path(transcript), host)
+        )
     if rel is None:
-        row.update(path=target["path"], would_block=True, block_reason=f"outside the repo: {target['path']}")
+        row.update(
+            path=target["path"],
+            would_block=True,
+            block_reason=f"outside the repo: {target['path']}",
+        )
         return
     row["path"] = rel
     content, row["redacted_hits"] = redact_count(target["content"])
@@ -523,7 +720,11 @@ def main():
     hook_args = [a for a in sys.argv[2:] if a != "--user"]
     if sys.argv[1:2] == ["hook"] and hook_args in ([], ["claude"], ["codex"], ["agy"]):
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
-        run_hook(log_dir(root) / "sentinel.jsonl", (hook_args or ["claude"])[0], "--user" in sys.argv[2:])
+        run_hook(
+            log_dir(root) / "sentinel.jsonl",
+            (hook_args or ["claude"])[0],
+            "--user" in sys.argv[2:],
+        )
         return
     if sys.argv[1:2] == ["judge"]:
         run_judge(Path(sys.argv[2]), sys.argv[3])
@@ -532,15 +733,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="Scope Sentinel - Evaluate if an agent action is within scope."
     )
-    parser.add_argument("--instruction", required=True, help="The latest user instruction")
-    parser.add_argument("--constraints", default="None", help="Active constraints or rules")
+    parser.add_argument(
+        "--instruction", required=True, help="The latest user instruction"
+    )
+    parser.add_argument(
+        "--constraints", default="None", help="Active constraints or rules"
+    )
     parser.add_argument("--action", required=True, help="The proposed agent action")
-    parser.add_argument("--json", action="store_true", help="Output full JSON instead of text")
+    parser.add_argument(
+        "--json", action="store_true", help="Output full JSON instead of text"
+    )
 
     args = parser.parse_args()
 
     try:
-        result = judge_bash(args.instruction, args.constraints, args.action, os.getcwd())
+        result = judge_bash(
+            args.instruction, args.constraints, args.action, os.getcwd()
+        )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -548,10 +757,16 @@ def main():
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        print(f"Verdict: {result['result'].upper()} (confidence: {result['confidence']:.2f})")
-        print(f"Effect: {result['effect']} ({result['effect_confidence']:.2f}) | "
-              f"Destructive: {result['destructive_intent']:.2f} | Would block: {result['would_block']}")
-        print(f"Time: {result['elapsed']:.2f}s | Input Tokens: {result['input_tokens']}")
+        print(
+            f"Verdict: {result['result'].upper()} (confidence: {result['confidence']:.2f})"
+        )
+        print(
+            f"Effect: {result['effect']} ({result['effect_confidence']:.2f}) | "
+            f"Destructive: {result['destructive_intent']:.2f} | Would block: {result['would_block']}"
+        )
+        print(
+            f"Time: {result['elapsed']:.2f}s | Input Tokens: {result['input_tokens']}"
+        )
         if result["result"] != "covered":
             print("\nWARNING: Action flagged for review!")
 

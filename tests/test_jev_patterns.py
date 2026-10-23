@@ -1,6 +1,7 @@
 """Offline check for jev_patterns.call and its helpers, using a stub jev executable."""
 
 import atexit
+import ast
 import json
 import os
 from pathlib import Path
@@ -51,6 +52,7 @@ ALLOWED = {
     "SYSTEMROOT",
     "TMPDIR",
     "JEV_BASE_URL",
+    "JEV_ALLOW_LOCAL",
     "TYPESAFE_API_KEY",
     "OPENROUTER_API_KEY",
 }
@@ -91,7 +93,11 @@ def raises(
         call({"a": 1}, QUESTIONS, job="t", timeout=timeout)
     except JevError as e:
         if not (cfg or {}).get("exit"):
-            assert e.returncode is None and e.stderr == "", (str(e), e.returncode, e.stderr)
+            assert e.returncode is None and e.stderr == "", (
+                str(e),
+                e.returncode,
+                e.stderr,
+            )
         return e
     raise AssertionError(f"call must raise JevError for {cfg}")
 
@@ -208,14 +214,30 @@ def check_helpers() -> None:
     assert isinstance(JevError("x"), RuntimeError)
 
 
+def check_local_http_opt_in() -> None:
+    use(
+        TYPESAFE_API_KEY="mock-key",
+        JEV_ALLOW_LOCAL="1",
+        JEV_BASE_URL="http://127.0.0.1:1",
+    )
+    call("authored fixture", QUESTIONS, job="local-contract")
+    assert rec()["env"].get("JEV_ALLOW_LOCAL") == "1"
+
+
 def check_structure() -> None:
     """AC-1.4: the sentinel's only subprocess.run is git, it has no "-j", and the library is stdlib-only."""
-    sentinel = (ROOT / "scope_sentinel.py").read_text().splitlines()
-    runs = [line for line in sentinel if "subprocess.run" in line]
-    assert len(runs) == 1 and "rev-parse" in runs[0], runs
-    assert not [line for line in sentinel if '"-j"' in line], (
-        "sentinel must not build a jev argv"
-    )
+    sentinel = (ROOT / "scope_sentinel.py").read_text()
+    runs = [
+        n
+        for n in ast.walk(ast.parse(sentinel))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "subprocess"
+        and n.func.attr == "run"
+    ]
+    assert len(runs) == 1 and ast.literal_eval(runs[0].args[0].elts[0]) == "git"
+    assert '"-j"' not in sentinel, "sentinel must not build a jev argv"
     imports = re.findall(
         r"^(?:from|import)\s+(\w+)", (ROOT / "jev_patterns.py").read_text(), re.M
     )
@@ -223,6 +245,12 @@ def check_structure() -> None:
 
 
 if __name__ == "__main__":
-    for check in (check_call, check_errors, check_helpers, check_structure):
+    for check in (
+        check_call,
+        check_errors,
+        check_helpers,
+        check_local_http_opt_in,
+        check_structure,
+    ):
         check()
     print("jev_patterns ok")

@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR}/with_jev_key.sh\" python3 \"${CLAUDE_PROJECT_DIR}/skill_router.py\" --host claude hook",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/with_jev_key.sh\" python3 \"${CLAUDE_PROJECT_DIR}/skill_router.py\" --host claude hook || true",
             "timeout": 90
           }
         ]

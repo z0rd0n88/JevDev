@@ -64,6 +64,7 @@ def check_install_twice():
         assert first.returncode == 0, (first.stdout, first.stderr)
 
         hooks = json.loads((home / ".codex/hooks.json").read_text())["hooks"]
+        assert "UserPromptSubmit" in hooks, "the installer must include Codex routing"
         assert hooks["Stop"][0] == OTHER["hooks"]["Stop"][0], (
             "existing entry must be preserved"
         )
@@ -84,7 +85,18 @@ def check_install_twice():
         assert "JEV_LOG_DIR=" in stop["command"], stop
 
         agy = json.loads((home / ".gemini/config/hooks.json").read_text())
-        assert list(agy) == ["jevdev"] and list(agy["jevdev"]) == ["PreToolUse"], agy
+        assert list(agy) == ["jevdev"] and set(agy["jevdev"]) == {
+            "PreToolUse",
+            "PreInvocation",
+            "PostInvocation",
+        }, agy
+        assert (
+            "--host agy hook --user" in agy["jevdev"]["PreInvocation"][0]["command"]
+        ), agy
+        assert (
+            "compact_advisor.py hook agy --user"
+            in agy["jevdev"]["PostInvocation"][0]["command"]
+        ), agy
         matchers = [g["matcher"] for g in agy["jevdev"]["PreToolUse"]]
         assert matchers == [
             "run_command",
@@ -114,11 +126,13 @@ def check_install_twice():
         ], claude
         commands = [
             h["command"]
-            for g in claude["PreToolUse"] + claude["Stop"]
+            for g in claude["PreToolUse"] + claude["Stop"] + claude["UserPromptSubmit"]
             for h in g["hooks"]
         ]
-        assert len(commands) == 3 and all(
-            "hook claude --user" in c and c.endswith("|| true") for c in commands
+        assert len(commands) == 4 and all(
+            ("hook claude --user" in c or "--host claude hook --user" in c)
+            and c.endswith("|| true")
+            for c in commands
         ), commands
         assert "nothing to change" not in out
 
@@ -187,7 +201,7 @@ def check_remove():
         )
         assert json.loads((home / ".codex/hooks.json").read_text()) == OTHER
         assert json.loads(agy_other.read_text()) == {"mine": {"Stop": []}}
-        assert [l for l in SKILL_LINKS if (home / l).is_symlink()] == []
+        assert [link for link in SKILL_LINKS if (home / link).is_symlink()] == []
         assert foreign.is_symlink(), "a symlink the installer does not own must stay"
         again = run(home, "--remove")
         assert again.returncode == 0 and "nothing to change" in again.stdout, (

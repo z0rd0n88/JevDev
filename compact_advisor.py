@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compaction advisor: a Stop hook that asks Jev whether to suggest /compact (Claude and Codex).
+"""Compaction advisor for Claude/Codex Stop and Antigravity PostInvocation hooks.
 
 Port of ten-levels-of-jev level07 should-compact.ts. Prints {"systemMessage": ...} or nothing, never plain text.
 """
@@ -7,11 +7,10 @@ Port of ten-levels-of-jev level07 should-compact.ts. Prints {"systemMessage": ..
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import time
 
-from jev_patterns import DEFAULT_MODEL, JEV
+from jev_patterns import DEFAULT_MODEL, call as jev_call
 from scope_sentinel import (
     append_row,
     host_model,
@@ -22,7 +21,7 @@ from scope_sentinel import (
     scan_transcript,
 )
 
-ADVISOR_VERSION = "advisor-v1"
+ADVISOR_VERSION = "advisor-v2"
 # ponytail: absolute-token lines assume a ~200k window (55% / 80% rule); set JEV_COMPACT_LINES for larger windows.
 DEFAULT_LINES = {"notice": 80_000, "recommend": 110_000, "request": 160_000}
 PREVIOUS_PROMPTS = (
@@ -141,34 +140,8 @@ def tier_message(tier: str, reason: str, tokens: int, window) -> str | None:
 
 def ask_jev(state: dict) -> tuple[dict, dict, float]:
     """One Jev call (GC2): (answers, whole response, elapsed seconds)."""
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError(
-            "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-        )
-    start = time.perf_counter()
-    done = subprocess.run(
-        [
-            str(JEV),
-            "-m",
-            os.environ.get("JEV_MODEL") or DEFAULT_MODEL,
-            "-q",
-            json.dumps(COMPACT_QUESTIONS),
-            "-j",
-            "compact_advisor",
-        ],
-        input=json.dumps(state),
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
-    )
-    elapsed = time.perf_counter() - start
-    if done.returncode:
-        raise RuntimeError(
-            f"jev exited {done.returncode}; inspect provider access and limits locally"
-        )
-    response = json.loads(done.stdout)
-    return response["answers"], response, elapsed
+    response = jev_call(state, COMPACT_QUESTIONS, job="compact_advisor")
+    return response["answers"], response, response["elapsed"]
 
 
 def run_hook(host: str, log: Path, user: bool = False) -> None:
@@ -186,15 +159,25 @@ def run_hook(host: str, log: Path, user: bool = False) -> None:
     }
     try:
         event = json.loads(sys.stdin.read())
-        cwd = event.get("cwd") or os.getcwd()
+        paths = event.get("workspacePaths") or []
+        cwd = event.get("cwd") or (paths[0] if paths else os.getcwd())
         if user and project_hooked(repo_root(cwd), host, Path(__file__).name):
             return  # the repo's own Stop hook logs this turn; never log twice
         row.update(
-            session_id=event.get("session_id"), cwd=cwd, repo=str(repo_root(cwd))
+            session_id=event.get("conversationId") or event.get("session_id"),
+            cwd=cwd,
+            repo=str(repo_root(cwd)),
         )
-        if not event.get("transcript_path"):
+        transcript = (
+            event.get("transcriptPath")
+            if host == "agy"
+            else event.get("transcript_path")
+        )
+        if not transcript:
             raise RuntimeError("no transcript")
-        scan = scan_transcript(Path(event["transcript_path"]), host)
+        scan = scan_transcript(Path(transcript), host)
+        if host == "agy" and scan.get("last_response_has_tools"):
+            return  # PostInvocation fires before pending tools; this is not a turn boundary.
         tokens, lines = scan.get("tokens", 0), lines_from_env()
         row.update(
             host_model=host_model(event, host, scan),
@@ -222,7 +205,12 @@ def run_hook(host: str, log: Path, user: bool = False) -> None:
             row["tier"], row["reason"] = decide_tier(answers, tokens, lines, state)
             message = tier_message(row["tier"], row["reason"], tokens, row["window"])
             if message:
-                print(json.dumps({"systemMessage": message}), flush=True)
+                output = (
+                    {"injectSteps": [{"systemMessage": {"systemMessage": message}}]}
+                    if host == "agy"
+                    else {"systemMessage": message}
+                )
+                print(json.dumps(output), flush=True)
                 row["printed"] = True
     except Exception as e:
         row["error"] = (
@@ -233,10 +221,12 @@ def run_hook(host: str, log: Path, user: bool = False) -> None:
 
 def main() -> None:
     hook_args = [a for a in sys.argv[2:] if a != "--user"]
-    if sys.argv[1:2] == ["hook"] and hook_args in (["claude"], ["codex"]):
+    if sys.argv[1:2] == ["hook"] and hook_args in (["claude"], ["codex"], ["agy"]):
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).parent)
-        run_hook(hook_args[0], log_dir(root) / "compact.jsonl", "--user" in sys.argv[2:])
-    # Anything else (agy, no args): exit 0 silently; a Stop hook must never break the turn.
+        run_hook(
+            hook_args[0], log_dir(root) / "compact.jsonl", "--user" in sys.argv[2:]
+        )
+    # Unknown arguments exit 0 silently; advice must never break the turn.
 
 
 if __name__ == "__main__":

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Live smoke: run one canned prompt in a host, then print the newest matching log row.
-# Usage: smoke.sh <claude|codex|agy> <bash|write|compact|ask|ask-skill|skill> [--read] [--user]
+# Usage: smoke.sh <claude|codex|agy> <router|bash|write|compact|ask|ask-skill|skill> [--read] [--user]
 # --user runs from /home/alex/BotHaus (no project hooks) and reads ~/.local/state/jevdev/.
 # --read skips the host run and prints the newest row for that host and feature.
 # Evidence goes in the PR body; nothing under .local/ is ever committed.
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage() { echo "usage: smoke.sh <claude|codex|agy> <bash|write|compact|ask|ask-skill|skill> [--read] [--user]" >&2; exit 64; }
+usage() { echo "usage: smoke.sh <claude|codex|agy> <router|bash|write|compact|ask|ask-skill|skill> [--read] [--user]" >&2; exit 64; }
 [ $# -ge 2 ] && [ $# -le 4 ] || usage
 host="$1"; feature="$2"; read_only=0; user_scope=0
 case "$host" in claude|codex|agy) ;; *) usage ;; esac
-case "$feature" in bash|write|compact|ask|ask-skill|skill) ;; *) usage ;; esac
+case "$feature" in router|bash|write|compact|ask|ask-skill|skill) ;; *) usage ;; esac
 shift 2
 for a in "$@"; do
   case "$a" in --read) read_only=1 ;; --user) user_scope=1 ;; *) usage ;; esac
@@ -18,7 +18,7 @@ done
 
 workdir="$here"; logdir="${JEV_LOG_DIR:-${CLAUDE_PROJECT_DIR:-$here}/.local}"
 if [ "$user_scope" -eq 1 ]; then workdir=/home/alex/BotHaus; logdir="${JEV_LOG_DIR:-$HOME/.local/state/jevdev}"; fi
-case "$feature" in compact) file=compact.jsonl ;; *) file=sentinel.jsonl ;; esac
+case "$feature" in router) file=router.jsonl ;; compact) file=compact.jsonl ;; *) file=sentinel.jsonl ;; esac
 
 # Print the newest row of $file for this host and feature with ts >= $1; exit 0 on a hit, 1 otherwise.
 newest() {
@@ -44,7 +44,7 @@ for line in lines:
     hit = row
 if hit is None:
     sys.exit(1)
-keys = ("host", "host_model", "jev_model", "gate", "would_block", "tier", "printed", "error")
+keys = ("host", "host_model", "jev_model", "router_version", "roster_sha256", "suggestion", "gate", "would_block", "tier", "printed", "error")
 print(" ".join(f"{k}={hit[k]}" for k in keys if k in hit))
 PY
 }
@@ -52,6 +52,15 @@ PY
 if [ "$read_only" -eq 1 ]; then
   newest 0 || { echo "no $feature row for $host in $logdir/$file" >&2; exit 1; }
   exit $?
+fi
+
+if [ "$feature" = "router" ]; then
+  echo "Verify the prompt hook in an interactive session:"
+  echo "  1. Open '$host' in $workdir; in Codex, review the changed hooks in /hooks."
+  echo "  2. Ask: Help me create a reusable agent skill."
+  echo "  3. Run: bash smoke.sh $host router --read$( [ "$user_scope" -eq 1 ] && echo ' --user' )."
+  echo "  4. Check host, host_model, router_version, roster_sha256, and suggestion (or an explicit error)."
+  exit 0
 fi
 
 skill_prompt="/hyper-jev Reply with only the first line of the Purpose section of this skill."
@@ -81,8 +90,7 @@ if [ "$feature" = "ask-skill" ] && [ "$host" = "codex" ]; then
 fi
 
 if [ "$feature" = "compact" ]; then
-  if [ "$host" = "agy" ]; then echo "The compaction advisor is not wired for agy." >&2; exit 0; fi
-  echo "The advisor fires at Stop and needs an interactive session. Steps:"
+  echo "The advisor fires at Stop (Claude/Codex) or PostInvocation (agy). Steps:"
   echo "  1. In your shell: export JEV_COMPACT_LINES=1000,2000,3000"
   echo "  2. Open '$host' interactively in this repo$( [ "$host" = codex ] && echo " and trust the hooks in /hooks")."
   echo "  3. Send two short prompts on different topics (for example: 'say hi', then 'write a haiku about rain')."

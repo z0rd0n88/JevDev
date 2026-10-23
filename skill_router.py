@@ -19,13 +19,22 @@ import time
 
 import yaml
 
+from jev_patterns import call as jev_call
+from scope_sentinel import (
+    agy_user_text,
+    append_row,
+    log_dir,
+    project_hooked,
+    repo_root,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
 DEFAULT_MODEL = "jev-latest"
-ROUTER_VERSION = "balanced-shards-v2"
+ROUTER_VERSION = "balanced-shards-v3"
 WIDE_LIMIT = 60
 SHORTLIST = 3
 SHARD_SIZE = 255
@@ -55,7 +64,7 @@ def skill_entry(name: str, path: Path) -> dict:
     }
 
 
-def live_skill_names(config: Path) -> list[str]:
+def live_skill_names(config: Path, project: Path = PROJECT_ROOT) -> list[str]:
     command = [
         "claude",
         "-p",
@@ -78,9 +87,17 @@ def live_skill_names(config: Path) -> list[str]:
         "--output-format",
         "stream-json",
         "--verbose",
+        "--settings",
+        '{"disableAllHooks":true}',
     ]
     process = subprocess.run(
-        command, cwd=config, capture_output=True, text=True, timeout=40, check=False
+        command,
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env={**os.environ, "CLAUDE_CONFIG_DIR": str(config), "JEV_ROUTER_ACTIVE": "1"},
     )
     for line in process.stdout.splitlines():
         try:
@@ -94,28 +111,35 @@ def live_skill_names(config: Path) -> list[str]:
     )
 
 
-def plugin_installations() -> list[dict]:
+def plugin_installations(project: Path = PROJECT_ROOT) -> list[dict]:
     process = subprocess.run(
         ["claude", "plugin", "list", "--json"],
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=10,
         check=False,
+        cwd=project,
     )
     if process.returncode:
         raise RuntimeError("Could not list Claude Code plugins")
     return json.loads(process.stdout)
 
 
-def roster(config: Path = CONFIG) -> list[dict]:
-    names = live_skill_names(config)
+def roster(config: Path = CONFIG, project: Path = PROJECT_ROOT) -> list[dict]:
+    names = live_skill_names(config, project)
     candidates: dict[str, dict] = {}
-    for path in (config / "skills").glob("*/SKILL.md"):
-        candidates[path.parent.name] = skill_entry(path.parent.name, path)
+    for base in (config / "skills", project / ".claude/skills"):
+        for path in base.glob("*/SKILL.md"):
+            if path.parent.name in names:
+                candidates[path.parent.name] = skill_entry(path.parent.name, path)
     # The live list is authoritative. Disk only supplies descriptions; disabled
     # caches cannot enter the roster merely because a SKILL.md exists there.
-    installs = sorted(plugin_installations(), key=lambda entry: not entry["enabled"])
+    installs = sorted(
+        plugin_installations(project), key=lambda entry: not entry["enabled"]
+    )
     for plugin in installs:
+        if not plugin["enabled"]:
+            continue
         base = Path(plugin["installPath"])
         prefix = plugin["id"].split("@", 1)[0]
         for path in base.rglob("SKILL.md"):
@@ -157,11 +181,11 @@ def roster(config: Path = CONFIG) -> list[dict]:
     return entries
 
 
-def codex_roster() -> list[dict]:
+def codex_roster(project: Path = PROJECT_ROOT) -> list[dict]:
     """Read the model-visible Codex skill listing and resolve its file aliases."""
     process = subprocess.run(
         ["codex", "debug", "prompt-input", "Skill roster snapshot."],
-        cwd=PROJECT_ROOT,
+        cwd=project,
         capture_output=True,
         text=True,
         timeout=30,
@@ -187,21 +211,73 @@ def codex_roster() -> list[dict]:
     listing = prompt.split("### Available skills", 1)[1].split(
         "</skills_instructions>", 1
     )[0]
-    rows = re.findall(r"^- (.+?): \(file: (r\d+/[^)]+)\)", listing, re.MULTILINE)
+    rows = re.findall(r"^- (.+?): .*?\(file: ([^)]+)\)\s*$", listing, re.MULTILINE)
     entries: dict[str, dict] = {}
     for name, aliased_path in rows:
-        alias, relative = aliased_path.split("/", 1)
-        if alias not in roots:
-            raise ValueError(f"Unknown Codex skill root: {alias}")
-        path = Path(roots[alias]) / relative
+        if aliased_path.startswith("/"):
+            path = Path(aliased_path)
+        else:
+            alias, relative = aliased_path.split("/", 1)
+            if alias not in roots:
+                raise ValueError(f"Unknown Codex skill root: {alias}")
+            path = Path(roots[alias]) / relative
         entries.setdefault(name, skill_entry(name, path))
     if not entries:
         raise RuntimeError("Codex prompt skill listing was empty")
     return list(entries.values())
 
 
-def host_roster(host: str) -> list[dict]:
-    return roster() if host == "claude" else codex_roster()
+def agy_roster(project: Path = PROJECT_ROOT) -> list[dict]:
+    """Use Agy's local, zero-turn /skills command as the authoritative roster."""
+    process = subprocess.run(
+        ["agy", "-p", "/skills", "--output-format", "json"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if process.returncode:
+        raise RuntimeError("Could not capture Antigravity's active skill roster")
+    snapshot = json.loads(process.stdout)
+    command = snapshot.get("command") or {}
+    rows = (command.get("data") or {}).get("skills")
+    if (
+        snapshot.get("num_turns") != 0
+        or command.get("name") != "skills"
+        or not isinstance(rows, list)
+    ):
+        raise RuntimeError("Antigravity returned no local /skills snapshot")
+    entries: dict[str, dict] = {}
+    for row in rows:
+        if row.get("model_invocable") is False:
+            continue
+        name, path = row["name"], row.get("path")
+        entry = (
+            skill_entry(name, Path(path))
+            if path
+            else {
+                "name": name,
+                "path": None,
+                "body": "",
+                "description": row["description"],
+            }
+        )
+        entry["description"] = row["description"]
+        entries.setdefault(name, entry)
+    if not entries:
+        raise RuntimeError("Antigravity active skill roster was empty")
+    return list(entries.values())
+
+
+def host_roster(host: str, project: Path = PROJECT_ROOT) -> list[dict]:
+    if host == "claude":
+        return roster(project=project)
+    if host == "codex":
+        return codex_roster(project)
+    if host == "agy":
+        return agy_roster(project)
+    raise ValueError(f"Unknown host: {host}")
 
 
 def index_text(entries: list[dict]) -> str:
@@ -277,29 +353,13 @@ def inspect_roster(entries: list[dict]) -> dict:
 
 
 def jev(questions: dict, request: str) -> tuple[dict, float]:
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError(
-            "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-        )
-    state = json.dumps({"request": request, "recent_context": ""})
-    model = os.environ.get("JEV_MODEL") or DEFAULT_MODEL
-    start = time.perf_counter()
-    process = subprocess.run(
-        [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", "routing"],
-        input=state,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
+    response = jev_call(
+        {"request": request, "recent_context": ""},
+        questions,
+        job="routing",
+        timeout=20,
     )
-    elapsed = time.perf_counter() - start
-    if process.returncode:
-        # The transport can print provider error bodies; do not echo them because
-        # a provider may include request text in an error response.
-        raise RuntimeError(
-            f"jev exited {process.returncode}; inspect provider access and limits locally"
-        )
-    return json.loads(process.stdout), elapsed
+    return response, response["elapsed"]
 
 
 def usage_tokens(response: dict) -> int:
@@ -471,6 +531,8 @@ def first_claude_skill_load(
         "--output-format",
         "stream-json",
         "--verbose",
+        "--settings",
+        '{"disableAllHooks":true}',
     ]
     if suggestion is not None:
         command.extend(["--append-system-prompt", suggestion])
@@ -478,11 +540,12 @@ def first_claude_skill_load(
     process = subprocess.run(
         command,
         input=prompt,
-        cwd=CONFIG,
+        cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
         check=False,
+        env={**os.environ, "JEV_ROUTER_ACTIVE": "1"},
     )
     elapsed = time.perf_counter() - start
     for line in process.stdout.splitlines():
@@ -542,6 +605,7 @@ def first_codex_skill_load(
         check=False,
         env={
             **os.environ,
+            "JEV_ROUTER_ACTIVE": "1",
             "RAYON_NUM_THREADS": os.environ.get("RAYON_NUM_THREADS") or "1",
         },
     )
@@ -570,6 +634,73 @@ def first_codex_skill_load(
             f"codex arm exited {process.returncode} without a skill read"
         )
     return None, elapsed
+
+
+def first_agy_skill_load(
+    prompt: str, suggestion: str | None, model: str, entries: list[dict]
+) -> tuple[str | None, float]:
+    """Observe Agy's first skill-file tool call in its documented NDJSON stream."""
+    if roster_hash(agy_roster()) != roster_hash(entries):
+        raise RuntimeError(
+            "Antigravity arm has a different live skill roster from its router"
+        )
+    if suggestion:
+        prompt = f"{prompt}\n\n{suggestion}"
+    start = time.perf_counter()
+    process = subprocess.run(
+        [
+            "agy",
+            "-p",
+            prompt,
+            "--model",
+            model,
+            "--output-format",
+            "stream-json",
+            "--print-timeout",
+            "120s",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=135,
+        check=False,
+        env={**os.environ, "JEV_ROUTER_ACTIVE": "1"},
+    )
+    elapsed = time.perf_counter() - start
+    loaded = None
+    succeeded = False
+    for line in process.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("event") == "result":
+            succeeded = (event.get("result") or {}).get("status") == "SUCCESS"
+        step = event.get("step_update") or {}
+        if (
+            loaded is None
+            and step.get("step_type") == "tool"
+            and step.get("tool_name")
+            in (
+                "view_file",
+                "view_file_outline",
+                "view_file_item",
+                "run_command",
+            )
+        ):
+            details = json.dumps(step.get("tool_info") or {})
+            matches = [
+                (details.index(e["path"]), e["name"])
+                for e in entries
+                if e.get("path") and e["path"] in details
+            ]
+            if matches:
+                loaded = min(matches)[1]
+    if process.returncode or not succeeded or "denied" in process.stderr.lower():
+        raise RuntimeError(
+            "Antigravity arm did not complete successfully; inspect host access locally"
+        )
+    return loaded, elapsed
 
 
 def suggestion_block(name: str | None, oracle: bool = False) -> str:
@@ -605,6 +736,8 @@ def sample_prompts(
                         if event.get("type") != "user" or event.get("isSidechain"):
                             continue
                         content = event.get("message", {}).get("content", "")
+                    elif host == "agy":
+                        content = agy_user_text(event)
                     else:
                         payload = event.get("payload") or {}
                         if (
@@ -754,6 +887,10 @@ def benchmark(
                 loaded, seconds = first_claude_skill_load(
                     row["text"], block, model, names
                 )
+            elif host == "agy":
+                loaded, seconds = first_agy_skill_load(
+                    row["text"], block, model, entries
+                )
             else:
                 loaded, seconds = first_codex_skill_load(
                     row["text"], block, model, entries
@@ -778,14 +915,50 @@ def benchmark(
     }
 
 
-def run_prompt_hook(host: str) -> None:
-    """Route a host UserPromptSubmit event and return a non-blocking hint."""
+def run_prompt_hook(host: str, user: bool = False) -> None:
+    """Advisory routing, with the host's native input/output contract."""
+    if os.environ.get("JEV_ROUTER_ACTIVE") == "1":
+        return
+    row = {
+        "host": host,
+        "router_version": ROUTER_VERSION,
+        "ts": time.time(),
+        "model": os.environ.get("JEV_MODEL") or DEFAULT_MODEL,
+    }
+    root = PROJECT_ROOT
     try:
         event = json.load(sys.stdin)
-        prompt = event.get("prompt") if isinstance(event, dict) else None
+        if not isinstance(event, dict):
+            return
+        paths = event.get("workspacePaths") or []
+        root = repo_root(event.get("cwd") or (paths[0] if paths else os.getcwd()))
+        if user and project_hooked(root, host, Path(__file__).name):
+            return
+        row["host_model"] = event.get("modelName") or event.get("model")
+        prompt = event.get("prompt")
+        if host == "agy":
+            # PreInvocation also fires after tools: route only a fresh user step.
+            transcript = Path(event["transcriptPath"])
+            prompt = None
+            with transcript.open(errors="replace") as stream:
+                for line in stream:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(entry, dict):
+                        if entry.get("type") == "USER_INPUT":
+                            prompt = agy_user_text(entry)
+                        elif entry.get("type") in (
+                            "PLANNER_RESPONSE",
+                            "TOOL_CALL",
+                            "TOOL_RESULT",
+                        ):
+                            prompt = None
         if not isinstance(prompt, str) or not prompt.strip():
             return
-        routing = suggest(prompt, host_roster(host))
+        routing = suggest(prompt, host_roster(host, root))
+        row.update(routing)
         suggestion = routing.get("suggestion")
         if not suggestion:
             return
@@ -793,33 +966,44 @@ def run_prompt_hook(host: str) -> None:
             f"Jev skill router suggests `{suggestion}` for this request. "
             "Load that skill and use its instructions if it fits the task."
         )
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "UserPromptSubmit",
-                        "additionalContext": context,
-                    }
+        output = (
+            {"injectSteps": [{"ephemeralMessage": context}]}
+            if host == "agy"
+            else {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": context,
                 }
-            )
+            }
         )
-    except Exception:
+        print(json.dumps(output))
+    except Exception as error:
         # Routing is advisory: a Jev outage or missing key must never block a prompt.
         message = (
             "Jev skill routing failed open; this prompt will continue without a "
             "router suggestion. Check the Jev credentials and router configuration."
         )
-        print(json.dumps({"systemMessage": message}))
+        row["error"] = type(error).__name__
+        if host == "agy":
+            print(json.dumps({"injectSteps": [{"ephemeralMessage": message}]}))
+        else:
+            print(json.dumps({"systemMessage": message}))
+    finally:
+        if "error" in row or "roster_sha256" in row:
+            append_row(log_dir(root) / "router.jsonl", row)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", choices=("claude", "codex"), default="claude")
+    parser.add_argument("--host", choices=("claude", "codex", "agy"), default="claude")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("measure")
     route = sub.add_parser("route")
     route.add_argument("request")
-    sub.add_parser("hook", help="handle a host UserPromptSubmit event from stdin")
+    hook = sub.add_parser("hook", help="handle a host prompt event from stdin")
+    hook.add_argument(
+        "--user", action="store_true", help="stand down when the project owns routing"
+    )
     grade = sub.add_parser("score")
     grade.add_argument(
         "observations", type=Path, help="JSONL with id, gold, loads, routing"
@@ -836,11 +1020,15 @@ def main() -> None:
     sample.add_argument("--per-session", type=int, default=3)
     args = parser.parse_args()
     if args.command == "hook":
-        run_prompt_hook(args.host)
+        run_prompt_hook(args.host, args.user)
         return
     if args.command == "sample":
         transcript_dir = args.transcripts or (
-            CONFIG / "projects" if args.host == "claude" else CODEX_HOME / "sessions"
+            CONFIG / "projects"
+            if args.host == "claude"
+            else Path.home() / ".gemini/antigravity-cli/brain"
+            if args.host == "agy"
+            else CODEX_HOME / "sessions"
         )
         print(
             json.dumps(
@@ -864,6 +1052,10 @@ def main() -> None:
         print(json.dumps(score(rows), indent=2, sort_keys=True))
         return
     if args.command == "benchmark":
+        if args.host == "agy" and not args.model:
+            raise ValueError(
+                "Pass --model with an explicit Antigravity model ID for benchmarks"
+            )
         model = args.model or ("haiku" if args.host == "claude" else "gpt-6-luna")
         print(
             json.dumps(

@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import sys
 
-OWNED = ("scope_sentinel.py", "compact_advisor.py")
+OWNED = ("scope_sentinel.py", "compact_advisor.py", "skill_router.py")
 SKILLS = ("hyper-jev", "ask-jev")
 LINK_DIRS = (".agents/skills", ".gemini/antigravity-cli/skills")
 AGY_WRITE = "write_to_file|replace_file_content|multi_replace_file_content"
@@ -22,9 +22,14 @@ class Refused(Exception):
 
 
 def command(jevdev, script, host):
+    arguments = (
+        f"--host {host} hook --user"
+        if script == "skill_router.py"
+        else f"hook {host} --user"
+    )
     return (
         f"bash -c 'SCOPE_SENTINEL=1 JEV_LOG_DIR=$HOME/.local/state/jevdev exec bash {jevdev}/with_jev_key.sh "
-        f"python3 {jevdev}/{script} hook {host} --user' || true"
+        f"python3 {jevdev}/{script} {arguments}' || true"
     )
 
 
@@ -36,6 +41,7 @@ def group(cmd, timeout, matcher=None):
 def wanted_codex(jevdev):
     sentinel = command(jevdev, "scope_sentinel.py", "codex")
     return [
+        ("UserPromptSubmit", group(command(jevdev, "skill_router.py", "codex"), 90)),
         ("PreToolUse", group(sentinel, 10, "Bash")),
         ("PreToolUse", group(sentinel, 10, "apply_patch")),
         ("Stop", group(command(jevdev, "compact_advisor.py", "codex"), 45)),
@@ -45,10 +51,16 @@ def wanted_codex(jevdev):
 def wanted_agy(jevdev):
     sentinel = command(jevdev, "scope_sentinel.py", "agy")
     return {
+        "PreInvocation": [
+            group(command(jevdev, "skill_router.py", "agy"), 90)["hooks"][0]
+        ],
         "PreToolUse": [
             group(sentinel, 10, "run_command"),
             group(sentinel, 10, AGY_WRITE),
-        ]
+        ],
+        "PostInvocation": [
+            group(command(jevdev, "compact_advisor.py", "agy"), 45)["hooks"][0]
+        ],
     }
 
 
@@ -128,8 +140,9 @@ def link_plan(home, jevdev, removing):
 
 
 def claude_snippet(jevdev):
-    sentinel, advisor = (command(jevdev, s, "claude") for s in OWNED)
+    sentinel, advisor = (command(jevdev, s, "claude") for s in OWNED[:2])
     hooks = {
+        "UserPromptSubmit": [group(command(jevdev, "skill_router.py", "claude"), 90)],
         "PreToolUse": [
             group(sentinel, 10, "Bash"),
             group(sentinel, 10, "Write|Edit|NotebookEdit"),
@@ -151,7 +164,7 @@ def claude_snippet(jevdev):
 def removal_snippet():
     return (
         "Claude part, not applied: in a ClaudeConfig PR with no Claude session running, delete the hook entries "
-        "whose command contains scope_sentinel.py or compact_advisor.py from ~/.claude/settings.json, then run:\n"
+        "whose command contains scope_sentinel.py, compact_advisor.py, or skill_router.py from ~/.claude/settings.json, then run:\n"
         "rm " + " ".join(f"~/.claude/skills/{n}" for n in SKILLS)
     )
 
