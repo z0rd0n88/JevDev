@@ -15,6 +15,7 @@ import tomllib
 
 HOSTS = ["claude", "codex", "agy"]
 FEATURES = [
+    "skill routing",
     "hyper-jev skill",
     "ask-jev skill",
     "bash gate",
@@ -42,7 +43,9 @@ def hook_entries(data, event):
     for i, group in enumerate(groups if isinstance(groups, list) else []):
         if not isinstance(group, dict):
             continue
-        hooks = group.get("hooks", [])
+        if group.get("enabled") is False:
+            continue
+        hooks = [group] if "command" in group else group.get("hooks", [])
         for j, hook in enumerate(hooks if isinstance(hooks, list) else []):
             command = hook.get("command") if isinstance(hook, dict) else None
             if isinstance(command, str):
@@ -56,7 +59,8 @@ def agy_entries(data, event):
     """Same tuples across every named hook in an agy hooks.json (a map of name -> events)."""
     out = []
     for named in data.values() if isinstance(data, dict) else []:
-        out += hook_entries({"hooks": named}, event) if isinstance(named, dict) else []
+        if isinstance(named, dict) and named.get("enabled") is not False:
+            out += hook_entries({"hooks": named}, event)
     return out
 
 
@@ -74,7 +78,11 @@ def skill_cells(dirs, name, linked):
 
     def cell(d):
         entry = d / name
-        return "ok" if (entry / "SKILL.md").is_file() and (entry.is_symlink() or not linked) else "missing"
+        return (
+            "ok"
+            if (entry / "SKILL.md").is_file() and (entry.is_symlink() or not linked)
+            else "missing"
+        )
 
     return {h: cell(dirs[h]) for h in HOSTS}
 
@@ -135,10 +143,38 @@ def check(root, home, scope):
     state = state if isinstance(state, dict) else {}
     cfg = str(codex_path.absolute())
 
-    pre = lambda d: hook_entries(d, "PreToolUse")
-    ok = lambda found: "ok" if found else "missing"
+    def pre(data):
+        return hook_entries(data, "PreToolUse")
+
+    def ok(found):
+        return "ok" if found else "missing"
+
     cli = cli_cell(root)
     table = {
+        "skill routing": {
+            "claude": ok(
+                find(
+                    hook_entries(claude, "UserPromptSubmit"),
+                    lambda m: True,
+                    "skill_router.py",
+                )
+            ),
+            "codex": codex_cell(
+                find(
+                    hook_entries(codex, "UserPromptSubmit"),
+                    lambda m: True,
+                    "skill_router.py",
+                ),
+                state,
+                cfg,
+                "user_prompt_submit",
+            ),
+            "agy": ok(
+                find(
+                    agy_entries(agy, "PreInvocation"), lambda m: True, "skill_router.py"
+                )
+            ),
+        },
         "hyper-jev skill": skill_cells(skill_dirs, "hyper-jev", scope == "user"),
         "ask-jev skill": skill_cells(skill_dirs, "ask-jev", scope == "user"),
         "bash gate": {
@@ -164,7 +200,6 @@ def check(root, home, scope):
                 state,
                 cfg,
                 "pre_tool_use",
-                ok="ok (unavailable here)",
             ),
             "agy": ok(
                 find(
@@ -192,7 +227,13 @@ def check(root, home, scope):
                 cfg,
                 "stop",
             ),
-            "agy": "n/a (unavailable)",
+            "agy": ok(
+                find(
+                    agy_entries(agy, "PostInvocation"),
+                    lambda m: True,
+                    "compact_advisor.py hook agy",
+                )
+            ),
         },
         "ask_jev_files CLI": {h: cli for h in HOSTS},
     }
@@ -216,10 +257,17 @@ def main(argv=None):
     args = ap.parse_args(argv)
     table = check(Path(args.root), Path(args.home), args.scope)
     if args.scope == "user":
-        git = lambda *a: subprocess.run(
-            ["git", "-C", args.root, "rev-parse", *a], capture_output=True, text=True
-        ).stdout.strip()
-        print(f"jevdev checkout: {git('--abbrev-ref', 'HEAD') or '?'} @ {git('--short', 'HEAD') or '?'}")
+
+        def git(*args_):
+            return subprocess.run(
+                ["git", "-C", args.root, "rev-parse", *args_],
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        print(
+            f"jevdev checkout: {git('--abbrev-ref', 'HEAD') or '?'} @ {git('--short', 'HEAD') or '?'}"
+        )
     print(render(table))
     return (
         1 if any(c == "missing" for row in table.values() for c in row.values()) else 0

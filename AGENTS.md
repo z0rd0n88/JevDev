@@ -2,7 +2,9 @@
 
 ## Repository scope
 
-JevDev is the private source repository for JEV-related code, prototypes, and experiments. Keep reusable source, tests, documentation, and reviewed authored fixtures here. A prototype is not an installed Claude or Codex integration; change host configuration only when the user requests installation.
+JevDev is the private source repository for JEV-related code, prototypes, and experiments. Keep reusable source, tests, documentation, and reviewed authored fixtures here. A prototype is not an installed host integration; change host configuration only when the user requests installation.
+
+Every Jev feature must support Claude Code, Antigravity (`agy`), and Codex. New or changed integrations need native hook contracts, project/user installation wiring, install-check coverage, and authored regression tests for all three hosts. Shared CLIs must stay host-independent. Document host limitations and distinguish configuration checks from successful host execution.
 
 ## Changes
 
@@ -14,7 +16,7 @@ Read API credentials from the environment. Never commit credential values, `~/.s
 
 ## Routing and evaluation
 
-Discover each host's live skill roster when routing. Record the host, model, router version, and roster hash with observations; do not combine measurements from different snapshots. Score Claude and Codex separately, using the same labeled prompts for baseline, routed, and oracle arms within each host. Label prompts before inspecting observed loads. Do not present an authored pilot as an estimate of real-world accuracy or infer accuracy from a smoke test.
+Discover each host's live skill roster when routing. Record the host, model, router version, and roster hash with observations; do not combine measurements from different snapshots. Score Claude Code, Agy, and Codex separately, using the same labeled prompts for baseline, routed, and oracle arms within each host. Label prompts before inspecting observed loads. Do not present an authored pilot as an estimate of real-world accuracy or infer accuracy from a smoke test.
 
 Run `python3 tests/test_router.py` after changing the router. See `README.md` for host-specific preflights and benchmark commands.
 

@@ -1,23 +1,37 @@
 # JevDev
 
-Private source repository for Jev experiments, prototypes, and developer tooling. The first project is a skill-router prototype for Claude Code and Codex. It suggests one skill from each host's live roster and measures whether that suggestion changes the first skill the host loads. It does not install a hook or alter either host's configuration.
+Private source repository for Jev experiments, prototypes, and developer tooling for Claude Code, Antigravity (`agy`), and Codex. The router suggests a skill from the selected host's live roster. Project hooks provide host integrations; user-scope installation is a separate, explicit operation. Every feature must support all three hosts.
 
 ## Skill router
 
 The router uses two Jev requests when the initial gate finds a possible skill fit. The first request ranks the live skill roster in balanced Choice shards; the second checks a short list against fuller descriptions. It returns no suggestion when the gate or fit check abstains. Results include the roster hash, router version, provider token count, estimated Jev cost, and routing time.
 
-Prerequisites: Python 3, `PyYAML`, the [local Jev CLI](https://docs.typesafe.ai/cookbooks/skill_suggestion), and the `claude` or `codex` CLI for the host being measured. The default Jev executable is `~/.local/bin/jev`; set `JEV_BIN` to use another path. Set `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY` in your environment without committing it. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` override the default `~/.claude` and `~/.codex` locations.
+Prerequisites: Python 3, `PyYAML`, the [local Jev CLI](https://docs.typesafe.ai/cookbooks/skill_suggestion), and the `claude`, `agy`, or `codex` CLI for the host being measured. The default Jev executable is `~/.local/bin/jev`; set `JEV_BIN` to use another path. Set `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY` in your environment without committing it. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` override the default `~/.claude` and `~/.codex` locations.
 
 ```bash
 python3 -m pip install PyYAML
 python3 skill_router.py --host claude measure
 python3 skill_router.py --host codex measure
+python3 skill_router.py --host agy measure
 python3 skill_router.py --host claude route 'Help me create a reusable skill.'
 python3 skill_router.py --host codex route 'Help me create a reusable skill.'
+python3 skill_router.py --host agy route 'Help me create a reusable skill.'
 python3 tests/test_router.py
 ```
 
 `measure` discovers the host-visible roster without a Jev call. `route` sends one request's text to Jev. The transcript sampler reads local session files and writes candidate prompts; it does not upload transcript files. Its pattern filter is only a first pass, so review every sampled prompt before using it in a live benchmark.
+
+Claude discovery uses its live init listing with hooks disabled for that metadata call. Codex uses `codex debug prompt-input`, accepting described and legacy skill lines. Agy uses the local, zero-turn `agy -p /skills --output-format json`: exact names and paths from `command.data.skills`, excluding entries with `model_invocable: false`. Disabled caches do not supply candidates.
+
+| Feature | Claude Code | Codex | Agy |
+|---|---|---|---|
+| Skill routing | `UserPromptSubmit` | `UserPromptSubmit` | `PreInvocation`, fresh user step only |
+| Shell and write advice | `PreToolUse` | `PreToolUse` | `PreToolUse` |
+| Compaction advice | `Stop` | `Stop` | `PostInvocation`, no pending tools |
+| `ask-jev`, `hyper-jev` | project skill | project skill | project skill |
+| Jev CLIs and authored fixture tools | shared CLI | shared CLI | shared CLI |
+
+Routing fails open. Claude/Codex receive `hookSpecificOutput.additionalContext`; Agy receives `injectSteps`. Ignored `.local/router.jsonl` records host, reported host model (null when unavailable), Jev model, router version, roster hash, and suggestion. Prompt text and provider error bodies are not logged. User hooks stand down when the project owns routing. `bash smoke.sh <claude|codex|agy> router` prints a manual check; add `--read` for the latest row. Review edited Codex commands in `/hooks`.
 
 ## Authored pilot
 
@@ -33,7 +47,9 @@ python3 skill_router.py --host claude score .local/pilot-observations-claude.jso
 python3 skill_router.py --host codex score .local/pilot-observations-codex.jsonl
 ```
 
-Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex's first observed `SKILL.md` read count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm, so the same command resumes interrupted work. A changed roster, router version, host, or agent model requires a new observations file.
+Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex/Agy's first observed `SKILL.md` file-tool call count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm. A changed roster, router version, host, or model requires a new observations file. Automatic router hints are disabled in benchmark child processes to avoid contaminating the baseline.
+
+Agy also supports `sample`, `benchmark`, and `score`. Prepare independent labels against its own roster, then run `python3 skill_router.py --host agy benchmark .local/labels-agy.jsonl .local/observations-agy.jsonl --model YOUR_PINNED_AGY_MODEL --limit 1`. An explicit model is required. The Claude/Codex pilot labels are not Agy labels. Agy arms verify the roster and reject failed or permission-denied executions.
 
 The full pilot invokes up to 300 agent sessions per host and can take hours. Claude defaults to `haiku` with a $0.10 cap per agent call; Codex defaults to `gpt-6-luna`. The host prompts are not identical: Claude receives a system-prompt addition, while Codex receives a delimited addition to the user turn. Compare arms within a host. Keep credentials, sampled transcripts, logs, and live observations out of Git; `.local/` is ignored.
 
@@ -49,7 +65,7 @@ Live smoke: `bash smoke.sh claude bash` runs one canned prompt through Claude an
 
 Codex runs the same shadow hook from `.codex/config.toml` (`scope_sentinel.py hook codex`), which turns itself on and loads the Jev key the same way. It reads the typed text from the rollout's `UserMessage` items, drops Codex desktop's ambient browser context, and logs rows with `"host": "codex"`. Codex runs project hooks only after you trust them: open Codex in this repo and choose "Trust all and continue", or review them in `/hooks`. Re-trust after any change to the hook commands.
 
-Antigravity (`agy`) runs it from `.agents/hooks.json` (`scope_sentinel.py hook agy`) on `run_command` tool calls, with the same Jev key loading. It reads the `<USER_REQUEST>` block of the latest `USER_INPUT` step in the conversation transcript and logs rows with `"host": "agy"`. `agy` loads this project hooks file without a trust prompt. The skill router has no `agy` host yet.
+Antigravity (`agy`) runs it from `.agents/hooks.json` (`scope_sentinel.py hook agy`) on `run_command` tool calls, with the same Jev key loading. It reads the `<USER_REQUEST>` block of the latest `USER_INPUT` step in the conversation transcript and logs rows with `"host": "agy"`. `agy` loads this project hooks file without a trust prompt. Routing uses a native `PreInvocation` handler in the same file.
 
 ### Write gate
 
@@ -77,13 +93,13 @@ python3 tests/test_jev_patterns.py
 
 ## Compaction advisor
 
-`compact_advisor.py` is a `Stop` hook (Claude and Codex) that asks Jev, once per turn and only above the notice line, whether this is a good moment to compact. It prints `{"systemMessage": …}` for you to read, or nothing; it never compacts for you and never blocks. A `Stop` hook is synchronous, so a stalled provider can delay the prompt by up to 40 s once. Four questions over a JSON state (`current_request`, `previous_work` = the 20 most recent earlier prompts, `recent_turn`, `tools_this_turn`): `switched_gears`, `at_boundary`, `needs_history`, `mid_operation`. Tiers: `notice` (below the recommend line), `recommend`, `request`.
+`compact_advisor.py` asks Jev above the notice line whether this is a good moment to compact. Claude/Codex use `Stop` and `{"systemMessage": …}`; Agy uses `PostInvocation` and a native `injectSteps` system message, skipping pending tool calls. Agy's Stop protocol would restart execution to inject advice, so it is not used. Advice never compacts automatically or prevents stopping. The synchronous Jev call has a 40 s timeout. Four questions (`switched_gears`, `at_boundary`, `needs_history`, `mid_operation`) judge a state with the current request, 20 earlier prompts, recent reply, and tool names. Tiers are `notice`, `recommend`, `request`. See the [Agy hook contract](https://www.antigravity.google/docs/hooks).
 
 | Host | Token source | Window |
 |---|---|---|
 | Claude | last main-chain assistant `message.usage`: input + cache creation + cache read + output | unknown, so no percentage |
 | Codex | last `token_count` event, `last_token_usage.total_tokens` | `model_context_window` |
-| agy | unavailable: not wired (no usage, no compact action) | |
+| agy | last `PLANNER_RESPONSE`: input + cache read + output tokens | unknown, so no percentage |
 
 Lines are absolute tokens: 80 000 (notice), 110 000 (recommend), 160 000 (request). Override with `JEV_COMPACT_LINES=notice,recommend,request`; a 1M-window model wants higher lines. Below the notice line, or on the first request, no Jev call is made. Rows go to `.local/compact.jsonl` (`tier`, `reason`, `tokens`, `window`, `answers`, `printed`, `error`). Codex runs project hooks only after trust: re-trust in `/hooks`. Manual check: `bash smoke.sh claude compact` or `bash smoke.sh codex compact` prints the interactive steps; add `--read` for the newest row.
 
@@ -135,15 +151,13 @@ The skill's `$ARGUMENTS` placeholder is filled by Claude's slash form; Codex and
 
 | Cell | Meaning |
 |---|---|
-| `ok` | wired (and, for Codex hooks, trusted) |
-| `ok (unavailable here)` | wired, but the host never fires it on this machine (Codex write gate: no native `apply_patch`) |
-| `n/a (unavailable)` | the host has no such feature (agy compaction advisor) |
+| `ok` | wired; for Codex, a trust-state entry is present. Configuration evidence, not proof that the hook executed. |
 | `missing` | config absent, malformed, or lacking the entry; exit code 1 |
 | `untrusted` | Codex has no `hooks.state` trust entry for the hook in `~/.codex/config.toml`; trust it in `codex` via `/hooks`. Alone it keeps exit code 0 |
 
 ## User-scope install
 
-Runs the gates, advisor, and skills in every repo on this machine from the primary checkout, logging to `~/.local/state/jevdev/`. Repos whose project config already carries `scope_sentinel.py` are skipped by `--user`, so no double rows.
+Runs routing, gates, advisor, and skills from the primary checkout, logging to `~/.local/state/jevdev/`. Each user hook stands down when the project already carries its script, avoiding duplicate advice. The installer includes routing for all hosts and Agy's native advisor handler; the Claude snippet still requires a ClaudeConfig PR.
 
 1. `python3 install_user.py` (idempotent; `--home` and `--jevdev` override the defaults). It merges `~/.codex/hooks.json`, writes the `jevdev` hook in `~/.gemini/config/hooks.json`, links the four skills, and prints the Claude snippet. A real directory at a skill path is refused (exit 2); nothing changes.
 2. Claude: open a ClaudeConfig PR with the printed snippet (`~/.claude/settings.json` hooks plus two `ln -s` lines). Merge and pull it while no Claude session runs; running sessions rewrite that file.

@@ -21,7 +21,15 @@ DEFAULT_TIMEOUT = 40.0
 NO_KEY = (
     "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
 )
-SAFE_ENV = ("PATH", "HOME", "USER", "SYSTEMROOT", "TMPDIR", "JEV_BASE_URL")
+SAFE_ENV = (
+    "PATH",
+    "HOME",
+    "USER",
+    "SYSTEMROOT",
+    "TMPDIR",
+    "JEV_BASE_URL",
+    "JEV_ALLOW_LOCAL",
+)
 
 
 class JevError(RuntimeError):

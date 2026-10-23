@@ -1,7 +1,6 @@
 """Phase 7 checks: install-check table cells and exit codes on tmp copies of the configs."""
 
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 import check_install  # noqa: E402
 
 FEATURES = [
+    "skill routing",
     "hyper-jev skill",
     "ask-jev skill",
     "bash gate",
@@ -20,7 +20,12 @@ FEATURES = [
     "compaction advisor",
     "ask_jev_files CLI",
 ]
-HOOK_KEYS = ["pre_tool_use:0:0", "pre_tool_use:1:0", "stop:0:0"]
+HOOK_KEYS = [
+    "user_prompt_submit:0:0",
+    "pre_tool_use:0:0",
+    "pre_tool_use:1:0",
+    "stop:0:0",
+]
 
 
 def make_root(tmp):
@@ -81,15 +86,29 @@ def check_all_ok():
             assert list(cells) == ["claude", "codex", "agy"], cells
             for host, cell in cells.items():
                 want = "ok"
-                if (feature, host) == ("write gate", "codex"):
-                    want = "ok (unavailable here)"
-                if (feature, host) == ("compaction advisor", "agy"):
-                    want = "n/a (unavailable)"
                 assert cell == want, (feature, host, cell)
         r = run_cli(root, home)
         assert r.returncode == 0, (r.stdout, r.stderr)
-        assert "| bash gate |" in r.stdout and "ok (unavailable here)" in r.stdout, (
-            r.stdout
+        assert "| bash gate |" in r.stdout and "| skill routing |" in r.stdout, r.stdout
+
+
+def check_host_parity():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = make_root(tmp)
+        home = make_home(tmp, root, keys=HOOK_KEYS)
+        table = check_install.check(root, home, "project")
+        assert table.get("skill routing") == {h: "ok" for h in check_install.HOSTS}, (
+            table
+        )
+        assert table["compaction advisor"]["agy"] == "ok", table
+        cfg = root / ".agents/hooks.json"
+        data = json.loads(cfg.read_text())
+        for named in data.values():
+            named.pop("PreInvocation", None)
+        cfg.write_text(json.dumps(data))
+        assert (
+            check_install.check(root, home, "project")["skill routing"]["agy"]
+            == "missing"
         )
 
 
@@ -176,7 +195,14 @@ def check_malformed():
 
 def run_user(home):
     return subprocess.run(
-        [sys.executable, str(ROOT / "check_install.py"), "--scope", "user", "--home", str(home)],
+        [
+            sys.executable,
+            str(ROOT / "check_install.py"),
+            "--scope",
+            "user",
+            "--home",
+            str(home),
+        ],
         capture_output=True,
         text=True,
         timeout=30,
@@ -213,20 +239,33 @@ def check_user_scope():
         home, snippet = user_home(tmp)
         table = check_install.check(ROOT, home, "user")
         assert list(table) == FEATURES, list(table)
-        for feature in ["hyper-jev skill", "ask-jev skill", "bash gate", "write gate", "compaction advisor"]:
+        for feature in [
+            "hyper-jev skill",
+            "ask-jev skill",
+            "bash gate",
+            "write gate",
+            "compaction advisor",
+        ]:
             assert table[feature]["claude"] == "missing", (feature, table[feature])
         for feature in ["hyper-jev skill", "ask-jev skill"]:
-            assert table[feature]["codex"] == table[feature]["agy"] == "ok", table[feature]
+            assert table[feature]["codex"] == table[feature]["agy"] == "ok", table[
+                feature
+            ]
         for feature in ["bash gate", "write gate", "compaction advisor"]:
             assert table[feature]["codex"] == "untrusted", (feature, table[feature])
         assert table["bash gate"]["agy"] == table["write gate"]["agy"] == "ok", table
-        assert table["compaction advisor"]["agy"] == "n/a (unavailable)", table
+        assert table["compaction advisor"]["agy"] == "ok", table
         r = run_user(home)
-        assert r.returncode == 1 and r.stdout.startswith("jevdev checkout: "), (r.stdout, r.stderr)
+        assert r.returncode == 1 and r.stdout.startswith("jevdev checkout: "), (
+            r.stdout,
+            r.stderr,
+        )
 
         apply_claude_snippet(home, snippet)
         table = check_install.check(ROOT, home, "user")
-        assert all(cell == "ok" for row in table.values() for cell in [row["claude"]]), table
+        assert all(
+            cell == "ok" for row in table.values() for cell in [row["claude"]]
+        ), table
         r = run_user(home)
         assert r.returncode == 0, (r.stdout, r.stderr)  # untrusted alone keeps exit 0
 
@@ -237,7 +276,11 @@ def check_user_scope_trusted():
         home, snippet = user_home(tmp, trusted=True)
         apply_claude_snippet(home, snippet)
         table = check_install.check(ROOT, home, "user")
-        want = {"bash gate": "ok", "write gate": "ok (unavailable here)", "compaction advisor": "ok"}
+        want = {
+            "bash gate": "ok",
+            "write gate": "ok",
+            "compaction advisor": "ok",
+        }
         assert {f: table[f]["codex"] for f in want} == want, table
         (home / ".codex/hooks.json").write_text("{nope")
         table = check_install.check(ROOT, home, "user")

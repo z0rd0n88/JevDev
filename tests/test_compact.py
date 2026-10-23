@@ -175,7 +175,7 @@ def check_claude_recommend() -> None:  # AC-4.1
             and r["jev_model"] == "typesafe/jev-stub-1"
         ), r
         assert (
-            r["advisor_version"] == "advisor-v1" and r["lines"] == ca.DEFAULT_LINES
+            r["advisor_version"] == "advisor-v2" and r["lines"] == ca.DEFAULT_LINES
         ), r
         rec = json.loads((tmp / "rec.json").read_text())
         state = json.loads(rec["stdin"])
@@ -400,7 +400,60 @@ def check_scan_keys() -> None:
         assert scan["last_assistant_text"] == "did now write the changelog", scan
         assert ss.scan_transcript(Path(write_lines(tmp, [])), "claude")["tokens"] == 0
         agy = ss.scan_transcript(Path(write_lines(tmp, [])), "agy")
-        assert "tokens" not in agy, agy
+        assert agy["tokens"] == 0, agy
+
+
+def check_agy_reported_usage_and_native_output() -> None:
+    d, tmp = fresh()
+    with d:
+        setup(tmp)
+        steps = [
+            {"type": "USER_INPUT", "content": f"<USER_REQUEST>{p}</USER_REQUEST>"}
+            for p in PROMPTS
+        ]
+        steps += [
+            {
+                "type": "PLANNER_RESPONSE",
+                "input_tokens": 20_000,
+                "cache_read_tokens": 95_000,
+                "output_tokens": 5_000,
+                "content": "Finished the changelog",
+                "tool_calls": [{"name": "view_file"}],
+            }
+        ]
+        steps.append(
+            {
+                "type": "PLANNER_RESPONSE",
+                "input_tokens": 20_000,
+                "cache_read_tokens": 95_000,
+                "output_tokens": 5_000,
+                "content": "Done",
+                "tool_calls": [],
+            }
+        )
+        transcript = write_lines(tmp, steps)
+        scan = ss.scan_transcript(Path(transcript), "agy")
+        assert scan["tokens"] == 120_000, scan
+        assert scan["tools_after_last_prompt"] == ["view_file"], scan
+        out, rows = run(
+            tmp,
+            "agy",
+            {
+                "conversationId": "agy-test",
+                "workspacePaths": [str(tmp)],
+                "transcriptPath": transcript,
+                "modelName": "agy-test-model",
+            },
+        )
+        assert (
+            rows[-1]["host_model"] == "agy-test-model"
+            and rows[-1]["tier"] == "recommend"
+        ), rows
+        assert rows[-1]["session_id"] == "agy-test", rows
+        assert (
+            "Recommended"
+            in json.loads(out)["injectSteps"][0]["systemMessage"]["systemMessage"]
+        ), out
 
 
 if __name__ == "__main__":

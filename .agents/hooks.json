@@ -1,5 +1,19 @@
 {
   "jev-scope-sentinel": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "bash -c 'r=$(git rev-parse --show-toplevel) && exec bash \"$r/with_jev_key.sh\" python3 \"$r/skill_router.py\" --host agy hook' || true",
+        "timeout": 90
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "bash -c 'r=$(git rev-parse --show-toplevel) && exec bash \"$r/with_jev_key.sh\" python3 \"$r/compact_advisor.py\" hook agy' || true",
+        "timeout": 45
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "run_command",
