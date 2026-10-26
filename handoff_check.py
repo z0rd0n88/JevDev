@@ -8,15 +8,12 @@ import argparse
 from dataclasses import dataclass
 from enum import StrEnum
 import json
-import os
 from pathlib import Path
 import re
-import subprocess
 import sys
-import time
 
-DEFAULT_MODEL = "jev-latest"
-DEFAULT_TIMEOUT = 40.0
+from jev_patterns import DEFAULT_TIMEOUT, call, input_tokens, isolated_env as get_isolated_env  # noqa: F401  re-export
+
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB limit
 MAX_LEDGER_ITEMS = 50
 MAX_HANDOFF_CHARS = 25_000
@@ -58,30 +55,6 @@ class HandoffReport:
 def redact(text: str) -> str:
     """Scrub sensitive credentials and tokens from text."""
     return SECRET.sub(lambda m: f"{m.group(1)}[REDACTED]" if m.group(1) else "[REDACTED]", text)
-
-
-def resolve_jev_binary() -> Path:
-    """Resolve and validate the JEV binary path."""
-    raw = os.environ.get("JEV_BIN")
-    return Path(raw).resolve() if raw else (Path.home() / ".local/bin/jev").resolve()
-
-
-def get_isolated_env() -> dict[str, str]:
-    """Build a sanitized environment containing only essential variables and the Jev key."""
-    safe_keys = {"PATH", "HOME", "USER", "SYSTEMROOT", "TMPDIR"}
-    env = {k: os.environ[k] for k in safe_keys if k in os.environ}
-
-    if "TYPESAFE_API_KEY" in os.environ:
-        env["TYPESAFE_API_KEY"] = os.environ["TYPESAFE_API_KEY"]
-    elif "OPENROUTER_API_KEY" in os.environ:
-        env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
-    else:
-        raise RuntimeError("Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY")
-
-    if "JEV_MODEL" in os.environ:
-        env["JEV_MODEL"] = os.environ["JEV_MODEL"]
-
-    return env
 
 
 def parse_ledger(content: str) -> list[LedgerItem]:
@@ -144,7 +117,6 @@ def evaluate_handoff(
     handoff: str,
     model: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
-    jev_bin: Path | None = None,
 ) -> HandoffReport:
     """Evaluate ledger items against handoff text using isolated Jev process execution."""
     if not items:
@@ -153,12 +125,6 @@ def evaluate_handoff(
     if len(items) > MAX_LEDGER_ITEMS:
         raise ValueError(f"Ledger item count ({len(items)}) exceeds maximum limit of {MAX_LEDGER_ITEMS}")
 
-    env = get_isolated_env()
-    target_bin = jev_bin or resolve_jev_binary()
-    if not (target_bin.is_file() and os.access(target_bin, os.X_OK)):
-        raise FileNotFoundError(f"Jev binary not found or not executable at {target_bin}")
-
-    selected_model = model or os.environ.get("JEV_MODEL") or DEFAULT_MODEL
     sanitized_handoff = redact(handoff)[:MAX_HANDOFF_CHARS]
 
     state_content = (
@@ -169,46 +135,12 @@ def evaluate_handoff(
     )
 
     questions = build_jev_questions(items)
-
-    start = time.perf_counter()
-    try:
-        process = subprocess.run(
-            [str(target_bin), "-m", selected_model, "-q", json.dumps(questions), "-j", "handoff_check"],
-            input=state_content,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            start_new_session=True,
-            env=env,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise RuntimeError(f"jev timed out after {timeout}s evaluating {len(items)} items") from e
-
-    elapsed = time.perf_counter() - start
-
-    if process.returncode:
-        # Do not echo stderr: provider error bodies can include prompt text or authorization headers
-        raise RuntimeError(f"jev exited {process.returncode}; inspect provider access and limits locally")
-
-    try:
-        response = json.loads(process.stdout) if process.stdout else {}
-    except json.JSONDecodeError as err:
-        raise RuntimeError(f"Malformed Jev JSON output: {err}") from err
-
-    if not isinstance(response, dict):
-        raise RuntimeError(f"Expected JSON object from Jev, got {type(response).__name__}")
-
-    answers = response.get("answers")
-    if not isinstance(answers, dict):
-        raise RuntimeError("Jev response missing 'answers' object")
+    response = call(state_content, questions, job="handoff_check", model=model, timeout=timeout)
+    answers = response["answers"]
 
     evaluations: list[ItemEvaluation] = []
     for i, item in enumerate(items):
         key = f"item_{i}"
-        if key not in answers:
-            raise RuntimeError(f"Missing evaluation answer for {key} in Jev response")
-
         ans = answers[key]
         if not isinstance(ans, dict) or "choice" not in ans:
             raise RuntimeError(f"Invalid answer format for {key} in Jev response")
@@ -228,13 +160,10 @@ def evaluate_handoff(
 
         evaluations.append(ItemEvaluation(item=item, verdict=verdict, confidence=confidence))
 
-    usage = response.get("usage") or {}
-    input_tokens = int(usage.get("input_tokens") or 0)
-
     return HandoffReport(
         results=evaluations,
-        elapsed=elapsed,
-        input_tokens=input_tokens,
+        elapsed=response["elapsed"],
+        input_tokens=input_tokens(response),
     )
 
 
