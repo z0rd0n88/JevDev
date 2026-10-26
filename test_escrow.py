@@ -8,13 +8,7 @@ import argparse
 from pathlib import Path
 import sys
 
-import json
-import os
-import subprocess
-import time
-
-DEFAULT_MODEL = "jev-latest"
-JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
+from jev_patterns import call, input_tokens
 
 def load_diff_file(path_str: str) -> str:
     path = Path(path_str)
@@ -36,33 +30,13 @@ def build_jev_questions() -> dict:
     }
 
 def evaluate_test_escrow(diff: str) -> dict:
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError("Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY")
-    
-    state_content = f"TEST DIFF:\n{diff}"
-    questions = build_jev_questions()
-    model = os.environ.get("JEV_MODEL") or DEFAULT_MODEL
-    
-    start = time.perf_counter()
-    process = subprocess.run(
-        [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", "test_escrow"],
-        input=state_content,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
-    )
-    elapsed = time.perf_counter() - start
-    
-    if process.returncode:
-        raise RuntimeError(f"jev exited {process.returncode}; {process.stderr}")
-        
-    response = json.loads(process.stdout)
+    response = call(f"TEST DIFF:\n{diff}", build_jev_questions(), job="test_escrow")
+    intent = response["answers"]["intent"]
     return {
-        "result": response["answers"]["intent"]["choice"],
-        "confidence": float(response["answers"]["intent"].get("confidence", 0.0)),
-        "elapsed": elapsed,
-        "input_tokens": int(response.get("usage", {}).get("input_tokens", 0))
+        "result": intent["choice"],
+        "confidence": float(intent.get("confidence", 0.0)),
+        "elapsed": response["elapsed"],
+        "input_tokens": input_tokens(response),
     }
 
 def main():

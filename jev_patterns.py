@@ -1,6 +1,6 @@
 """The one Jev transport: every Jev call in the repo goes through call().
 
-- call runs [JEV, "-m", model, "-q", questions JSON, "-j", job] with the state on stdin
+- call runs JEV -m <model> -q <questions JSON> -j <job> with the state on stdin
   (a str verbatim, anything else JSON-encoded), one attempt, default timeout 40 s.
 - The child environment is SAFE_ENV (each only if set) plus one key: TYPESAFE_API_KEY when
   non-empty, else OPENROUTER_API_KEY when non-empty. JEV_MODEL travels as -m, never in env.
