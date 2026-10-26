@@ -13,6 +13,7 @@ SOURCE = Path(__file__).parents[1] / "fixture_curator.py"
 def load_module():
     spec = importlib.util.spec_from_file_location("fixture_curator", SOURCE)
     module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(SOURCE.parent))
     spec.loader.exec_module(module)
     return module
 
