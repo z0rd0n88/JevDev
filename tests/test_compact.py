@@ -159,7 +159,10 @@ def check_claude_recommend() -> None:  # AC-4.1
     with d:
         setup(tmp)
         out, rows = run(
-            tmp, "claude", event(tmp, write_lines(tmp, claude_lines(PROMPTS)))
+            tmp,
+            "claude",
+            event(tmp, write_lines(tmp, claude_lines(PROMPTS))),
+            {"JEV_MODEL": "m-test"},
         )
         assert out.strip() == AC41_OUT, out
         r = rows[-1]
@@ -180,9 +183,10 @@ def check_claude_recommend() -> None:  # AC-4.1
         assert (
             r["input_tokens"] == 33
             and isinstance(r["elapsed"], float)
-            and r["model"] == ca.model_name()
+            and r["model"] == "m-test"
         ), r
         rec = json.loads((tmp / "rec.json").read_text())
+        assert rec["argv"][rec["argv"].index("-m") + 1] == "m-test", rec["argv"]
         state = json.loads(rec["stdin"])
         assert list(state) == [
             "current_request",
