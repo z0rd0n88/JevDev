@@ -1,6 +1,6 @@
 """The one Jev transport: every Jev call in the repo goes through call().
 
-- call runs [JEV, "-m", model, "-q", questions JSON, "-j", job] with the state on stdin
+- call runs JEV -m <model> -q <questions JSON> -j <job> with the state on stdin
   (a str verbatim, anything else JSON-encoded), one attempt, default timeout 40 s.
 - The child environment is SAFE_ENV (each only if set) plus one key: TYPESAFE_API_KEY when
   non-empty, else OPENROUTER_API_KEY when non-empty. JEV_MODEL travels as -m, never in env.
@@ -21,7 +21,15 @@ DEFAULT_TIMEOUT = 40.0
 NO_KEY = (
     "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
 )
-SAFE_ENV = ("PATH", "HOME", "USER", "SYSTEMROOT", "TMPDIR", "JEV_BASE_URL")
+SAFE_ENV = (
+    "PATH",
+    "HOME",
+    "USER",
+    "SYSTEMROOT",
+    "TMPDIR",
+    "JEV_BASE_URL",
+    "JEV_ALLOW_LOCAL",
+)
 
 
 class JevError(RuntimeError):

@@ -9,14 +9,10 @@ import argparse
 import collections
 import json
 import math
-import os
 from pathlib import Path
-import subprocess
 import sys
-import time
 
-DEFAULT_MODEL = "jev-latest"
-JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
+from jev_patterns import call, input_tokens
 
 
 def validate_record(record: dict) -> list[str]:
@@ -66,37 +62,13 @@ def score(answers: dict, key: str) -> float:
 
 def curate_with_jev(record: dict) -> dict:
     """Invoke Jev to evaluate the prompt."""
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError(
-            "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-        )
-    
-    state_content = f"PROMPT TEXT:\n{record.get('text', '')}"
-    questions = build_curator_questions()
-    model = os.environ.get("JEV_MODEL") or DEFAULT_MODEL
-    
-    start = time.perf_counter()
-    process = subprocess.run(
-        [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", "curator"],
-        input=state_content,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
-    )
-    elapsed = time.perf_counter() - start
-    
-    if process.returncode:
-        # Do not echo stderr: provider error bodies can include the request text.
-        raise RuntimeError(f"jev exited {process.returncode}; inspect provider access and limits locally")
-
-    response = json.loads(process.stdout)
-    answers = response["answers"]  # strict: a missing answer is an error, never a 0.0 verdict
+    response = call(f"PROMPT TEXT:\n{record.get('text', '')}", build_curator_questions(), job="curator")
+    answers = response["answers"]
     return {
         "self_contained": score(answers, "self_contained"),
         "multiple_defensible": score(answers, "multiple_defensible"),
-        "elapsed": elapsed,
-        "input_tokens": int((response.get("usage") or {}).get("input_tokens") or 0),
+        "elapsed": response["elapsed"],
+        "input_tokens": input_tokens(response),
     }
 
 

@@ -15,6 +15,7 @@ import importlib.util
 def load_module():
     spec = importlib.util.spec_from_file_location("handoff_check", SOURCE)
     module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(SOURCE.parent))
     spec.loader.exec_module(module)
     return module
 

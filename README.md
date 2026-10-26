@@ -129,6 +129,32 @@ The skill's `$ARGUMENTS` placeholder is filled by Claude's slash form; Codex and
 
 `ask-jev` is authored here (`.agents/skills/ask-jev/SKILL.md`) and documents `ask_jev_files.py`: the three subcommands, the three question types, and three runnable recipes (triage a failure, judge a diff, classify a request). It loads the same way as `hyper-jev`: `/ask-jev <request>` in Claude and agy, `$ask-jev <request>` in Codex. Smoke: `bash smoke.sh <claude|agy|codex> ask-skill` asks the host to triage `python3 tests/test_sentinel.py`; the reply names a `kind` with a confidence and the script prints the host's `ask_jev_files.py ask` sentinel row (Codex prints manual steps).
 
+## Jev from code
+
+Upstream levels 1 to 5 (ten-levels-of-jev `README.md`, commit `777adaf`) are plain functions over one client. Here the client is `jev_patterns.call`, and each level lives in the function that already does that job.
+
+### Level 1
+
+Single Decisions, option B (urgency gate): `compact_advisor.decide_tier` acts on one Noul at a time, staying silent when `mid_operation` is `> 0.6`.
+
+### Level 2
+
+Multiple Choice, option A (support triage): `scope_sentinel.BASH_QUESTIONS` asks a Choice (`effect`) and a Noul (`destructive_intent`) about one command in a single call, and `gate_bash` decides which answers matter.
+
+### Level 3
+
+Composite Scoring, option A (ticket priority): `skill_router.suggest` averages the three `GATES` answers in code (inverting `prose_suffices`) and stops after one request when the average is below `GATE_THRESHOLD`.
+
+### Level 4
+
+Confidence Gating, option A (bash tool gate): `gate_bash` blocks an `irreversible` pick only when its confidence clears `BASH_THRESHOLDS["irreversible"]`, or when `destructive_intent` clears `BASH_THRESHOLDS["destructive"]`.
+
+### Level 5
+
+Intent and Model Routing, option A (agent router): `skill_router.suggest` routes in two requests, a wide sharded Choice then a fit check on the shortlist, and suggests a skill only when its fit is at least `FITS_THRESHOLD`.
+
+New callers import `jev_patterns.call` and keep their thresholds in code, never in the prompt.
+
 ## Install check
 
 `python3 check_install.py` prints a feature × host table showing whether each feature is wired at project scope. It only reads configs; it never edits them or trusts a Codex hook. `--root PATH` and `--home PATH` override the repo and home directories; `--scope user` reads the user-scope files instead (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/config/hooks.json`, the three user skill dirs).

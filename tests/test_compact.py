@@ -177,6 +177,11 @@ def check_claude_recommend() -> None:  # AC-4.1
         assert (
             r["advisor_version"] == "advisor-v1" and r["lines"] == ca.DEFAULT_LINES
         ), r
+        assert (
+            r["input_tokens"] == 33
+            and isinstance(r["elapsed"], float)
+            and r["model"] == ca.model_name()
+        ), r
         rec = json.loads((tmp / "rec.json").read_text())
         state = json.loads(rec["stdin"])
         assert list(state) == [

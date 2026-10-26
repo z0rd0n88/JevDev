@@ -51,6 +51,7 @@ ALLOWED = {
     "SYSTEMROOT",
     "TMPDIR",
     "JEV_BASE_URL",
+    "JEV_ALLOW_LOCAL",
     "TYPESAFE_API_KEY",
     "OPENROUTER_API_KEY",
 }
@@ -63,6 +64,7 @@ BASE = {
         "OPENROUTER_API_KEY",
         "JEV_MODEL",
         "JEV_BASE_URL",
+        "JEV_ALLOW_LOCAL",
         "GH_TOKEN",
     }
 }
@@ -103,6 +105,7 @@ def check_call() -> None:
         TYPESAFE_API_KEY="k",
         JEV_MODEL="m1",
         JEV_BASE_URL="http://127.0.0.1:1",
+        JEV_ALLOW_LOCAL="1",
     )
     response = call({"a": 1}, QUESTIONS, job="t")
     r = rec()
@@ -120,6 +123,7 @@ def check_call() -> None:
     assert (
         r["env"]["TYPESAFE_API_KEY"] == "k"
         and r["env"]["JEV_BASE_URL"] == "http://127.0.0.1:1"
+        and r["env"]["JEV_ALLOW_LOCAL"] == "1"
     ), r["env"]
     assert response["answers"] == {"q": {"type": "noul", "noul": 0.8}}, response
     assert isinstance(response["elapsed"], float), response
