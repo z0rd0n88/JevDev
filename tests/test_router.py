@@ -56,9 +56,13 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockJev)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
-    old = {key: os.environ.get(key) for key in ("JEV_BASE_URL", "TYPESAFE_API_KEY")}
+    old = {
+        key: os.environ.get(key)
+        for key in ("JEV_BASE_URL", "TYPESAFE_API_KEY", "JEV_ALLOW_LOCAL")
+    }
     os.environ["JEV_BASE_URL"] = f"http://127.0.0.1:{server.server_port}"
     os.environ["TYPESAFE_API_KEY"] = "mock-key"
+    os.environ["JEV_ALLOW_LOCAL"] = "1"
     try:
         entries = [
             {
