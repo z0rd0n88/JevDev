@@ -5,10 +5,12 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sys
 import threading
 
 
 SOURCE = Path(__file__).parents[1] / "skill_router.py"
+sys.path.insert(0, str(SOURCE.parent))
 spec = importlib.util.spec_from_file_location("skill_router", SOURCE)
 router = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(router)

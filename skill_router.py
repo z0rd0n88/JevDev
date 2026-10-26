@@ -19,12 +19,11 @@ import time
 
 import yaml
 
+from jev_patterns import call, input_tokens, model_name
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
-DEFAULT_MODEL = "jev-latest"
 ROUTER_VERSION = "balanced-shards-v2"
 WIDE_LIMIT = 60
 SHORTLIST = 3
@@ -277,33 +276,8 @@ def inspect_roster(entries: list[dict]) -> dict:
 
 
 def jev(questions: dict, request: str) -> tuple[dict, float]:
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError(
-            "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-        )
-    state = json.dumps({"request": request, "recent_context": ""})
-    model = os.environ.get("JEV_MODEL") or DEFAULT_MODEL
-    start = time.perf_counter()
-    process = subprocess.run(
-        [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", "routing"],
-        input=state,
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
-    )
-    elapsed = time.perf_counter() - start
-    if process.returncode:
-        # The transport can print provider error bodies; do not echo them because
-        # a provider may include request text in an error response.
-        raise RuntimeError(
-            f"jev exited {process.returncode}; inspect provider access and limits locally"
-        )
-    return json.loads(process.stdout), elapsed
-
-
-def usage_tokens(response: dict) -> int:
-    return int(response.get("usage", {}).get("input_tokens") or 0)
+    response = call({"request": request, "recent_context": ""}, questions, job="routing")
+    return response, response["elapsed"]
 
 
 def suggest(request: str, entries: list[dict]) -> dict:
@@ -325,14 +299,14 @@ def suggest(request: str, entries: list[dict]) -> dict:
     ) / len(GATES)
     result = {
         "suggestion": None,
-        "model": first.get("model") or os.environ.get("JEV_MODEL") or DEFAULT_MODEL,
+        "model": first.get("model") or model_name(),
         "shard_shortlist": ranked,
         "gate": gate,
         "gate_values": gate_values,
         "fits": {},
         "requests": 1,
         "seconds": first_seconds,
-        "input_tokens": usage_tokens(first),
+        "input_tokens": input_tokens(first),
         "roster_sha256": roster_hash(entries),
         "router_version": ROUTER_VERSION,
     }
@@ -370,7 +344,7 @@ def suggest(request: str, entries: list[dict]) -> dict:
             "fits": fits,
             "requests": 2,
             "seconds": first_seconds + second_seconds,
-            "input_tokens": result["input_tokens"] + usage_tokens(second),
+            "input_tokens": result["input_tokens"] + input_tokens(second),
         }
     )
     result["estimated_usd"] = (
