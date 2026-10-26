@@ -370,7 +370,7 @@ The sentinel row prefix changes from `RuntimeError:` to `JevError:` for transpor
   - AC-2.5: [live] Given the real key, when `bash smoke.sh claude ask` runs in the Phase 2 worktree, then the host's reply names `kind` and `flaky` answers and the printed sentinel row has `host=claude`, `jev_model` matching `^typesafe/jev-`, and `gate=bash`; pasted into the PR body.
 
 ### Phase 3 — `compact_advisor.py`
-- Outcome: the Stop hook's one Jev call goes through the library; rows and messages are unchanged for every tier and error.
+- Outcome: the Stop hook's one Jev call goes through the library; rows and messages are unchanged for every tier; error rows keep their shape, but a timeout, non-JSON output, or a missing answer now records the `JevError` text from `jev_patterns.call` instead of the advisor's own wording.
 - Changes:
   - Modify: `compact_advisor.py:14-24` — drop the Phase 1 `from jev_patterns import DEFAULT_MODEL, JEV`; add `from jev_patterns import call, input_tokens, model_name`.
   - Delete: `compact_advisor.py:10` (`import subprocess`, no other use), `:143-172` (`ask_jev`).
