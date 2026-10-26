@@ -473,7 +473,7 @@ All tests are stdlib, run as `python3 tests/test_<name>.py`, and replace Jev wit
 
 1. `feat/jev-patterns-p1-library-sentinel` — adds `jev_patterns.py`, its test, migrates the sentinel, moves two import lines. Claude, Codex, and agy project hooks pick up the new transport at the next tool call with no config change and no Codex re-trust (§4). After merge: `git -C ~/JevDev pull --ff-only` so user-scope hooks import the module. **Shipped: #39.**
 2. `feat/jev-patterns-p2-ask-jev-files` — CLI only; the ask-jev skill's recipes keep working (`tests/test_ask_jev_skill.py` runs the fenced blocks with the stub). **Shipped: #43** (review follow-ups: #44).
-3. `feat/jev-patterns-p3-compact-advisor` — Stop hook; no config change.
+3. `feat/jev-patterns-p3-compact-advisor` — Stop hook; no config change. **Shipped: #46.**
 4. `feat/jev-patterns-p4-router-curator-handoff` — the three CLIs plus the router hook, three loader lines, README section. Independent of 2 and 3; lands last so the GC2 grep is the merge check.
 
 Each PR body carries: the test command(s) and their last line, the phase's live line(s) (`smoke.sh` output, or the `route` JSON's `model`/`requests`/`input_tokens`), `Refs #17`, and for Phase 4 `Refs #28`. Merge from the primary checkout, then `git worktree remove`, `git branch -d`, `git push origin --delete` per `AGENTS.md`.

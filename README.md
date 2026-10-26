@@ -69,7 +69,7 @@ Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh a
 python3 tests/test_sentinel.py
 ```
 
-`jev_patterns.py` is the only Jev transport the sentinel and `ask_jev_files.py` use: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
+`jev_patterns.py` is the only Jev transport the sentinel, `ask_jev_files.py`, and `compact_advisor.py` use: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
 
 ```bash
 python3 tests/test_jev_patterns.py

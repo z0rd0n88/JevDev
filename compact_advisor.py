@@ -7,11 +7,10 @@ Port of ten-levels-of-jev level07 should-compact.ts. Prints {"systemMessage": ..
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import time
 
-from jev_patterns import DEFAULT_MODEL, JEV
+from jev_patterns import call, input_tokens, model_name
 from scope_sentinel import (
     append_row,
     host_model,
@@ -139,45 +138,13 @@ def tier_message(tier: str, reason: str, tokens: int, window) -> str | None:
     }.get(tier)
 
 
-def ask_jev(state: dict) -> tuple[dict, dict, float]:
-    """One Jev call (GC2): (answers, whole response, elapsed seconds)."""
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError(
-            "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-        )
-    start = time.perf_counter()
-    done = subprocess.run(
-        [
-            str(JEV),
-            "-m",
-            os.environ.get("JEV_MODEL") or DEFAULT_MODEL,
-            "-q",
-            json.dumps(COMPACT_QUESTIONS),
-            "-j",
-            "compact_advisor",
-        ],
-        input=json.dumps(state),
-        capture_output=True,
-        text=True,
-        timeout=40,
-        check=False,
-    )
-    elapsed = time.perf_counter() - start
-    if done.returncode:
-        raise RuntimeError(
-            f"jev exited {done.returncode}; inspect provider access and limits locally"
-        )
-    response = json.loads(done.stdout)
-    return response["answers"], response, elapsed
-
-
 def run_hook(host: str, log: Path, user: bool = False) -> None:
     """Stop hook: write one row; print {"systemMessage": ...} only when the tier is not silent. Never raises."""
     row = {
         "host": host,
         "host_model": None,
         "advisor_version": ADVISOR_VERSION,
-        "model": os.environ.get("JEV_MODEL") or DEFAULT_MODEL,
+        "model": model_name(),
         "jev_model": None,
         "ts": time.time(),
         "tier": "silent",
@@ -208,12 +175,12 @@ def run_hook(host: str, log: Path, user: bool = False) -> None:
             row["reason"] = "below the notice line"
         else:
             state = build_state(scan, event.get("last_assistant_message"))
-            answers, response, row["elapsed"] = ask_jev(state)
+            response = call(state, COMPACT_QUESTIONS, job="compact_advisor")
+            answers = response["answers"]
+            row["elapsed"] = response["elapsed"]
             row.update(
                 jev_model=response.get("model"),
-                input_tokens=int(
-                    (response.get("usage") or {}).get("input_tokens") or 0
-                ),
+                input_tokens=input_tokens(response),
                 answers={
                     k: answers[k].get("noul", answers[k].get("score"))
                     for k in COMPACT_QUESTIONS
