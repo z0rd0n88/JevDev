@@ -31,11 +31,11 @@ exec {} "$@"
 """
 
 
-def jev(tmp, *args, **env):
+def jev(tmp, *args, state=STATE, **env):
     return subprocess.run(
         [str(JEV), *args],
         env={"PATH": f"{tmp}:{os.environ['PATH']}", **env},
-        input=STATE,
+        input=state,
         capture_output=True,
         text=True,
     )
@@ -59,6 +59,7 @@ def main():
 
         argv, stdin, body, jqargv = run(tmp, OPENROUTER_API_KEY=KEY)
         assert KEY not in argv, "key leaked into curl argv"
+        assert argv.splitlines()[0] == "-q", "curl reads ~/.curlrc, which can redirect the key"
         assert "https://openrouter.ai/api/v1/systemone" in argv.splitlines(), argv
         assert "\n-H\n@-\n" in argv, "curl not told to read the auth header from stdin"
         assert "Content-Type: application/json" in argv.splitlines(), argv
@@ -84,12 +85,21 @@ def main():
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout)["questions"]["q"]["instructions"] == "x", r.stdout
 
+        # Linux caps one argv or env string at 128 KiB; ask_jev_files sends states up to 240K chars.
+        big = "x" * 200_000
+        r = jev(tmp, "-n", QUESTION, state=big, OPENROUTER_API_KEY=KEY)
+        assert r.returncode == 0, r.stderr[-300:]
+        assert json.loads(r.stdout)["state"] == big, "large state mangled"
+        r = jev(tmp, "-n", QUESTION, state='{"k": "%s"}' % big, OPENROUTER_API_KEY=KEY)
+        assert r.returncode == 0, r.stderr[-300:]
+        assert json.loads(r.stdout)["state"] == {"k": big}, "large JSON state not parsed"
+
         # The JEV_BASE_URL guard refuses before -n prints anything, so no curl runs.
         r = jev(tmp, "-n", QUESTION, OPENROUTER_API_KEY=KEY, JEV_BASE_URL="https://attacker.example")
         assert r.returncode == 64, "off-route JEV_BASE_URL not refused"
         r = jev(tmp, "-n", QUESTION, OPENROUTER_API_KEY=KEY, JEV_BASE_URL="http://127.0.0.1:9")
         assert r.returncode == 64, "loopback JEV_BASE_URL accepted without JEV_ALLOW_LOCAL=1"
-    print("ok: key stays off curl argv; state and body off argv; local route gets no key; guard refuses")
+    print("ok: key stays off curl argv; state and body off argv; local route gets no key; guard refuses; curlrc ignored; large state ok")
 
 
 if __name__ == "__main__":

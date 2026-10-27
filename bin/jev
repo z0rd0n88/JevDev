@@ -66,19 +66,19 @@ state=${2-$(cat)}
 # State is a plain string unless it looks like a JSON object/array and parses —
 # Jev accepts either, and the tutorial's multi-field state is an object.
 case $state in
-  '{'*|'['*) jq -e . >/dev/null 2>&1 <<<"$state" && sexpr='env.JEV_S|fromjson' || sexpr='env.JEV_S' ;;
-  *)         sexpr='env.JEV_S' ;;
+  '{'*|'['*) jq -e . >/dev/null 2>&1 <<<"$state" && sexpr='fromjson' || sexpr='.' ;;
+  *)         sexpr='.' ;;
 esac
 
 # jq builds the body so quoting/escaping in state and labels is never our problem.
-# State, question and raw questions reach jq through its environment, not jq's argv. Of these
-# only state read from stdin stays out of `ps`; the question, -q JSON and a positional state
-# are on jev's own command line.
+# State reaches jq on stdin (-Rs), the question and raw questions through its environment: none
+# is on jq's argv, and stdin has no 128 KiB per-string limit. Of these only state read from
+# stdin stays out of `ps`; the question, -q JSON and a positional state are on jev's own argv.
 if [ "$type" = raw ]; then
-  body=$(JEV_S=$state JEV_Q=$raw jq -n --arg m "$model" \
+  body=$(printf '%s' "$state" | JEV_Q=$raw jq -Rs --arg m "$model" \
     "($sexpr) as \$s"' | {model:$m, state:$s, questions:(env.JEV_Q|fromjson)}')
 else
-  body=$(JEV_S=$state JEV_I=$question jq -n --arg m "$model" \
+  body=$(printf '%s' "$state" | JEV_I=$question jq -Rs --arg m "$model" \
                 --arg t "$type" --arg spec "$spec" "($sexpr) as \$s"' | env.JEV_I as $i |
     {model:$m, state:$s, questions:{q:
       ({type:$t, instructions:$i} +
@@ -119,7 +119,7 @@ hdr=(-H 'Content-Type: application/json') auth_hdr=
 [ "$auth" = 1 ] && hdr+=(-H @-) auth_hdr="Authorization: Bearer $key"
 # curl reads the auth header from stdin (-H @-) and the body from fd 3: any local user can
 # read argv with `ps`, not stdin or a here-string.
-resp=$(curl -sS --fail-with-body -m 30 "$base/v1/systemone" "${hdr[@]}" \
+resp=$(curl -q -sS --fail-with-body -m 30 "$base/v1/systemone" "${hdr[@]}" \
   --data-binary @/dev/fd/3 <<<"$auth_hdr" 3<<<"$body") || {
   printf '%s\n' "$resp" >&2; exit 2; }
 
