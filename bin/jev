@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# jev — TypeSafe Jev (System One) from the shell.
+# POST https://api.typesafe.ai/v1/systemone   docs: https://docs.typesafe.ai/concepts/system-one
+# Source of ~/.local/bin/jev; install with: install -m 755 bin/jev ~/.local/bin/jev
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+jev — calibrated typed decisions from TypeSafe's Jev model.
+
+Usage:
+  jev [opts] <question> [state]       # state defaults to stdin
+
+Question type (default: noul, a yes/no probability):
+  -c a,b,c       choice: pick one of N labels  -> label + confidence
+  -s l0,l1,l2    score:  ordered rubric, 2-10 levels -> score + confidence
+  -q '<json>'    raw questions object (use this for per-label descriptions)
+
+Options:
+  -m MODEL       model (default: jev-latest)
+  -j             print the full JSON response
+  -n             dry run: print the request body, send nothing
+  -h             this help
+
+Exit status (noul only): 0 if probability >= 0.5, 1 if below. Gate scripts on it.
+
+Env — set one key; its prefix picks the route:
+  TYPESAFE_API_KEY  or OPENROUTER_API_KEY (either is read)
+      sk-or-...  -> https://openrouter.ai/api
+      vck_...    -> https://ai-gateway.vercel.sh/typesafe
+      otherwise  -> https://api.typesafe.ai
+  JEV_BASE_URL      override the route explicitly
+
+Both gateways keep TypeSafe's request/response shape, so only the URL and key
+differ. Cloudflare Workers AI also serves Jev but with a different shape.
+
+Examples:
+  jev 'Does this request a refund?' 'I want my money back'
+  git log -1 --format=%B | jev 'Is this a breaking change?'
+  jev -c billing,technical,sales 'Which team handles this?' "$(cat ticket.txt)"
+  jev -s Calm,Frustrated,Angry 'How frustrated is the customer?' <<<"$msg"
+EOF
+}
+
+type=noul spec='' model=jev-latest raw='' full=0 dry=0
+while getopts ':c:s:q:m:jnh' o; do
+  case $o in
+    c) type=choice spec=$OPTARG ;;
+    s) type=score  spec=$OPTARG ;;
+    q) type=raw    raw=$OPTARG ;;
+    m) model=$OPTARG ;;
+    j) full=1 ;;
+    n) dry=1 ;;
+    h) usage; exit 0 ;;
+    :) echo "jev: -$OPTARG needs an argument" >&2; exit 64 ;;
+    \?) echo "jev: unknown flag -$OPTARG" >&2; exit 64 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+[ $# -ge 1 ] || { usage >&2; exit 64; }
+question=$1
+state=${2-$(cat)}
+[ -n "$state" ] || { echo "jev: empty state" >&2; exit 64; }
+
+# State is a plain string unless it looks like a JSON object/array and parses —
+# Jev accepts either, and the tutorial's multi-field state is an object.
+case $state in
+  '{'*|'['*) jq -e . >/dev/null 2>&1 <<<"$state" && sarg=(--argjson s "$state") || sarg=(--arg s "$state") ;;
+  *)         sarg=(--arg s "$state") ;;
+esac
+
+# jq builds the body so quoting/escaping in state and labels is never our problem.
+if [ "$type" = raw ]; then
+  body=$(jq -n --arg m "$model" "${sarg[@]}" --argjson q "$raw" \
+    '{model:$m, state:$s, questions:$q}')
+else
+  body=$(jq -n --arg m "$model" "${sarg[@]}" --arg i "$question" \
+                --arg t "$type" --arg spec "$spec" '
+    {model:$m, state:$s, questions:{q:
+      ({type:$t, instructions:$i} +
+       if   $t=="choice" then {criteria: ($spec|split(",")|map({key:.,value:.})|from_entries)}
+       elif $t=="score"  then {criteria: ($spec|split(","))}
+       else {} end)}}')
+fi
+
+key=${TYPESAFE_API_KEY:-${OPENROUTER_API_KEY:-}}
+
+# The key prefix picks the route; JEV_BASE_URL overrides. Both gateways keep
+# TypeSafe's request/response shape, so only the URL and the key differ.
+case $key in
+  sk-or-*) base=https://openrouter.ai/api ;;
+  vck_*)   base=https://ai-gateway.vercel.sh/typesafe ;;
+  *)       base=https://api.typesafe.ai ;;
+esac
+# JEV_BASE_URL may only re-state the key's own https route, or (with JEV_ALLOW_LOCAL=1) name a
+# loopback server that is never sent the key, so an inherited override can't redirect the key.
+auth=1
+if [ -n "${JEV_BASE_URL:-}" ]; then
+  url=${JEV_BASE_URL%/}
+  if [ "$url" = "$base" ] || [ "${url#"$base"/}" != "$url" ]; then
+    base=$url
+  elif [[ $url =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+(/.*)?$ ]]; then
+    [ "${JEV_ALLOW_LOCAL:-}" = 1 ] || { echo "jev: local JEV_BASE_URL needs JEV_ALLOW_LOCAL=1 (no key is sent there)" >&2; exit 64; }
+    base=$url auth=0
+  else
+    echo "jev: JEV_BASE_URL must be $base (the route for this key) or below it; refusing $url" >&2; exit 64
+  fi
+fi
+
+# -n resolves the route but needs no key, so you can check both offline.
+[ "$dry" = 1 ] && { printf '%s\n' "$body"; echo "-> POST $base/v1/systemone" >&2; exit 0; }
+[ "$auth" = 0 ] || [ -n "$key" ] || { echo "jev: set TYPESAFE_API_KEY or OPENROUTER_API_KEY (export from ~/.secrets)" >&2; exit 78; }
+
+hdr=(-H 'Content-Type: application/json') auth_hdr=
+[ "$auth" = 1 ] && hdr+=(-H @-) auth_hdr="Authorization: Bearer $key"
+# curl reads the auth header from stdin (-H @-): any local user can read argv with `ps`, not stdin.
+resp=$(curl -sS --fail-with-body -m 30 "$base/v1/systemone" "${hdr[@]}" -d "$body" <<<"$auth_hdr") || {
+  printf '%s\n' "$resp" >&2; exit 2; }
+
+[ "$full" = 1 ] && { printf '%s\n' "$resp" | jq .; exit 0; }
+
+# raw questions can hold many answers and have no single obvious scalar — show them all.
+[ "$type" = raw ] && { printf '%s\n' "$resp" | jq '.answers'; exit 0; }
+
+a=$(printf '%s\n' "$resp" | jq '.answers.q')
+case $type in
+  noul)   p=$(jq -r '.noul' <<<"$a"); printf '%s\n' "$p"
+          awk -v p="$p" 'BEGIN{exit !(p>=0.5)}' ;;
+  choice) jq -r '"\(.choice)\t(confidence \(.confidence))"' <<<"$a" ;;
+  score)  jq -r '"\(.score)\t(confidence \(.confidence))"'  <<<"$a" ;;
+esac
