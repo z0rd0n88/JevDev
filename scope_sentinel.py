@@ -56,6 +56,11 @@ TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-c
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
 AGY_REQUEST = re.compile(r"<USER_REQUEST>(.*?)</USER_REQUEST>", re.S)
 TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
+# A typed slash command: a skill opens with <command-message> and counts as "/name args"; a built-in opens with
+# <command-name> and is not a task ("/exit", "/model opus"), except the instructions given to /compact.
+COMMAND = re.compile(r"\s*<command-(name|message)>")
+COMMAND_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.S)
+COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 
 
 def redact(text: str) -> str:
@@ -294,6 +299,13 @@ def claude_user_text(entry) -> str:
         )
     if not isinstance(content, str):
         return ""
+    command = COMMAND.match(content)
+    if command:
+        name, args = (m.group(1).strip() if m else "" for m in (COMMAND_NAME.search(content), COMMAND_ARGS.search(content)))
+        if command.group(1) == "message":
+            content = f"{name} {args}"
+        else:
+            content = args if name == "/compact" else ""
     text = TAG.sub(" ", TAG_BLOCK.sub("", content)).strip()
     return "" if text.startswith("[Request interrupted") else text
 

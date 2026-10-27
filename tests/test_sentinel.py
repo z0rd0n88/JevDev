@@ -202,11 +202,17 @@ def check_helpers() -> None:
             {"type": "user", "message": {"content": "first"}},
             {"type": "assistant", "isSidechain": False, "message": {"model": "claude-a"}},
             {"type": "assistant", "isSidechain": True, "message": {"model": "claude-side"}},
+            {"type": "user", "message": {"content": "<command-name>/exit</command-name>\n            <command-message>exit</command-message>\n            <command-args></command-args>"}},
+            {"type": "user", "message": {"content": "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>opus</command-args>"}},
+            {"type": "user", "message": {"content": "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args>keep the plan</command-args>"}},
+            {"type": "user", "message": {"content": "<command-message>hyper-jev</command-message>\n<command-name>/hyper-jev</command-name>\n<command-args>route this</command-args>"}},
+            {"type": "user", "message": {"content": "<command-message>bro</command-message>\n<command-name>/bro</command-name>"}},
+            {"type": "user", "message": {"content": "why does <command-name>/exit</command-name> leak"}},
             {"type": "user", "message": {"content": "second"}},
             {"type": "assistant", "isSidechain": False, "message": {"model": "claude-b"}},
         ]) + "\nnot json\n")
         scan = s.scan_transcript(path, "claude")
-        assert {k: scan[k] for k in ("prompts", "last_model")} == {"prompts": ["first", "second"], "last_model": "claude-b"}, scan
+        assert {k: scan[k] for k in ("prompts", "last_model")} == {"prompts": ["first", "keep the plan", "/hyper-jev route this", "/bro", "why does  /exit  leak", "second"],"last_model": "claude-b"}, scan
         assert s.latest_user_prompt(path, "claude") == "second"
         assert s.host_model({}, "claude", scan) == "claude-b"
     assert s.host_model({"model": "gpt-x"}, "codex", {}) == "gpt-x"
@@ -539,7 +545,7 @@ def main() -> None:
                 {
                     "type": "user",
                     "message": {
-                        "content": "<command-message>review</command-message><command-args>Review it, do not push.</command-args>"
+                        "content": "<command-message>review</command-message><command-name>/review</command-name><command-args>Review it, do not push.</command-args>"
                     },
                 },
                 {"type": "user", "isMeta": True, "message": {"content": "meta noise"}},
@@ -585,7 +591,7 @@ def main() -> None:
 
         run_hook(tmp, {**base, "tool_input": {"command": PUSH}})
         row = rows(log, 1)[0]
-        assert row["instruction"] == "review  Review it, do not push.", row
+        assert row["instruction"] == "/review Review it, do not push.", row
         assert row["result"] == "conflict" and row["confidence"] == 0.8, row
         assert row["constraint_files"] == ["AGENTS.md"], "the repo's AGENTS.md must reach Jev as constraints"
         assert "ghp_" not in row["command"] and "error" not in row, row
