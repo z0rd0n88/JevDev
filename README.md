@@ -6,7 +6,7 @@ Private source repository for Jev experiments, prototypes, and developer tooling
 
 The router uses two Jev requests when the initial gate finds a possible skill fit. The first request ranks the live skill roster in balanced Choice shards; the second checks a short list against fuller descriptions. It returns no suggestion when the gate or fit check abstains. Results include the roster hash, router version, provider token count, estimated Jev cost, and routing time.
 
-Prerequisites: Python 3, `PyYAML`, the local Jev CLI (install this repo's copy: `install -m 755 bin/jev ~/.local/bin/jev`; the TypeSafe cookbook copy puts the API key on curl's command line), and the `claude` or `codex` CLI for the host being measured. The default Jev executable is `~/.local/bin/jev`; set `JEV_BIN` to use another path. Set `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY` in your environment without committing it. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` override the default `~/.claude` and `~/.codex` locations.
+Prerequisites: Python 3, `PyYAML`, `jq`, `curl` 7.76+ (for `--fail-with-body`), the local Jev CLI (install this repo's copy: `mkdir -p ~/.local/bin && install -m 755 bin/jev ~/.local/bin/jev`; the copy previously installed at `~/.local/bin/jev` put the API key on curl's command line), and the `claude` or `codex` CLI for the host being measured. The default Jev executable is `~/.local/bin/jev`; set `JEV_BIN` to use another path. Set `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY` in your environment without committing it. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` override the default `~/.claude` and `~/.codex` locations.
 
 ```bash
 python3 -m pip install PyYAML

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # jev — TypeSafe Jev (System One) from the shell.
 # POST https://api.typesafe.ai/v1/systemone   docs: https://docs.typesafe.ai/concepts/system-one
-# Source of ~/.local/bin/jev; install with: install -m 755 bin/jev ~/.local/bin/jev
+# Source of ~/.local/bin/jev; install with: mkdir -p ~/.local/bin && install -m 755 bin/jev ~/.local/bin/jev
 set -euo pipefail
 
 usage() {
@@ -66,19 +66,20 @@ state=${2-$(cat)}
 # State is a plain string unless it looks like a JSON object/array and parses —
 # Jev accepts either, and the tutorial's multi-field state is an object.
 case $state in
-  '{'*|'['*) jq -e . >/dev/null 2>&1 <<<"$state" && sexpr='$ENV.JEV_S|fromjson' || sexpr='$ENV.JEV_S' ;;
-  *)         sexpr='$ENV.JEV_S' ;;
+  '{'*|'['*) jq -e . >/dev/null 2>&1 <<<"$state" && sexpr='env.JEV_S|fromjson' || sexpr='env.JEV_S' ;;
+  *)         sexpr='env.JEV_S' ;;
 esac
 
 # jq builds the body so quoting/escaping in state and labels is never our problem.
-# State, question and raw questions reach jq through its environment, not argv: any local
-# user can read argv with `ps`, but /proc/<pid>/environ only by its owner.
+# State, question and raw questions reach jq through its environment, not jq's argv. Of these
+# only state read from stdin stays out of `ps`; the question, -q JSON and a positional state
+# are on jev's own command line.
 if [ "$type" = raw ]; then
   body=$(JEV_S=$state JEV_Q=$raw jq -n --arg m "$model" \
-    "($sexpr) as \$s"' | {model:$m, state:$s, questions:($ENV.JEV_Q|fromjson)}')
+    "($sexpr) as \$s"' | {model:$m, state:$s, questions:(env.JEV_Q|fromjson)}')
 else
   body=$(JEV_S=$state JEV_I=$question jq -n --arg m "$model" \
-                --arg t "$type" --arg spec "$spec" "($sexpr) as \$s"' | $ENV.JEV_I as $i |
+                --arg t "$type" --arg spec "$spec" "($sexpr) as \$s"' | env.JEV_I as $i |
     {model:$m, state:$s, questions:{q:
       ({type:$t, instructions:$i} +
        if   $t=="choice" then {criteria: ($spec|split(",")|map({key:.,value:.})|from_entries)}
