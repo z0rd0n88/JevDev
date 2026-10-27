@@ -15,6 +15,7 @@ SOURCE = Path(__file__).parents[1] / "drift_radar.py"
 def load_module():
     spec = importlib.util.spec_from_file_location("drift_radar", SOURCE)
     module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(SOURCE.parent))
     spec.loader.exec_module(module)
     return module
 
@@ -121,7 +122,7 @@ def test_cli_drift_flags_and_json():
         orig_evaluate = module.evaluate_drift
         orig_argv = sys.argv
         try:
-            module.evaluate_drift = lambda decision, diff: {
+            module.evaluate_drift = lambda decision, diff, **kwargs: {
                 "result": "defers",
                 "confidence": 0.9,
                 "elapsed": 0.1,
@@ -224,7 +225,32 @@ def test_error_sanitization_and_timeout():
                 module.evaluate_drift("decision", "diff")
                 assert False, "Should have caught TimeoutExpired"
             except RuntimeError as e:
-                assert "jev timed out while evaluating drift" in str(e)
+                assert "jev timed out after 40s" in str(e)
+
+
+def test_rejects_unknown_choice_and_bad_confidence():
+    module = load_module()
+
+    def respond(answer):
+        class MockProcess:
+            returncode = 0
+            stdout = json.dumps({"answers": {"drift": answer}})
+            stderr = ""
+
+        return mock.patch("subprocess.run", return_value=MockProcess())
+
+    with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+        with respond({"choice": "approve"}):
+            try:
+                module.evaluate_drift("decision", "diff")
+                assert False, "Should have rejected a choice outside the five outcomes"
+            except RuntimeError as e:
+                assert "approve" in str(e)
+
+        with respond({"choice": "Unclear", "probabilities": {"unclear": "high"}}):
+            res = module.evaluate_drift("decision", "diff")
+            assert res["result"] == "unclear"
+            assert res["confidence"] == 0.0
 
 
 STUB_JEV = """#!/usr/bin/env python3
@@ -252,10 +278,11 @@ def test_evaluate_drift_offline_stub():
         stub_jev.chmod(0o755)
 
         env_backup = dict(os.environ)
-        os.environ["JEV_BIN"] = str(stub_jev)
         os.environ["TYPESAFE_API_KEY"] = "mock-key"
         try:
             module = load_module()
+            stub = mock.patch("jev_patterns.JEV", stub_jev)
+            stub.start()
 
             res = module.evaluate_drift("fulfill decision", "--- a/x\n+++ b/x\n+1")
             assert res["result"] == "implements"
@@ -273,6 +300,7 @@ def test_evaluate_drift_offline_stub():
             except RuntimeError as e:
                 assert "jev exited 2" in str(e)
                 assert "inspect provider access and limits locally" in str(e)
+            stub.stop()
         finally:
             os.environ.clear()
             os.environ.update(env_backup)
@@ -396,6 +424,7 @@ def main():
     test_cli_drift_flags_and_json()
     test_confidence_and_json_traversal()
     test_error_sanitization_and_timeout()
+    test_rejects_unknown_choice_and_bad_confidence()
     test_evaluate_drift_offline_stub()
     test_evaluate_drift_missing_key()
     test_cli_subprocess_integration()

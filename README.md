@@ -71,7 +71,7 @@ Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh a
 python3 tests/test_sentinel.py
 ```
 
-`jev_patterns.py` is the only module that runs `jev`; the sentinel, `ask_jev_files.py`, `compact_advisor.py`, `skill_router.py`, `fixture_curator.py`, `handoff_check.py`, and `test_escrow.py` all go through it: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, `JEV_ALLOW_LOCAL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
+`jev_patterns.py` is the only module that runs `jev`; the sentinel, `ask_jev_files.py`, `compact_advisor.py`, `skill_router.py`, `fixture_curator.py`, `handoff_check.py`, `test_escrow.py`, and `drift_radar.py` all go through it: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, `JEV_ALLOW_LOCAL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
 
 ```bash
 python3 tests/test_jev_patterns.py
@@ -115,6 +115,20 @@ Smoke: `bash smoke.sh claude ask` and `bash smoke.sh agy ask` have the host run 
 
 ```bash
 python3 tests/test_ask_jev_files.py
+```
+
+## Decision Drift Radar
+
+`drift_radar.py` asks Jev whether a diff implements, contradicts, leaves unaddressed, or defers one recorded owner decision, or is too thin to tell (`unclear`). `defers` flags a diff that fills in something the owner explicitly deferred. The diff (a file up to 1 MB, text only) is redacted before it is sent and framed as untrusted data. Verdicts are review leads, not approvals.
+
+```
+python3 drift_radar.py --decision TEXT --diff PATH [--json] [--fail-on-drift] [--model M] [--timeout S]
+```
+
+`--json` prints `result`, `confidence`, `elapsed`, `input_tokens`. Exit codes: 0 ok; 2 with `--fail-on-drift` on `contradicts`, `unaddressed`, or `defers` (`unclear` exits 0 with a warning); 1 on any error, including no Jev key; 130 on Ctrl-C.
+
+```bash
+python3 tests/test_drift_radar.py
 ```
 
 ## Skills

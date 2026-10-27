@@ -6,18 +6,14 @@ the change implements, contradicts, leaves unaddressed, or defers the decision.
 """
 
 import argparse
+import json
 from pathlib import Path
+import re
 import sys
 
+from jev_patterns import DEFAULT_TIMEOUT, call, input_tokens
 
-import json
-import os
-import re
-import subprocess
-import time
-
-DEFAULT_MODEL = "jev-latest"
-JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
+CHOICES = ("implements", "contradicts", "unaddressed", "defers", "unclear")
 MAX_DIFF_BYTES = 1024 * 1024  # 1 MB
 
 SECRET = re.compile(
@@ -77,57 +73,36 @@ def format_state_content(decision: str, diff: str) -> str:
     return f"<owner_decision>\n{decision}\n</owner_decision>\n\n<untrusted_diff_hunk>\n{diff}\n</untrusted_diff_hunk>"
 
 
-def evaluate_drift(decision: str, diff: str) -> dict:
-    if not (os.environ.get("TYPESAFE_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
-        raise RuntimeError(
-            "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-        )
-
-    state_content = format_state_content(decision, diff)
-    questions = build_jev_questions()
-    model = os.environ.get("JEV_MODEL") or DEFAULT_MODEL
-
-    start = time.perf_counter()
-    try:
-        process = subprocess.run(
-            [str(JEV), "-m", model, "-q", json.dumps(questions), "-j", "drift_radar"],
-            input=state_content,
-            capture_output=True,
-            text=True,
-            timeout=40,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("jev timed out while evaluating drift")
-    elapsed = time.perf_counter() - start
-
-    if process.returncode:
-        raise RuntimeError(
-            f"jev exited {process.returncode}; inspect provider access and limits locally"
-        )
-
-    try:
-        response = json.loads(process.stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"failed to parse jev output as JSON: {e}") from e
-
-    answer = (response.get("answers") or {}).get("drift") or {}
-    choice = answer.get("choice")
-    if not choice:
-        raise RuntimeError("jev response missing required 'drift' answer choice")
+def evaluate_drift(
+    decision: str,
+    diff: str,
+    model: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict:
+    response = call(
+        format_state_content(decision, diff),
+        build_jev_questions(),
+        job="drift_radar",
+        model=model,
+        timeout=timeout,
+    )
+    answer = response["answers"]["drift"]
+    choice = str(answer.get("choice", "")).lower()
+    if choice not in CHOICES:
+        raise RuntimeError(f"Invalid drift choice {choice!r} returned by Jev")
 
     probs = answer.get("probabilities") or {}
-    raw_conf = probs.get(choice, answer.get("confidence"))
-    confidence = float(raw_conf) if raw_conf is not None else 0.0
-
-    usage = response.get("usage") or {}
-    input_tokens = int(usage.get("input_tokens") or 0)
+    raw_conf = probs.get(choice, answer.get("confidence", 0.0))
+    try:
+        confidence = float(raw_conf) if raw_conf is not None else 0.0
+    except (ValueError, TypeError):
+        confidence = 0.0
 
     return {
         "result": choice,
         "confidence": confidence,
-        "elapsed": elapsed,
-        "input_tokens": input_tokens,
+        "elapsed": response["elapsed"],
+        "input_tokens": input_tokens(response),
     }
 
 
@@ -137,6 +112,13 @@ def main():
         "--decision", required=True, help="The recorded owner decision text"
     )
     parser.add_argument("--diff", required=True, help="Path to the diff file")
+    parser.add_argument("--model", default=None, help="Jev model override")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="Evaluation timeout in seconds",
+    )
     parser.add_argument(
         "--json", action="store_true", help="Output full JSON instead of text"
     )
@@ -150,7 +132,9 @@ def main():
 
     try:
         diff_content = load_diff_file(args.diff)
-        result = evaluate_drift(args.decision, diff_content)
+        result = evaluate_drift(
+            args.decision, diff_content, model=args.model, timeout=args.timeout
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
