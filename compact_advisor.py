@@ -105,7 +105,7 @@ def build_state(scan: dict, last_assistant) -> dict:
 
 
 def decide_tier(
-    answers: dict, tokens: int, lines: dict, state: dict
+    answers: dict, tokens: int, lines: dict, prompts: list[str]
 ) -> tuple[str, str]:
     if answers["mid_operation"]["noul"] > 0.6:
         return "silent", "mid operation"
@@ -116,7 +116,7 @@ def decide_tier(
     if not switched and not boundary:
         return "silent", "same work continuing"
     reason = (
-        f'The task changed from "{trunc(state["previous_work"], 70)}" to "{trunc(state["current_request"], 70)}".'
+        f'The task changed from "{trunc(redact(prompts[-2]), 70)}" to "{trunc(redact(prompts[-1]), 70)}".'
         if switched
         else "The last turn finished a unit of work and the next step needs little of the earlier context."
     )
@@ -186,7 +186,7 @@ def run_hook(host: str, log: Path, user: bool = False) -> None:
                     for k in COMPACT_QUESTIONS
                 },
             )
-            row["tier"], row["reason"] = decide_tier(answers, tokens, lines, state)
+            row["tier"], row["reason"] = decide_tier(answers, tokens, lines, scan["prompts"])
             message = tier_message(row["tier"], row["reason"], tokens, row["window"])
             if message:
                 print(json.dumps({"systemMessage": message}), flush=True)
