@@ -69,7 +69,7 @@ Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh a
 python3 tests/test_sentinel.py
 ```
 
-`jev_patterns.py` is the only Jev transport the sentinel, `ask_jev_files.py`, and `compact_advisor.py` use: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
+`jev_patterns.py` is the only module that runs `jev`; the sentinel, `ask_jev_files.py`, `compact_advisor.py`, `skill_router.py`, `fixture_curator.py`, `handoff_check.py`, and `test_escrow.py` all go through it: `call(state, questions, job=…)` runs `jev` once with the state on stdin and returns the parsed response plus `elapsed`. The child gets an isolated environment (`PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, `JEV_ALLOW_LOCAL`, and one Jev key), so `GH_TOKEN` and other secrets never reach it. Every transport or envelope failure raises `JevError`, whose message never contains `jev`'s stderr (that is on `.stderr`). Tests run a stub `jev` on `JEV_BIN`:
 
 ```bash
 python3 tests/test_jev_patterns.py
@@ -135,7 +135,7 @@ Upstream levels 1 to 5 (ten-levels-of-jev `README.md`, commit `777adaf`) are pla
 
 ### Level 1
 
-Single Decisions, option B (urgency gate): `compact_advisor.decide_tier` acts on one Noul at a time, staying silent when `mid_operation` is `> 0.6`.
+Single Decisions, option B (urgency gate): `compact_advisor.decide_tier` checks the `mid_operation` Noul first and stays silent when it is `> 0.6`.
 
 ### Level 2
 

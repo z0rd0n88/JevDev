@@ -57,7 +57,7 @@ def test_cli_error_sanitization():
         (tmp / "d.diff").write_text("- assert x == 1\n+ assert x > 0", encoding="utf-8")
         env = {**os.environ, "JEV_BIN": str(tmp / "jev"), "TYPESAFE_API_KEY": "stub_key"}
         res = subprocess.run([sys.executable, str(SOURCE), "--diff", str(tmp / "d.diff")],
-                             capture_output=True, text=True, env=env)
+                             capture_output=True, text=True, env=env, timeout=30)
         assert res.returncode == 1, res
         assert "secret_leaked_key" not in res.stdout + res.stderr, res.stderr
         assert "inspect provider access and limits locally" in res.stderr, res.stderr
