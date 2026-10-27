@@ -202,11 +202,13 @@ def check_helpers() -> None:
             {"type": "user", "message": {"content": "first"}},
             {"type": "assistant", "isSidechain": False, "message": {"model": "claude-a"}},
             {"type": "assistant", "isSidechain": True, "message": {"model": "claude-side"}},
+            {"type": "user", "message": {"content": "<command-name>/exit</command-name>\n            <command-message>exit</command-message>\n            <command-args></command-args>"}},
+            {"type": "user", "message": {"content": "<command-name>/hyper-jev</command-name>\n            <command-message>hyper-jev</command-message>\n            <command-args>route this</command-args>"}},
             {"type": "user", "message": {"content": "second"}},
             {"type": "assistant", "isSidechain": False, "message": {"model": "claude-b"}},
         ]) + "\nnot json\n")
         scan = s.scan_transcript(path, "claude")
-        assert {k: scan[k] for k in ("prompts", "last_model")} == {"prompts": ["first", "second"], "last_model": "claude-b"}, scan
+        assert {k: scan[k] for k in ("prompts", "last_model")} == {"prompts": ["first", "route this", "second"], "last_model": "claude-b"}, scan
         assert s.latest_user_prompt(path, "claude") == "second"
         assert s.host_model({}, "claude", scan) == "claude-b"
     assert s.host_model({"model": "gpt-x"}, "codex", {}) == "gpt-x"

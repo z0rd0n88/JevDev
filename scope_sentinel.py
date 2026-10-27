@@ -56,6 +56,8 @@ TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-c
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
 AGY_REQUEST = re.compile(r"<USER_REQUEST>(.*?)</USER_REQUEST>", re.S)
 TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
+# A typed slash command counts only by its arguments: "/exit" is not a task, "/hyper-jev route this" is "route this".
+COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 
 
 def redact(text: str) -> str:
@@ -294,6 +296,9 @@ def claude_user_text(entry) -> str:
         )
     if not isinstance(content, str):
         return ""
+    if "<command-name>" in content:
+        args = COMMAND_ARGS.search(content)
+        content = args.group(1) if args else ""
     text = TAG.sub(" ", TAG_BLOCK.sub("", content)).strip()
     return "" if text.startswith("[Request interrupted") else text
 
