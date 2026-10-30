@@ -277,6 +277,21 @@ def check_codex() -> None:  # AC-4.2
         assert rows[-1]["tier"] == "request" and rows[-1]["printed"] is True
         state = json.loads(json.loads((tmp / "rec.json").read_text())["stdin"])
         assert state["tools_this_turn"] == ["exec", "apply_patch"], state
+    # A Codex subagent rollout has no typed prompt; the advisor must not borrow the root's (sentinel only).
+    d, tmp = fresh()
+    with d:
+        setup(tmp)
+        root, child = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
+        day = tmp / "sessions/2026/10/29"
+        day.mkdir(parents=True)
+        meta = lambda i, parent=None: {"type": "session_meta", "payload": {"id": i, **({"parent_thread_id": parent} if parent else {})}}
+        (day / f"rollout-x-{root}.jsonl").write_text("\n".join(json.dumps(x) for x in [meta(root)] + codex_lines(PROMPTS, 1)))
+        sub = day / f"rollout-x-{child}.jsonl"
+        sub.write_text("\n".join(json.dumps(x) for x in [meta(child, root)] + codex_lines([], 170_000)))
+        assert ss.latest_user_prompt(sub, "codex") == PROMPTS[-1], "the sentinel follows the parent"
+        out, rows = run(tmp, "codex", event(tmp, str(sub)))
+        assert out == "" and not (tmp / "marker").exists(), "a subagent Stop must not call Jev"
+        assert (rows[-1]["tier"], rows[-1]["reason"]) == ("silent", "first request, nothing to move on from"), rows[-1]
 
 
 def check_decide_tier() -> None:  # AC-4.3

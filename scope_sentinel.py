@@ -334,11 +334,11 @@ def parent_transcript(transcript: Path, host: str, codex_parent=None):
         for message in sorted((transcript.parent.parent / "messages").glob("*.json")):
             try:
                 tool = (json.loads(message.read_text()).get("sourceMetadata") or {}).get("tool") or {}
+                if (tool.get("toolCall") or {}).get("name") == "invoke_subagent":
+                    parent = tool.get("conversationId")
+                    break
             except (OSError, ValueError, AttributeError):
                 continue
-            if (tool.get("toolCall") or {}).get("name") == "invoke_subagent":
-                parent = tool.get("conversationId")
-                break
     if not isinstance(parent, str) or not UUID.fullmatch(parent) or len(transcript.parents) < 4:
         return None
     root = transcript.parents[3]  # Codex: sessions/<y>/<m>/<d>/rollout; agy: brain/<id>/.system_generated/logs/transcript
@@ -347,10 +347,11 @@ def parent_transcript(transcript: Path, host: str, codex_parent=None):
     return root / parent / transcript.parent.parent.name / transcript.parent.name / transcript.name
 
 
-def scan_transcript(transcript: Path, host: str = "claude", depth: int = 0) -> dict:
+def scan_transcript(transcript: Path, host: str = "claude", follow_parent: bool = False, depth: int = 0) -> dict:
     """One pass over a host transcript: typed prompts, the Claude model of the last main-chain reply, and
     (Claude and Codex only) the compaction-advisor inputs: tokens, window, last reply text, tools used since the
-    last prompt, and the last compact summary. A Codex or agy subagent transcript borrows its spawner's prompts."""
+    last prompt, and the last compact summary. With follow_parent, a Codex or agy subagent transcript borrows its
+    spawner's prompts (the sentinel); the advisor leaves it off, since tokens and turns stay the subagent's."""
     prompts, last_model, codex_parent = [], None, None
     user_text = {"codex": codex_user_text, "agy": agy_user_text}.get(host, claude_user_text)
     extra = {"tokens": 0, "window": None, "last_assistant_text": "", "tools_after_last_prompt": [], "compact_summary": ""}
@@ -398,15 +399,15 @@ def scan_transcript(transcript: Path, host: str = "claude", depth: int = 0) -> d
                         extra["tools_after_last_prompt"].append(payload.get("name", ""))
                     elif payload.get("type") == "message" and payload.get("role") == "assistant":
                         extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(payload.get("content"), "output_text"))
-    if not prompts and host in ("codex", "agy") and depth < 3:
+    if follow_parent and not prompts and host in ("codex", "agy") and depth < 3:
         parent = parent_transcript(transcript, host, codex_parent)
         if parent:
-            prompts = scan_transcript(parent, host, depth + 1)["prompts"]
+            prompts = scan_transcript(parent, host, True, depth + 1)["prompts"]
     return {"prompts": prompts, "last_model": last_model, **({} if host == "agy" else extra)}
 
 
 def user_prompts(transcript: Path, host: str = "claude") -> list[str]:
-    return scan_transcript(transcript, host)["prompts"]
+    return scan_transcript(transcript, host, follow_parent=True)["prompts"]
 
 
 def latest_user_prompt(transcript: Path, host: str = "claude") -> str:
@@ -538,7 +539,7 @@ def run_judge(log: Path, host: str) -> None:
             judge_write_event(row, event, host, target, root, transcript, log)
         else:
             row.update(command=clip(redact(target["command"])), risky=is_risky(target["command"]))
-            scan = scan_transcript(Path(transcript or event["transcriptPath"]), host)
+            scan = scan_transcript(Path(transcript or event["transcriptPath"]), host, follow_parent=True)
             row["host_model"] = host_model(event, host, scan)
             row["instruction"] = clip(redact((scan["prompts"] or [""])[-1]))
             if not row["instruction"]:
@@ -549,7 +550,7 @@ def run_judge(log: Path, host: str) -> None:
             constraints, row["constraint_files"] = project_constraints(root)
             row.update(judge_bash(row["instruction"], constraints or "None", target["command"], target["cwd"]))
             if row["host_model"] is None:  # the first reply of a session is flushed while Jev thinks
-                row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
+                row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host, follow_parent=True))
     except Exception as e:
         # Fails open; the error row keeps silent gaps visible.
         row["error"] = error_detail(e)
@@ -572,7 +573,7 @@ def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Pat
         return
     rel = inside_repo(target["path"], target["cwd"], root)
     if transcript:
-        row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
+        row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host, follow_parent=True))
     if rel is None:
         row.update(path=target["path"], would_block=True, block_reason=f"outside the repo: {target['path']}")
         return

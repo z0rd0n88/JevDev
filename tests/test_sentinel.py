@@ -239,24 +239,35 @@ def check_helpers() -> None:
         assert s.latest_user_prompt(sub, "codex") == "placeholder", "a Codex subagent reads the root rollout's prompt"
         (day / f"rollout-x-{mid}.jsonl").write_text(json.dumps(meta(mid, "../../x")))
         assert s.latest_user_prompt(day / f"rollout-x-{mid}.jsonl", "codex") == "", "a parent id that is not a UUID is ignored"
+        cyc_a, cyc_b = "00000000-0000-0000-0000-0000000000a1", "00000000-0000-0000-0000-0000000000b1"
+        (day / f"rollout-x-{cyc_a}.jsonl").write_text(json.dumps(meta(cyc_a, cyc_b)))
+        (day / f"rollout-x-{cyc_b}.jsonl").write_text(json.dumps(meta(cyc_b, cyc_a)))
+        assert s.latest_user_prompt(day / f"rollout-x-{cyc_a}.jsonl", "codex") == "", "a parent cycle stops at the depth limit"
 
         brain = Path(d, "brain")
-        def agy(cid, steps, parent=None):
+        def agy(cid, steps, parent=None, decoys=()):
             gen = brain / cid / ".system_generated"
             (gen / "logs").mkdir(parents=True)
             (gen / "messages").mkdir()
             (gen / "logs/transcript.jsonl").write_text("\n".join(json.dumps(x) for x in steps))
+            for i, tool in enumerate(decoys):  # sort before m.json, so taking the first message fails
+                (gen / f"messages/a{i}.json").write_text(json.dumps({"sender": "x", "recipient": cid, "content": "x",
+                    "sourceMetadata": {"tool": tool}}))
             if parent:
                 (gen / "messages/m.json").write_text(json.dumps({"sender": parent, "recipient": cid, "content": "x",
                     "sourceMetadata": {"tool": {"conversationId": parent, "toolCall": {"name": "invoke_subagent"}}}}))
-                (gen / "messages/reply.json").write_text(json.dumps({"sender": "x", "recipient": cid, "content": "x",
-                    "sourceMetadata": {"tool": {"conversationId": root, "toolCall": {"name": "run_command"}}}}))
             return gen / "logs/transcript.jsonl"
         agy(root, [{"type": "USER_INPUT", "content": "<USER_REQUEST>\nplaceholder\n</USER_REQUEST>"}])
         system = {"type": "SYSTEM_MESSAGE", "source": "SYSTEM", "content": "<SYSTEM_MESSAGE>x</SYSTEM_MESSAGE>"}
         agy(mid, [system], parent=root)
-        leaf = agy(child, [system, {"type": "PLANNER_RESPONSE", "source": "MODEL", "content": None}], parent=mid)
+        decoys = ({"conversationId": "00000000-0000-0000-0000-0000000000ee", "toolCall": {"name": "run_command"}}, "x", {"toolCall": "x"})
+        leaf = agy(child, [system, {"type": "PLANNER_RESPONSE", "source": "MODEL", "content": None}], parent=mid, decoys=decoys)
         assert s.latest_user_prompt(leaf, "agy") == "placeholder", "an agy subagent reads its spawner's prompt, two levels up"
+        escaped = Path(d, "x/.system_generated/logs")  # where brain/../x would land
+        escaped.mkdir(parents=True)
+        (escaped / "transcript.jsonl").write_text(json.dumps({"type": "USER_INPUT", "content": "placeholder"}))
+        bad = agy("00000000-0000-0000-0000-00000000000d", [system], parent="../x")
+        assert s.latest_user_prompt(bad, "agy") == "", "an agy parent id that is not a UUID is ignored"
 
 
 def new_repo(tmp: Path, agents: str = "") -> Path:
