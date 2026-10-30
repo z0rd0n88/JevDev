@@ -156,6 +156,7 @@ def check_patterns() -> None:
     for text in ("git commit -m 'fix bearer token parsing'", "git checkout sk-feature-branch-name"):
         assert sentinel.redact(text) == text, "ordinary text must not be redacted"
     assert sentinel.redact("https://u:pw@host") == "https://u:[REDACTED]@host"
+    assert "ts_secret1234567890abcdef" not in sentinel.redact("key ts_secret1234567890abcdef")
     start = time.perf_counter()
     for text in ("git -C " * 20000, "gh -R " * 20000, 'git -C "' * 20000, "find " * 20000):
         sentinel.is_risky(text)
@@ -301,11 +302,11 @@ def check_bash_gate() -> None:
         row = rows(log, 6)[5]
         assert row["host_model"] == "claude-late-1" and "error" not in row, row
         # the redacted first stderr line reaches the log; the key fragment does not
-        (tmp / "cfg.json").write_text(json.dumps({"exit": 2, "stderr": "curl: (22) HTTP 429 api_key=ts_secret123"}))
+        (tmp / "cfg.json").write_text(json.dumps({"exit": 2, "stderr": "curl: (22) HTTP 429 key ts_secret1234567890abcdef"}))
         run_hook(tmp, event("ls"))
         row = rows(log, 7, tries=300)[6]
         assert "jev exited 2" in row["error"] and "HTTP 429" in row["error"], row
-        assert "ts_secret123" not in row["error"], row
+        assert "ts_secret1234567890abcdef" not in row["error"], row
     ignored = subprocess.run(["git", "-C", str(SOURCE.parent), "check-ignore", "-q", "transcripts/_U-O5lYhJ7Q.md"])
     assert ignored.returncode == 0, "transcripts/ must be git-ignored"
 

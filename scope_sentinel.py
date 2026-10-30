@@ -48,6 +48,7 @@ SECRETS = [re.compile(p) for p in (
     r"(://[^/\s:@]+:)[^/\s@]+(?=@)",
     r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
     r"()\bsk-(?=[\w-]*\d)[\w-]{20,}",
+    r"()\bts_[A-Za-z0-9]{16,}",
     r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
     r"()\bxox[abposr]-[\w-]{10,}",
 )]

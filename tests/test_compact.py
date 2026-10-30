@@ -378,12 +378,12 @@ def check_skips_and_errors() -> None:  # AC-4.4
         )
     d, tmp = fresh()
     with d:
-        setup(tmp, {"exit": 2, "stderr": "curl: (22) HTTP 429 api_key=ts_secret123"})
+        setup(tmp, {"exit": 2, "stderr": "curl: (22) HTTP 429 key ts_secret1234567890abcdef"})
         out, rows = run(
             tmp, "claude", event(tmp, write_lines(tmp, claude_lines(PROMPTS)))
         )
         err = rows[-1]["error"]
-        assert "jev exited 2" in err and "HTTP 429" in err and "ts_secret123" not in err, rows[-1]
+        assert "jev exited 2" in err and "HTTP 429" in err and "ts_secret1234567890abcdef" not in err, rows[-1]
     d, tmp = fresh()
     with d:
         setup(tmp)
