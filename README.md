@@ -170,11 +170,11 @@ New callers import `jev_patterns.call` and keep their thresholds in code, never 
 
 Runs the gates, advisor, and skills in every repo on this machine from the primary checkout, logging to `~/.local/state/jevdev/`. Repos whose project config already carries `scope_sentinel.py` are skipped by `--user`, so no double rows.
 
-1. `python3 install_user.py` (idempotent; `--home` and `--jevdev` override the defaults). It merges `~/.codex/hooks.json`, writes the `jevdev` hook in `~/.gemini/config/hooks.json`, links the four skills, and prints the Claude snippet. A real directory at a skill path is refused (exit 2); nothing changes.
+1. `python3 install_user.py` (idempotent; `--home` and `--jevdev` override the defaults). It merges `~/.codex/hooks.json`, writes the `jevdev` hook in `~/.gemini/config/hooks.json`, links the four skills, links `jev` and `jev-selfcheck` into `~/.local/bin` (`bin/jev` lands with JevDev#52), and prints the Claude snippet. A real file or directory at a skill or `~/.local/bin` path is refused (exit 2); nothing changes.
 2. Claude: open a ClaudeConfig PR with the printed snippet (`~/.claude/settings.json` hooks plus two `ln -s` lines). Merge and pull it while no Claude session runs; running sessions rewrite that file.
 3. Codex: open `codex` anywhere and trust the new hooks in `/hooks`.
 4. After every merge here: `git -C ~/JevDev pull` (the hooks run that checkout; keep it on `main`).
-5. Check: `python3 check_install.py --scope user`. Live smoke: `bash smoke.sh <claude|agy> bash --user` (runs from `/home/alex/BotHaus`).
+5. Check: `python3 check_install.py --scope user` and `jev-selfcheck` (offline; fake curl, no network). Live smoke: `bash smoke.sh <claude|agy> bash --user` (runs from `/home/alex/BotHaus`).
 
 ```bash
 python3 tests/test_check_install.py

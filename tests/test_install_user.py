@@ -195,6 +195,46 @@ def check_remove():
         )
 
 
+def check_bin_links():
+    """jev and jev-selfcheck link into ~/.local/bin; a real file there is refused; --remove drops the links."""
+    with tempfile.TemporaryDirectory() as tmp:
+        jevdev = Path(tmp) / "jevdev"
+        (jevdev / "bin").mkdir(parents=True)
+        for n in ("jev", "jev-selfcheck"):
+            (jevdev / "bin" / n).write_text("#!/bin/sh\n")
+            (jevdev / "bin" / n).chmod(0o755)
+
+        def go(home, *flags):
+            return subprocess.run(
+                [sys.executable, str(INSTALLER), "--home", str(home), "--jevdev", str(jevdev), *flags],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        home = make_home(tmp)
+        r = go(home)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        for n in ("jev", "jev-selfcheck"):
+            link = home / ".local/bin" / n
+            assert link.is_symlink() and str(link.readlink()).startswith(str(jevdev)), n
+            assert f"{home}/.local/bin/{n}" in r.stdout, r.stdout
+        assert go(home).stdout.startswith("nothing to change")
+        assert go(home, "--remove").returncode == 0
+        assert not any((home / ".local/bin" / n).is_symlink() for n in ("jev", "jev-selfcheck"))
+
+        home = Path(tmp) / "home2"
+        (home / ".local/bin").mkdir(parents=True)
+        (home / ".local/bin/jev").write_text("mine")
+        before = snapshot(home)
+        r = go(home)
+        assert r.returncode == 2, (r.stdout, r.stderr)
+        assert json.loads(r.stdout) == {
+            "error": f"refusing to replace a real file: {home}/.local/bin/jev"
+        }, r.stdout
+        assert snapshot(home) == before, "a refusal must change nothing"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("check_") and callable(fn):
