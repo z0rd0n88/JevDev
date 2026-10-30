@@ -71,7 +71,7 @@ def run_cli(root, home):
 
 
 def check_all_ok():
-    """AC-7.1: wired and trusted tree reads ok except the two documented cells; exit 0."""
+    """AC-7.1: wired and trusted tree reads ok except the agy compaction advisor (n/a); exit 0."""
     with tempfile.TemporaryDirectory() as tmp:
         root = make_root(tmp)
         home = make_home(tmp, root)
@@ -81,14 +81,12 @@ def check_all_ok():
             assert list(cells) == ["claude", "codex", "agy"], cells
             for host, cell in cells.items():
                 want = "ok"
-                if (feature, host) == ("write gate", "codex"):
-                    want = "ok (unavailable here)"
                 if (feature, host) == ("compaction advisor", "agy"):
                     want = "n/a (unavailable)"
                 assert cell == want, (feature, host, cell)
         r = run_cli(root, home)
         assert r.returncode == 0, (r.stdout, r.stderr)
-        assert "| bash gate |" in r.stdout and "ok (unavailable here)" in r.stdout, (
+        assert "| bash gate |" in r.stdout and "ok (unavailable here)" not in r.stdout, (
             r.stdout
         )
 
@@ -237,7 +235,7 @@ def check_user_scope_trusted():
         home, snippet = user_home(tmp, trusted=True)
         apply_claude_snippet(home, snippet)
         table = check_install.check(ROOT, home, "user")
-        want = {"bash gate": "ok", "write gate": "ok (unavailable here)", "compaction advisor": "ok"}
+        want = {"bash gate": "ok", "write gate": "ok", "compaction advisor": "ok"}
         assert {f: table[f]["codex"] for f in want} == want, table
         (home / ".codex/hooks.json").write_text("{nope")
         table = check_install.check(ROOT, home, "user")

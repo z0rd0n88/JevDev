@@ -425,8 +425,8 @@ def _unquote(text):
 
 
 def tool_target(event: dict, host: str):
-    """What a pre-tool event acts on: {"gate": "bash", "command", "cwd"}, {"gate": "write", "path", "content", "cwd"},
-    or None for any other tool."""
+    """What a pre-tool event acts on: {"gate": "bash", "tool", "command", "cwd"}, {"gate": "write", "tool", "path",
+    "content", "cwd"} (path None for a Codex patch with no file header), or None for any other tool."""
     name, args = event.get("tool_name"), event.get("tool_input") or {}
     cwd, path, content = event.get("cwd"), None, None
     if host == "agy":
@@ -435,7 +435,8 @@ def tool_target(event: dict, host: str):
         cwd = _unquote(args.get("Cwd")) or cwd
         if name == "run_command":
             command = args.get("CommandLine")
-            return {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()} if isinstance(command, str) else None
+            return {"gate": "bash", "tool": name, "command": command, "cwd": cwd or os.getcwd()} \
+                if isinstance(command, str) else None
         path = args.get("TargetFile")
         if name == "write_to_file":
             content = args.get("CodeContent")
@@ -449,7 +450,8 @@ def tool_target(event: dict, host: str):
             return None
     elif name == "Bash":
         command = args.get("command")
-        return {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()} if isinstance(command, str) else None
+        return {"gate": "bash", "tool": name, "command": command, "cwd": cwd or os.getcwd()} \
+            if isinstance(command, str) else None
     elif host == "codex" and name == "apply_patch":
         content = args.get("command")
         match = PATCH_HEADER.search(content) if isinstance(content, str) else None
@@ -458,9 +460,11 @@ def tool_target(event: dict, host: str):
         path, content = {"Write": ("file_path", "content"), "Edit": ("file_path", "new_string"),
                          "NotebookEdit": ("notebook_path", "new_source")}[name]
         path, content = args.get(path), args.get(content)
+    if host == "codex" and name == "apply_patch" and path is None and isinstance(content, str):
+        return {"gate": "write", "tool": name, "path": None, "content": content, "cwd": cwd or os.getcwd()}
     if not isinstance(path, str) or not path or not isinstance(content, str):
         return None
-    return {"gate": "write", "path": path, "content": content, "cwd": cwd or os.getcwd()}
+    return {"gate": "write", "tool": name, "path": path, "content": content, "cwd": cwd or os.getcwd()}
 
 
 def run_hook(log: Path, host: str, user: bool = False) -> None:
@@ -497,7 +501,7 @@ def run_judge(log: Path, host: str) -> None:
         target = tool_target(event, host)
         root = repo_root(target["cwd"])
         row.update(session_id=event.get("session_id") or event.get("conversationId"), gate=target["gate"],
-                   cwd=target["cwd"], repo=str(root), host_model=host_model(event, host, {}))
+                   tool=target["tool"], cwd=target["cwd"], repo=str(root), host_model=host_model(event, host, {}))
         transcript = event.get("transcript_path") or event.get("transcriptPath")
         if target["gate"] == "write":
             judge_write_event(row, event, host, target, root, transcript, log)
@@ -523,6 +527,9 @@ def run_judge(log: Path, host: str) -> None:
 
 def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Path, transcript, log: Path) -> None:
     """Fill the write row: local outside-repo block, else a redacted Jev judgement. Content is never logged."""
+    if target["path"] is None:
+        row.update(path=None, skipped="no patch header")
+        return
     rel = inside_repo(target["path"], target["cwd"], root)
     if transcript:
         row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))

@@ -61,7 +61,7 @@ The same shadow hook also judges file writes, in one Jev call with two questions
 | Codex | `apply_patch` (path from the first `*** Add/Update/Delete File:` header) | `.codex/config.toml` |
 | agy | `write_to_file`, `replace_file_content`, `multi_replace_file_content` | `.agents/hooks.json` |
 
-Codex write gate: wired, unavailable on this machine (exec-routed patches). Here Codex sends patches through its `exec` tool as JavaScript, so the native `apply_patch` matcher never fires; parsing patches embedded in `exec` is out of scope. Codex marks an edited hook command as untrusted: re-trust in `/hooks` after pulling this change.
+Codex write gate: wired, and it fires on Codex's native `apply_patch` tool (the VistaMobileBE log held 395 Codex write rows between Oct 16 and Oct 30, 2026). Codex marks an edited hook command as untrusted: re-trust in `/hooks` after pulling this change.
 
 Smoke: `bash smoke.sh claude write`, `bash smoke.sh agy write`, `bash smoke.sh agy bash` run a canned prompt and print the newest matching row. `bash smoke.sh codex bash` prints the manual steps.
 
@@ -162,7 +162,6 @@ New callers import `jev_patterns.call` and keep their thresholds in code, never 
 | Cell | Meaning |
 |---|---|
 | `ok` | wired (and, for Codex hooks, trusted) |
-| `ok (unavailable here)` | wired, but the host never fires it on this machine (Codex write gate: no native `apply_patch`) |
 | `n/a (unavailable)` | the host has no such feature (agy compaction advisor) |
 | `missing` | config absent, malformed, or lacking the entry; exit code 1 |
 | `untrusted` | Codex has no `hooks.state` trust entry for the hook in `~/.codex/config.toml`; trust it in `codex` via `/hooks`. Alone it keeps exit code 0 |

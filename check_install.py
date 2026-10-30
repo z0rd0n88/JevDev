@@ -164,7 +164,6 @@ def check(root, home, scope):
                 state,
                 cfg,
                 "pre_tool_use",
-                ok="ok (unavailable here)",
             ),
             "agy": ok(
                 find(

@@ -190,12 +190,12 @@ def check_helpers() -> None:
         raise AssertionError("gate_bash must raise KeyError on a missing answer")
 
     claude = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": "/w"}
-    assert s.tool_target(claude, "claude") == {"gate": "bash", "command": "ls", "cwd": "/w"}
+    assert s.tool_target(claude, "claude") == {"gate": "bash", "tool": "Bash", "command": "ls", "cwd": "/w"}
     assert s.tool_target({**claude, "tool_name": "Write"}, "claude") is None, "write branch lands in Phase 3"
     assert s.tool_target({"tool_name": "Read"}, "codex") is None
     assert s.tool_target(claude, "codex")["command"] == "ls"
     agy = {"toolCall": {"name": "run_command", "args": {"CommandLine": "ls", "Cwd": '"/w"'}}}
-    assert s.tool_target(agy, "agy") == {"gate": "bash", "command": "ls", "cwd": "/w"}, "agy Cwd quotes are stripped"
+    assert s.tool_target(agy, "agy") == {"gate": "bash", "tool": "run_command", "command": "ls", "cwd": "/w"}, "agy Cwd quotes are stripped"
     assert s.tool_target({"toolCall": {"name": "view_file", "args": {}}}, "agy") is None
 
     assert s.scan_transcript(Path("/nonexistent/t.jsonl"), "claude") == {"prompts": [], "last_model": None}
@@ -348,7 +348,8 @@ def check_write_helpers() -> None:
     assert s.redact_count("plain text") == ("plain text", 0)
 
     wt = lambda tool, **inp: s.tool_target({"tool_name": tool, "tool_input": inp, "cwd": "/w"}, "claude")
-    assert wt("Write", file_path="/w/a", content="c") == {"gate": "write", "path": "/w/a", "content": "c", "cwd": "/w"}
+    assert wt("Write", file_path="/w/a", content="c") == \
+        {"gate": "write", "tool": "Write", "path": "/w/a", "content": "c", "cwd": "/w"}
     assert wt("Edit", file_path="/w/a", old_string="o", new_string="n")["content"] == "n"
     assert wt("Edit", file_path="/w/a", old_string="o", new_string="")["content"] == "", "a deleting edit is still a write"
     assert wt("NotebookEdit", notebook_path="/w/n.ipynb", new_source="src")["path"] == "/w/n.ipynb"
@@ -356,13 +357,16 @@ def check_write_helpers() -> None:
     assert wt("Read", file_path="/w/a") is None
     patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch"
     cx = lambda tool, cmd: s.tool_target({"tool_name": tool, "tool_input": {"command": cmd}, "cwd": "/w"}, "codex")
-    assert cx("apply_patch", patch) == {"gate": "write", "path": "README.md", "content": patch, "cwd": "/w"}
+    assert cx("apply_patch", patch) == \
+        {"gate": "write", "tool": "apply_patch", "path": "README.md", "content": patch, "cwd": "/w"}
     assert cx("apply_patch", "*** Begin Patch\n*** Add File: new.txt\n+x\n*** End Patch")["path"] == "new.txt"
     assert cx("apply_patch", "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch")["path"] == "old.txt"
-    assert cx("apply_patch", "no headers here") is None
+    assert cx("apply_patch", "no headers here") == \
+        {"gate": "write", "tool": "apply_patch", "path": None, "content": "no headers here", "cwd": "/w"}
+    assert cx("apply_patch_x", patch) is None and cx("apply_patch", None) is None
     agy = lambda name, **args: s.tool_target({"toolCall": {"name": name, "args": args}, "cwd": "/e"}, "agy")
     assert agy("write_to_file", TargetFile="/w/a", CodeContent="c", Cwd="'/w'") == \
-        {"gate": "write", "path": "/w/a", "content": "c", "cwd": "/w"}
+        {"gate": "write", "tool": "write_to_file", "path": "/w/a", "content": "c", "cwd": "/w"}
     assert agy("replace_file_content", TargetFile="/w/a", ReplacementContent="r")["content"] == "r"
     multi = agy("multi_replace_file_content", TargetFile="/w/a",
                 ReplacementChunks=[{"ReplacementContent": "x"}, {"ReplacementContent": "y"}])
@@ -394,6 +398,7 @@ def check_write_gate() -> None:
         assert list(questions) == ["kind", "contains_secret"], questions
         assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
         assert row["sentinel_version"] == "shadow-v4" and row["gate"] == "write" and "error" not in row, row
+        assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
         assert "content" not in row and "abc123" not in json.dumps(row), row
         assert row["would_block"] is True and row["block_reason"].startswith("contains a credential (0.90)"), row
@@ -415,11 +420,19 @@ def check_write_gate() -> None:
                        "cwd": str(repo)}, host="codex")
         row = rows(log, 3)[2]
         assert row["host"] == "codex" and row["gate"] == "write" and row["path"] == "README.md", row
+        assert row["tool"] == "apply_patch", row
         assert json.loads(json.loads(marker.read_text())["stdin"])["content"] == patch
+        marker.unlink()
+        run_hook(tmp, {"session_id": "c0", "tool_name": "apply_patch", "tool_input": {"command": "no headers here"},
+                       "cwd": str(repo)}, host="codex")
+        row = rows(log, 4)[3]
+        assert row["tool"] == "apply_patch" and row["gate"] == "write" and row["path"] is None, row
+        assert row["skipped"] == "no patch header" and "error" not in row and "would_block" not in row, row
+        assert not marker.exists(), "Jev must not be called for a headerless patch"
         run_hook(tmp, {"conversationId": "c1", "toolCall": {"name": "multi_replace_file_content", "args": {
             "TargetFile": str(repo / "a.txt"), "Cwd": json.dumps(str(repo)),
             "ReplacementChunks": [{"ReplacementContent": "x"}, {"ReplacementContent": "y"}]}}}, host="agy")
-        row = rows(log, 4)[3]
+        row = rows(log, 5)[4]
         assert json.loads(json.loads(marker.read_text())["stdin"])["content"] == "x\ny"
         assert row["host"] == "agy" and row["repo"] == str(repo) and row["path"] == "a.txt", row
         assert row["session_id"] == "c1" and "error" not in row, row
@@ -428,7 +441,7 @@ def check_write_gate() -> None:
         for target in ("/etc/hosts", str(repo)):
             marker.unlink(missing_ok=True)
             run_hook(tmp, write(target, "127.0.0.1 x"))
-            row = rows(log, 5 if target == "/etc/hosts" else 6)[-1]
+            row = rows(log, 6 if target == "/etc/hosts" else 7)[-1]
             assert row["would_block"] is True and row["block_reason"] == f"outside the repo: {target}", row
             assert row["gate"] == "write" and "kind" not in row and "content" not in row, row
             assert not marker.exists(), "Jev must not be called for an outside-repo write"
@@ -436,7 +449,7 @@ def check_write_gate() -> None:
         # fail open: a failing jev leaves an attributable error row
         (tmp / "cfg.json").write_text(json.dumps({"exit": 1}))
         run_hook(tmp, write(str(repo / "n.txt"), "hello"))
-        row = rows(log, 7)[-1]
+        row = rows(log, 8)[-1]
         assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
 
 
