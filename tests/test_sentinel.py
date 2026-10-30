@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -448,7 +449,7 @@ def check_write_gate() -> None:
 
         # the session's own scratchpad is allowed without a Jev call; another session's, or any other path, is not
         sid, other = "11111111-2222-3333-4444-555555555555", "99999999-8888-7777-6666-555555555555"
-        pad = lambda s: f"/tmp/claude-1000/-home-alex-VistaMobileBE/{s}/scratchpad/notes.md"
+        pad = lambda s, uid=os.getuid(): f"/tmp/claude-{uid}/-home-alex-VistaMobileBE/{s}/scratchpad/notes.md"
         marker.unlink(missing_ok=True)
         run_hook(tmp, {**write(pad(sid), "hi"), "session_id": sid})
         row = rows(log, 8)[-1]
@@ -462,15 +463,27 @@ def check_write_gate() -> None:
         run_hook(tmp, {**write(pad(sid).replace("scratchpad/notes.md", "../../etc/x"), "x"), "session_id": sid})
         row = rows(log, 10)[-1]
         assert row["would_block"] is True and row["block_reason"].startswith("outside the repo") and "scope" not in row, row
-        run_hook(tmp, write("/home/alex/BotHaus/x.py", "x = 1"))
+        run_hook(tmp, {**write(pad(sid, os.getuid() + 1), "x"), "session_id": sid})
         row = rows(log, 11)[-1]
+        assert row["would_block"] is True and "scope" not in row, row
+        slug = Path(f"/tmp/claude-{os.getuid()}/test-sentinel-{os.getpid()}")
+        try:
+            (slug / sid).mkdir(parents=True)
+            (slug / sid / "link").symlink_to("/etc")
+            run_hook(tmp, {**write(str(slug / sid / "link" / "hosts"), "x"), "session_id": sid})
+            row = rows(log, 12)[-1]  # the judge is detached: keep the link until its row lands
+        finally:
+            shutil.rmtree(slug, ignore_errors=True)
+        assert row["would_block"] is True and row["block_reason"].startswith("outside the repo") and "scope" not in row, row
+        run_hook(tmp, write("/home/alex/BotHaus/x.py", "x = 1"))
+        row = rows(log, 13)[-1]
         assert row["would_block"] is True and row["block_reason"].startswith("outside the repo"), row
         assert not marker.exists(), "Jev must not be called for an outside-repo write"
 
         # fail open: a failing jev leaves an attributable error row
         (tmp / "cfg.json").write_text(json.dumps({"exit": 1}))
         run_hook(tmp, write(str(repo / "n.txt"), "hello"))
-        row = rows(log, 12)[-1]
+        row = rows(log, 14)[-1]
         assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
 
 

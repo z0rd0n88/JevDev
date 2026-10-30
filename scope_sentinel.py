@@ -35,7 +35,7 @@ RISKY = re.compile(
     r"|\bfind\b" + _NEAR + r"\s-delete\b"
 )
 DRY_RUN = re.compile(r"\s--dry-run\b")
-SCRATCHPAD = re.compile(r"^/tmp/claude-\d+/[^/]+/([0-9a-f-]{36})/")
+SCRATCHPAD = re.compile(rf"^/tmp/claude-{os.getuid()}/[^/]+/([0-9a-f-]{{36}})/")
 SEGMENT = re.compile(r"&&|\|\||[;|\n]")
 _VALUE = r"""[^\s'"]+"""
 # Each pattern keeps group 1 (possibly empty) and replaces the rest of the match.
@@ -527,8 +527,8 @@ def run_judge(log: Path, host: str) -> None:
 
 
 def is_scratchpad(path: str, cwd: str, session_id) -> bool:
-    """True for a path under this session's own Claude scratchpad, never another session's; `..` is collapsed first."""
-    match = SCRATCHPAD.match(os.path.normpath(os.path.join(cwd, path)))
+    """True for a path under this session's own Claude scratchpad, never another session's; `..` and symlinks are resolved first."""
+    match = SCRATCHPAD.match(os.path.realpath(os.path.join(cwd, path)))
     return bool(match) and match.group(1) == session_id
 
 
