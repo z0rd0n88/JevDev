@@ -446,10 +446,28 @@ def check_write_gate() -> None:
             assert row["gate"] == "write" and "kind" not in row and "content" not in row, row
             assert not marker.exists(), "Jev must not be called for an outside-repo write"
 
+        # the session's own scratchpad is allowed without a Jev call; another session's, or any other path, is not
+        sid, other = "11111111-2222-3333-4444-555555555555", "99999999-8888-7777-6666-555555555555"
+        pad = lambda s: f"/tmp/claude-1000/-home-alex-VistaMobileBE/{s}/scratchpad/notes.md"
+        marker.unlink(missing_ok=True)
+        run_hook(tmp, {**write(pad(sid), "hi"), "session_id": sid})
+        row = rows(log, 8)[-1]
+        assert row["scope"] == "scratchpad" and row["path"] == pad(sid) and row["gate"] == "write", row
+        assert "would_block" not in row and "block_reason" not in row and "error" not in row, row
+        assert not marker.exists(), "Jev must not be called for the session scratchpad"
+        run_hook(tmp, {**write(pad(sid), "hi"), "session_id": other})
+        row = rows(log, 9)[-1]
+        assert row["would_block"] is True and row["block_reason"] == f"outside the repo: {pad(sid)}", row
+        assert "scope" not in row, row
+        run_hook(tmp, write("/home/alex/BotHaus/x.py", "x = 1"))
+        row = rows(log, 10)[-1]
+        assert row["would_block"] is True and row["block_reason"].startswith("outside the repo"), row
+        assert not marker.exists(), "Jev must not be called for an outside-repo write"
+
         # fail open: a failing jev leaves an attributable error row
         (tmp / "cfg.json").write_text(json.dumps({"exit": 1}))
         run_hook(tmp, write(str(repo / "n.txt"), "hello"))
-        row = rows(log, 8)[-1]
+        row = rows(log, 11)[-1]
         assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
 
 

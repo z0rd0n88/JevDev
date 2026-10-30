@@ -35,6 +35,7 @@ RISKY = re.compile(
     r"|\bfind\b" + _NEAR + r"\s-delete\b"
 )
 DRY_RUN = re.compile(r"\s--dry-run\b")
+SCRATCHPAD = re.compile(r"^/tmp/claude-\d+/[^/]+/([0-9a-f-]{36})/")
 SEGMENT = re.compile(r"&&|\|\||[;|\n]")
 _VALUE = r"""[^\s'"]+"""
 # Each pattern keeps group 1 (possibly empty) and replaces the rest of the match.
@@ -525,10 +526,19 @@ def run_judge(log: Path, host: str) -> None:
     append_row(log, row)
 
 
+def is_scratchpad(path: str, session_id) -> bool:
+    """True for a path under this session's own Claude scratchpad, never another session's."""
+    match = SCRATCHPAD.match(path)
+    return bool(match) and match.group(1) == session_id
+
+
 def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Path, transcript, log: Path) -> None:
     """Fill the write row: local outside-repo block, else a redacted Jev judgement. Content is never logged."""
     if target["path"] is None:
         row.update(path=None, skipped="no patch header")
+        return
+    if is_scratchpad(target["path"], row.get("session_id")):
+        row.update(path=target["path"], scope="scratchpad")
         return
     rel = inside_repo(target["path"], target["cwd"], root)
     if transcript:
