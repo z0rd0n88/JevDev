@@ -49,7 +49,7 @@ SECRETS = [re.compile(p) for p in (
     r"(://[^/\s:@]+:)[^/\s@]+(?=@)",
     r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
     r"()\bsk-(?=[\w-]*\d)[\w-]{20,}",
-    r"()\bts_[A-Za-z0-9]{16,}",
+    r"()\bts_[\w-]{16,}",
     r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
     r"()\bxox[abposr]-[\w-]{10,}",
 )]
@@ -76,7 +76,7 @@ def error_detail(e: BaseException, prefix: bool = True) -> str:
     """Log text for a failed hook: the error, plus the redacted first jev stderr line when it has one."""
     text = f"{type(e).__name__}: {e}" if prefix else str(e)
     stderr = getattr(e, "stderr", "")
-    return f"{text} | {clip(redact(stderr))}" if stderr else text
+    return f"{text} | {clip(redact(stderr))}" if isinstance(stderr, str) and stderr else text
 
 
 def is_risky(command: str) -> bool:
@@ -550,7 +550,7 @@ def run_judge(log: Path, host: str) -> None:
             constraints, row["constraint_files"] = project_constraints(root)
             row.update(judge_bash(row["instruction"], constraints or "None", target["command"], target["cwd"]))
             if row["host_model"] is None:  # the first reply of a session is flushed while Jev thinks
-                row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host, follow_parent=True))
+                row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
     except Exception as e:
         # Fails open; the error row keeps silent gaps visible.
         row["error"] = error_detail(e)
@@ -568,12 +568,12 @@ def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Pat
     if target["path"] is None:
         row.update(path=None, skipped="no patch header")
         return
-    if is_scratchpad(target["path"], target["cwd"], row.get("session_id")):
+    rel = inside_repo(target["path"], target["cwd"], root)
+    if rel is None and is_scratchpad(target["path"], target["cwd"], row.get("session_id")):
         row.update(path=target["path"], scope="scratchpad")
         return
-    rel = inside_repo(target["path"], target["cwd"], root)
     if transcript:
-        row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host, follow_parent=True))
+        row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
     if rel is None:
         row.update(path=target["path"], would_block=True, block_reason=f"outside the repo: {target['path']}")
         return

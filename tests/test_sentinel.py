@@ -159,6 +159,9 @@ def check_patterns() -> None:
         assert sentinel.redact(text) == text, "ordinary text must not be redacted"
     assert sentinel.redact("https://u:pw@host") == "https://u:[REDACTED]@host"
     assert "ts_secret1234567890abcdef" not in sentinel.redact("key ts_secret1234567890abcdef")
+    assert "ts_abc-def-1234567890ab" not in sentinel.redact("key ts_abc-def-1234567890ab")
+    bare = subprocess.TimeoutExpired("jev", 1, stderr=b"boom")  # TimeoutExpired.stderr is bytes, not str
+    assert sentinel.error_detail(bare) == f"TimeoutExpired: {bare}", sentinel.error_detail(bare)
     start = time.perf_counter()
     for text in ("git -C " * 20000, "gh -R " * 20000, 'git -C "' * 20000, "find " * 20000):
         sentinel.is_risky(text)
@@ -515,6 +518,8 @@ def check_write_gate() -> None:
         row = rows(log, 11)[-1]
         assert row["would_block"] is True and "scope" not in row, row
         slug = Path(f"/tmp/claude-{os.getuid()}/test-sentinel-{os.getpid()}")
+        uid_dir = Path(f"/tmp/claude-{os.getuid()}")
+        made_uid_dir = not uid_dir.exists()
         try:
             (slug / sid).mkdir(parents=True)
             (slug / sid / "link").symlink_to("/etc")
@@ -522,16 +527,34 @@ def check_write_gate() -> None:
             row = rows(log, 12)[-1]  # the judge is detached: keep the link until its row lands
         finally:
             shutil.rmtree(slug, ignore_errors=True)
+            if made_uid_dir:
+                shutil.rmtree(uid_dir, ignore_errors=True)
         assert row["would_block"] is True and row["block_reason"].startswith("outside the repo") and "scope" not in row, row
         run_hook(tmp, write("/home/alex/BotHaus/x.py", "x = 1"))
         row = rows(log, 13)[-1]
         assert row["would_block"] is True and row["block_reason"].startswith("outside the repo"), row
         assert not marker.exists(), "Jev must not be called for an outside-repo write"
 
+        # a repo that lives inside the session scratchpad is still judged by Jev
+        padrepo = Path(f"/tmp/claude-{os.getuid()}/test-sentinel-repo-{os.getpid()}") / sid / "scratchpad" / "r"
+        try:
+            padrepo.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(padrepo)], check=True)
+            padrepo = padrepo.resolve()
+            (tmp / "cfg.json").write_text(json.dumps({"secret": 0.1}))
+            marker.unlink(missing_ok=True)
+            run_hook(tmp, {**write(str(padrepo / "x.py"), "x = 1"), "cwd": str(padrepo), "session_id": sid})
+            row = rows(log, 14)[-1]
+        finally:
+            shutil.rmtree(padrepo.parents[2], ignore_errors=True)
+            if made_uid_dir:
+                shutil.rmtree(uid_dir, ignore_errors=True)
+        assert marker.exists() and "scope" not in row and row["path"] == "x.py", row
+
         # fail open: a failing jev leaves an attributable error row
         (tmp / "cfg.json").write_text(json.dumps({"exit": 1}))
         run_hook(tmp, write(str(repo / "n.txt"), "hello"))
-        row = rows(log, 14)[-1]
+        row = rows(log, 15)[-1]
         assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
 
 

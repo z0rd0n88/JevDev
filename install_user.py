@@ -111,6 +111,8 @@ def link_plan(home, jevdev, removing):
     ] + [(home / ".local/bin" / name, jevdev / "bin" / name) for name in BIN]
     plan = []
     for link, target in pairs:
+        if not removing and not target.exists():
+            raise Refused(f"refusing to link to a missing target: {target}")
         if link.is_symlink():
             ours = str(link.readlink()).startswith(str(jevdev))
             action = (

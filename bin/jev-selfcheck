@@ -81,7 +81,7 @@ chmod +x "$fake/curl"
 rm -f "$fake/args" "$fake/stdin"
 env -u OPENROUTER_API_KEY PATH="$fake:$PATH" TYPESAFE_API_KEY=ts_secret JEV_BASE_URL=http://localhost:9 JEV_ALLOW_LOCAL=1 \
   jev i s >/dev/null 2>&1
-grep -qs ts_secret "$fake/args" "$fake/stdin" && { echo "FAIL local route was sent the key"; fail=1; } || echo "ok   local route sends no key"
+[ -f "$fake/args" ] && ! grep -qs ts_secret "$fake/args" "$fake/stdin" && echo "ok   local route sends no key" || { echo "FAIL local route was sent the key"; fail=1; }
 rm -f "$fake/args" "$fake/stdin"
 env -u OPENROUTER_API_KEY -u JEV_BASE_URL PATH="$fake:$PATH" TYPESAFE_API_KEY=ts_secret jev i s >/dev/null 2>&1
 grep -qs 'Bearer ts_secret' "$fake/stdin" && echo "ok   own route sends the key" || { echo "FAIL own route lost the key"; fail=1; }

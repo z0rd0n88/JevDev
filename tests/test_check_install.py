@@ -11,6 +11,7 @@ import tempfile
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 import check_install  # noqa: E402
+from test_install_user import JEVDEV  # noqa: E402  (checkout copy with bin/ stubs; see there)
 
 FEATURES = [
     "hyper-jev skill",
@@ -186,7 +187,7 @@ def user_home(tmp, trusted=False):
     import install_user
 
     home = Path(tmp) / "home"
-    result = install_user.install(home, ROOT)
+    result = install_user.install(home, JEVDEV)
     if trusted:
         body = "[hooks.state]\n"
         for k in HOOK_KEYS:
@@ -202,14 +203,14 @@ def apply_claude_snippet(home, snippet):
     (home / ".claude/settings.json").write_text(json.dumps(hooks))
     (home / ".claude/skills").mkdir()
     for name in ["hyper-jev", "ask-jev"]:
-        (home / ".claude/skills" / name).symlink_to(ROOT / ".agents/skills" / name)
+        (home / ".claude/skills" / name).symlink_to(JEVDEV / ".agents/skills" / name)
 
 
 def check_user_scope():
     """AC-8.4: before the Claude snippet every claude wiring cell is missing; after it, all ok; exit 1 then 0."""
     with tempfile.TemporaryDirectory() as tmp:
         home, snippet = user_home(tmp)
-        table = check_install.check(ROOT, home, "user")
+        table = check_install.check(JEVDEV, home, "user")
         assert list(table) == FEATURES, list(table)
         for feature in ["hyper-jev skill", "ask-jev skill", "bash gate", "write gate", "compaction advisor"]:
             assert table[feature]["claude"] == "missing", (feature, table[feature])
@@ -223,7 +224,7 @@ def check_user_scope():
         assert r.returncode == 1 and r.stdout.startswith("jevdev checkout: "), (r.stdout, r.stderr)
 
         apply_claude_snippet(home, snippet)
-        table = check_install.check(ROOT, home, "user")
+        table = check_install.check(JEVDEV, home, "user")
         assert all(cell == "ok" for row in table.values() for cell in [row["claude"]]), table
         r = run_user(home)
         assert r.returncode == 0, (r.stdout, r.stderr)  # untrusted alone keeps exit 0
@@ -234,11 +235,11 @@ def check_user_scope_trusted():
     with tempfile.TemporaryDirectory() as tmp:
         home, snippet = user_home(tmp, trusted=True)
         apply_claude_snippet(home, snippet)
-        table = check_install.check(ROOT, home, "user")
+        table = check_install.check(JEVDEV, home, "user")
         want = {"bash gate": "ok", "write gate": "ok", "compaction advisor": "ok"}
         assert {f: table[f]["codex"] for f in want} == want, table
         (home / ".codex/hooks.json").write_text("{nope")
-        table = check_install.check(ROOT, home, "user")
+        table = check_install.check(JEVDEV, home, "user")
         assert table["bash gate"]["codex"] == "missing", table
         (home / ".gemini/config/hooks.json").write_text("[]")
         r = run_user(home)

@@ -1,13 +1,26 @@
 """Phase 8 checks: install_user.py against a tmp --home (never the real one)."""
 
+import atexit
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 
 ROOT = Path(__file__).parents[1]
 INSTALLER = ROOT / "install_user.py"
+# The installer refuses missing link targets, and bin/jev lands with JevDev#52: install from a
+# copy of this checkout made of symlinks, with stub bin/ files, so the suite does not depend on it.
+JEVDEV = Path(tempfile.mkdtemp()) / "jevdev"
+atexit.register(shutil.rmtree, JEVDEV.parent, ignore_errors=True)
+JEVDEV.mkdir()
+for _p in ROOT.iterdir():
+    if _p.name not in ("bin", ".git"):
+        (JEVDEV / _p.name).symlink_to(_p)
+(JEVDEV / "bin").mkdir()
+for _n in ("jev", "jev-selfcheck"):
+    (JEVDEV / "bin" / _n).write_text("#!/bin/sh\n")
 OTHER = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}]}}
 SKILL_LINKS = [
     ".agents/skills/hyper-jev",
@@ -25,7 +38,7 @@ def run(home, *flags):
             "--home",
             str(home),
             "--jevdev",
-            str(ROOT),
+            str(JEVDEV),
             *flags,
         ],
         capture_output=True,
@@ -72,13 +85,13 @@ def check_install_twice():
         for g in pre:
             [h] = g["hooks"]
             assert h["timeout"] == 10 and h["command"].endswith("|| true"), h
-            assert f"{ROOT}/scope_sentinel.py hook codex --user" in h["command"], h
+            assert f"{JEVDEV}/scope_sentinel.py hook codex --user" in h["command"], h
             assert "JEV_LOG_DIR=$HOME/.local/state/jevdev" in h["command"], h
-            assert f"{ROOT}/with_jev_key.sh" in h["command"], h
+            assert f"{JEVDEV}/with_jev_key.sh" in h["command"], h
         assert len(hooks["Stop"]) == 2, hooks["Stop"]
         [stop] = hooks["Stop"][1]["hooks"]
         assert (
-            f"{ROOT}/compact_advisor.py hook codex --user" in stop["command"]
+            f"{JEVDEV}/compact_advisor.py hook codex --user" in stop["command"]
             and stop["timeout"] == 45
         ), stop
         assert "JEV_LOG_DIR=" in stop["command"], stop
@@ -92,7 +105,7 @@ def check_install_twice():
         ], matchers
         for g in agy["jevdev"]["PreToolUse"]:
             assert (
-                f"{ROOT}/scope_sentinel.py hook agy --user" in g["hooks"][0]["command"]
+                f"{JEVDEV}/scope_sentinel.py hook agy --user" in g["hooks"][0]["command"]
             ), g
 
         for link in SKILL_LINKS:
@@ -157,7 +170,7 @@ def check_replaces_stale_symlink():
         link.parent.mkdir(parents=True)
         link.symlink_to(tmp)
         assert run(home).returncode == 0
-        assert link.readlink() == ROOT / ".agents/skills/ask-jev"
+        assert link.readlink() == JEVDEV / ".agents/skills/ask-jev"
 
         (home / ".codex/hooks.json").write_text("{nope")
         before = snapshot(home)
@@ -200,6 +213,8 @@ def check_bin_links():
     with tempfile.TemporaryDirectory() as tmp:
         jevdev = Path(tmp) / "jevdev"
         (jevdev / "bin").mkdir(parents=True)
+        for n in ("hyper-jev", "ask-jev"):
+            (jevdev / ".agents/skills" / n).mkdir(parents=True)
         for n in ("jev", "jev-selfcheck"):
             (jevdev / "bin" / n).write_text("#!/bin/sh\n")
             (jevdev / "bin" / n).chmod(0o755)
@@ -232,6 +247,22 @@ def check_bin_links():
         assert json.loads(r.stdout) == {
             "error": f"refusing to replace a real file: {home}/.local/bin/jev"
         }, r.stdout
+        assert snapshot(home) == before, "a refusal must change nothing"
+
+        # a checkout without bin/jev (JevDev#52 not merged yet) is refused before anything is linked
+        bare = Path(tmp) / "bare"
+        (bare / "bin").mkdir(parents=True)
+        for n in ("hyper-jev", "ask-jev"):
+            (bare / ".agents/skills" / n).mkdir(parents=True)
+        (bare / "bin/jev-selfcheck").write_text("#!/bin/sh\n")
+        home = make_home(tmp + "/home3")
+        before = snapshot(home)
+        r = subprocess.run(
+            [sys.executable, str(INSTALLER), "--home", str(home), "--jevdev", str(bare)],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert r.returncode == 2, (r.stdout, r.stderr)
+        assert json.loads(r.stdout) == {"error": f"refusing to link to a missing target: {bare}/bin/jev"}, r.stdout
         assert snapshot(home) == before, "a refusal must change nothing"
 
 

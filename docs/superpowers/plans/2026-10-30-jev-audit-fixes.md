@@ -152,7 +152,7 @@ If Step 1 does *not* reproduce (the shape has since changed or the transcript wa
 
 ### Task 7: Finish, go live, and the two decisions (user)
 
-- [ ] **Step 1:** `for t in tests/test_*.py; do python3 "$t" >/dev/null 2>&1 && echo "PASS $t" || echo "FAIL $t"; done`. Expected: 13 PASS.
+- [ ] **Step 1:** `for t in tests/test_*.py; do python3 "$t" >/dev/null 2>&1 && echo "PASS $t" || echo "FAIL $t"; done`. Expected: 12 PASS (13 once JevDev#52 adds tests/test_jev_cli.py).
 - [ ] **Step 2:** Open the PR (`Closes` nothing; link the audit path in the body), merge from `~/JevDev`, `git -C ~/JevDev pull --ff-only`, then `python3 ~/JevDev/install_user.py` and `python3 ~/JevDev/check_install.py --scope user` (exit 0, Codex write cell `ok`) and `jev-selfcheck` (exit 0). Hooks pick the new code up on their next run; no host restart.
 - [ ] **Step 3 (labeling, before any blocking threshold):** sample 50 `would_block` write rows and the 83 flagged bash rows from `sentinel.jsonl` for VistaMobileBE, label each right/wrong per the README's labeling rule, and only then pick a threshold. Not code; owner: user.
 - [ ] **Step 4 (decision):** ship or park each of `skill_router`, `fixture_curator`, `handoff_check`, `test_escrow`, together with open PRs #48, #15, #12. Anything shipped gets a `check_install.py` row.
