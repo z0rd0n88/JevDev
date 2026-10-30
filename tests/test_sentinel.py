@@ -224,6 +224,40 @@ def check_helpers() -> None:
     assert s.host_model({"modelName": "Gemini X"}, "agy", {}) == "Gemini X"
     assert s.host_model({}, "codex", {}) is None
 
+    # Subagent transcripts hold no typed prompt; the prompt is read from the session that spawned them.
+    root, child, mid = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b", "00000000-0000-0000-0000-00000000000c"
+    with tempfile.TemporaryDirectory() as d:
+        day = Path(d, "sessions/2026/10/29")
+        day.mkdir(parents=True)
+        Path(d, "sessions/2026/10/28").mkdir()
+        meta = lambda i, parent=None: {"type": "session_meta", "payload": {"id": i, "session_id": root, **({"parent_thread_id": parent} if parent else {})}}
+        (Path(d, "sessions/2026/10/28") / f"rollout-x-{root}.jsonl").write_text("\n".join(json.dumps(x) for x in [meta(root),
+            {"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "UserMessage", "content": [{"type": "text", "text": "placeholder"}]}}}]))
+        sub = day / f"rollout-x-{child}.jsonl"
+        sub.write_text("\n".join(json.dumps(x) for x in [meta(child, root),
+            {"type": "response_item", "payload": {"type": "agent_message", "author": "/root", "content": [{"type": "input_text", "text": "x"}]}}]))
+        assert s.latest_user_prompt(sub, "codex") == "placeholder", "a Codex subagent reads the root rollout's prompt"
+        (day / f"rollout-x-{mid}.jsonl").write_text(json.dumps(meta(mid, "../../x")))
+        assert s.latest_user_prompt(day / f"rollout-x-{mid}.jsonl", "codex") == "", "a parent id that is not a UUID is ignored"
+
+        brain = Path(d, "brain")
+        def agy(cid, steps, parent=None):
+            gen = brain / cid / ".system_generated"
+            (gen / "logs").mkdir(parents=True)
+            (gen / "messages").mkdir()
+            (gen / "logs/transcript.jsonl").write_text("\n".join(json.dumps(x) for x in steps))
+            if parent:
+                (gen / "messages/m.json").write_text(json.dumps({"sender": parent, "recipient": cid, "content": "x",
+                    "sourceMetadata": {"tool": {"conversationId": parent, "toolCall": {"name": "invoke_subagent"}}}}))
+                (gen / "messages/reply.json").write_text(json.dumps({"sender": "x", "recipient": cid, "content": "x",
+                    "sourceMetadata": {"tool": {"conversationId": root, "toolCall": {"name": "run_command"}}}}))
+            return gen / "logs/transcript.jsonl"
+        agy(root, [{"type": "USER_INPUT", "content": "<USER_REQUEST>\nplaceholder\n</USER_REQUEST>"}])
+        system = {"type": "SYSTEM_MESSAGE", "source": "SYSTEM", "content": "<SYSTEM_MESSAGE>x</SYSTEM_MESSAGE>"}
+        agy(mid, [system], parent=root)
+        leaf = agy(child, [system, {"type": "PLANNER_RESPONSE", "source": "MODEL", "content": None}], parent=mid)
+        assert s.latest_user_prompt(leaf, "agy") == "placeholder", "an agy subagent reads its spawner's prompt, two levels up"
+
 
 def new_repo(tmp: Path, agents: str = "") -> Path:
     repo = tmp / "repo"

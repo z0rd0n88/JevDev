@@ -57,6 +57,7 @@ TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-c
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
 AGY_REQUEST = re.compile(r"<USER_REQUEST>(.*?)</USER_REQUEST>", re.S)
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
 # A typed slash command: a skill opens with <command-message> and counts as "/name args"; a built-in opens with
 # <command-name> and is not a task ("/exit", "/model opus"), except the instructions given to /compact.
@@ -325,11 +326,32 @@ def _blocks(content, kind: str) -> list[dict]:
     return [b for b in content if isinstance(b, dict) and b.get("type") == kind] if isinstance(content, list) else []
 
 
-def scan_transcript(transcript: Path, host: str = "claude") -> dict:
+def parent_transcript(transcript: Path, host: str, codex_parent=None):
+    """Transcript of the session that spawned this subagent session, or None. A subagent's transcript holds no typed
+    prompt: Codex names the parent in session_meta, agy in the invoke_subagent message that started the conversation."""
+    parent = codex_parent
+    if host == "agy":
+        for message in sorted((transcript.parent.parent / "messages").glob("*.json")):
+            try:
+                tool = (json.loads(message.read_text()).get("sourceMetadata") or {}).get("tool") or {}
+            except (OSError, ValueError, AttributeError):
+                continue
+            if (tool.get("toolCall") or {}).get("name") == "invoke_subagent":
+                parent = tool.get("conversationId")
+                break
+    if not isinstance(parent, str) or not UUID.fullmatch(parent) or len(transcript.parents) < 4:
+        return None
+    root = transcript.parents[3]  # Codex: sessions/<y>/<m>/<d>/rollout; agy: brain/<id>/.system_generated/logs/transcript
+    if host == "codex":
+        return next(root.glob(f"*/*/*/rollout-*-{parent}.jsonl"), None)
+    return root / parent / transcript.parent.parent.name / transcript.parent.name / transcript.name
+
+
+def scan_transcript(transcript: Path, host: str = "claude", depth: int = 0) -> dict:
     """One pass over a host transcript: typed prompts, the Claude model of the last main-chain reply, and
     (Claude and Codex only) the compaction-advisor inputs: tokens, window, last reply text, tools used since the
-    last prompt, and the last compact summary."""
-    prompts, last_model = [], None
+    last prompt, and the last compact summary. A Codex or agy subagent transcript borrows its spawner's prompts."""
+    prompts, last_model, codex_parent = [], None, None
     user_text = {"codex": codex_user_text, "agy": agy_user_text}.get(host, claude_user_text)
     extra = {"tokens": 0, "window": None, "last_assistant_text": "", "tools_after_last_prompt": [], "compact_summary": ""}
     try:
@@ -364,7 +386,9 @@ def scan_transcript(transcript: Path, host: str = "claude") -> dict:
                     extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(msg.get("content"), "text"))
                     extra["tools_after_last_prompt"] += [b.get("name", "") for b in _blocks(msg.get("content"), "tool_use")]
             elif host == "codex":
-                if entry.get("type") == "event_msg" and payload.get("type") == "token_count":
+                if entry.get("type") == "session_meta":
+                    codex_parent = codex_parent or payload.get("parent_thread_id")
+                elif entry.get("type") == "event_msg" and payload.get("type") == "token_count":
                     info = payload.get("info") or {}
                     extra["tokens"] = int((info.get("last_token_usage") or {}).get("total_tokens") or 0)
                     window = info.get("model_context_window")
@@ -374,6 +398,10 @@ def scan_transcript(transcript: Path, host: str = "claude") -> dict:
                         extra["tools_after_last_prompt"].append(payload.get("name", ""))
                     elif payload.get("type") == "message" and payload.get("role") == "assistant":
                         extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(payload.get("content"), "output_text"))
+    if not prompts and host in ("codex", "agy") and depth < 3:
+        parent = parent_transcript(transcript, host, codex_parent)
+        if parent:
+            prompts = scan_transcript(parent, host, depth + 1)["prompts"]
     return {"prompts": prompts, "last_model": last_model, **({} if host == "agy" else extra)}
 
 
