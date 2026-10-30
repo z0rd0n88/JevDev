@@ -459,15 +459,18 @@ def check_write_gate() -> None:
         row = rows(log, 9)[-1]
         assert row["would_block"] is True and row["block_reason"] == f"outside the repo: {pad(sid)}", row
         assert "scope" not in row, row
-        run_hook(tmp, write("/home/alex/BotHaus/x.py", "x = 1"))
+        run_hook(tmp, {**write(pad(sid).replace("scratchpad/notes.md", "../../etc/x"), "x"), "session_id": sid})
         row = rows(log, 10)[-1]
+        assert row["would_block"] is True and row["block_reason"].startswith("outside the repo") and "scope" not in row, row
+        run_hook(tmp, write("/home/alex/BotHaus/x.py", "x = 1"))
+        row = rows(log, 11)[-1]
         assert row["would_block"] is True and row["block_reason"].startswith("outside the repo"), row
         assert not marker.exists(), "Jev must not be called for an outside-repo write"
 
         # fail open: a failing jev leaves an attributable error row
         (tmp / "cfg.json").write_text(json.dumps({"exit": 1}))
         run_hook(tmp, write(str(repo / "n.txt"), "hello"))
-        row = rows(log, 11)[-1]
+        row = rows(log, 12)[-1]
         assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
 
 

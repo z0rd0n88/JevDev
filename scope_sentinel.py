@@ -526,9 +526,9 @@ def run_judge(log: Path, host: str) -> None:
     append_row(log, row)
 
 
-def is_scratchpad(path: str, session_id) -> bool:
-    """True for a path under this session's own Claude scratchpad, never another session's."""
-    match = SCRATCHPAD.match(path)
+def is_scratchpad(path: str, cwd: str, session_id) -> bool:
+    """True for a path under this session's own Claude scratchpad, never another session's; `..` is collapsed first."""
+    match = SCRATCHPAD.match(os.path.normpath(os.path.join(cwd, path)))
     return bool(match) and match.group(1) == session_id
 
 
@@ -537,7 +537,7 @@ def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Pat
     if target["path"] is None:
         row.update(path=None, skipped="no patch header")
         return
-    if is_scratchpad(target["path"], row.get("session_id")):
+    if is_scratchpad(target["path"], target["cwd"], row.get("session_id")):
         row.update(path=target["path"], scope="scratchpad")
         return
     rel = inside_repo(target["path"], target["cwd"], root)
