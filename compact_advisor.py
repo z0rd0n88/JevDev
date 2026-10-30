@@ -13,6 +13,7 @@ import time
 from jev_patterns import call, input_tokens, model_name
 from scope_sentinel import (
     append_row,
+    error_detail,
     host_model,
     log_dir,
     project_hooked,
@@ -192,9 +193,7 @@ def run_hook(host: str, log: Path, user: bool = False) -> None:
                 print(json.dumps({"systemMessage": message}), flush=True)
                 row["printed"] = True
     except Exception as e:
-        row["error"] = (
-            f"{type(e).__name__}: {e}" if not isinstance(e, RuntimeError) else str(e)
-        )
+        row["error"] = error_detail(e, prefix=not isinstance(e, RuntimeError))
     append_row(log, row)
 
 

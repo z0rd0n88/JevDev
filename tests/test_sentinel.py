@@ -37,6 +37,8 @@ if cfg.get("append_to"):  # the host flushes its reply to the transcript while J
         f.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"model": "claude-late-1"}}) + "\\n")
 if cfg.get("sleep"):
     time.sleep(cfg["sleep"])
+if cfg.get("stderr"):
+    print(cfg["stderr"], file=sys.stderr)
 if cfg.get("exit"):
     sys.exit(cfg["exit"])
 if "kind" in json.loads(sys.argv[sys.argv.index("-q") + 1]):  # write gate: kind + contains_secret
@@ -298,6 +300,12 @@ def check_bash_gate() -> None:
         run_hook(tmp, {**event("ls"), "transcript_path": late})
         row = rows(log, 6)[5]
         assert row["host_model"] == "claude-late-1" and "error" not in row, row
+        # the redacted first stderr line reaches the log; the key fragment does not
+        (tmp / "cfg.json").write_text(json.dumps({"exit": 2, "stderr": "curl: (22) HTTP 429 api_key=ts_secret123"}))
+        run_hook(tmp, event("ls"))
+        row = rows(log, 7, tries=300)[6]
+        assert "jev exited 2" in row["error"] and "HTTP 429" in row["error"], row
+        assert "ts_secret123" not in row["error"], row
     ignored = subprocess.run(["git", "-C", str(SOURCE.parent), "check-ignore", "-q", "transcripts/_U-O5lYhJ7Q.md"])
     assert ignored.returncode == 0, "transcripts/ must be git-ignored"
 

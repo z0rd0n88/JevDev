@@ -69,6 +69,13 @@ def redact(text: str) -> str:
     return text
 
 
+def error_detail(e: BaseException, prefix: bool = True) -> str:
+    """Log text for a failed hook: the error, plus the redacted first jev stderr line when it has one."""
+    text = f"{type(e).__name__}: {e}" if prefix else str(e)
+    stderr = getattr(e, "stderr", "")
+    return f"{text} | {clip(redact(stderr))}" if stderr else text
+
+
 def is_risky(command: str) -> bool:
     """A risky segment that is not itself a dry run; one --dry-run no longer hides the rest of a chain."""
     return any(RISKY.search(seg) and not DRY_RUN.search(seg) for seg in SEGMENT.split(command))
@@ -509,7 +516,7 @@ def run_judge(log: Path, host: str) -> None:
                 row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
     except Exception as e:
         # Fails open; the error row keeps silent gaps visible.
-        row["error"] = f"{type(e).__name__}: {e}"
+        row["error"] = error_detail(e)
     append_row(log, row)
 
 

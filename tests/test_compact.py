@@ -22,6 +22,8 @@ state = sys.stdin.read()
 (here / "marker").write_text("called")
 (here / "rec.json").write_text(json.dumps({"argv": sys.argv[1:], "stdin": state}))
 cfg = json.loads((here / "cfg.json").read_text()) if (here / "cfg.json").exists() else {}
+if cfg.get("stderr"):
+    print(cfg["stderr"], file=sys.stderr)
 if cfg.get("exit"):
     sys.exit(cfg["exit"])
 a = {"switched_gears": 0.90, "at_boundary": 0.20, "needs_history": 0.40, "mid_operation": 0.10, **cfg}
@@ -374,6 +376,14 @@ def check_skips_and_errors() -> None:  # AC-4.4
         assert out == "" and rows[-1].get("error") and rows[-1]["printed"] is False, (
             rows
         )
+    d, tmp = fresh()
+    with d:
+        setup(tmp, {"exit": 2, "stderr": "curl: (22) HTTP 429 api_key=ts_secret123"})
+        out, rows = run(
+            tmp, "claude", event(tmp, write_lines(tmp, claude_lines(PROMPTS)))
+        )
+        err = rows[-1]["error"]
+        assert "jev exited 2" in err and "HTTP 429" in err and "ts_secret123" not in err, rows[-1]
     d, tmp = fresh()
     with d:
         setup(tmp)
