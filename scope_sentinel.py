@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from jev_patterns import call, input_tokens, model_name
+from jev_patterns import call, estimated_usd, input_tokens, model_name
 
 SENTINEL_VERSION = "shadow-v4"
 MAX_JUDGES = 4  # concurrent detached Jev calls; extra commands log a "skipped" row
@@ -256,6 +256,7 @@ def judge_write(rel_path: str, content: str) -> dict:
         "block_reason": block_reason,
         "elapsed": response["elapsed"],
         "input_tokens": input_tokens(response),
+        "estimated_usd": estimated_usd(response),
         "jev_model": response.get("model"),
     }
 
@@ -277,6 +278,7 @@ def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> di
         "block_reason": block_reason,
         "elapsed": response["elapsed"],
         "input_tokens": input_tokens(response),
+        "estimated_usd": estimated_usd(response),
         "jev_model": response.get("model"),
     }
 

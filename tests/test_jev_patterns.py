@@ -17,7 +17,15 @@ os.environ["JEV_BIN"] = str(TMP / "jev")
 sys.path.insert(0, str(ROOT))
 
 import jev_patterns  # noqa: E402
-from jev_patterns import NO_KEY, JevError, call, input_tokens, model_name  # noqa: E402
+from jev_patterns import (  # noqa: E402
+    NO_KEY,
+    PRICE_PER_MILLION_INPUT,
+    JevError,
+    call,
+    estimated_usd,
+    input_tokens,
+    model_name,
+)
 
 # Records argv, stdin, and its exact inherited environment, then answers from cfg.json.
 STUB = """#!/usr/bin/env python3
@@ -208,6 +216,8 @@ def check_helpers() -> None:
     assert jev_patterns.has_key()
     assert input_tokens({}) == 0 and input_tokens({"usage": None}) == 0
     assert input_tokens({"usage": {"input_tokens": None}}) == 0
+    assert estimated_usd({"usage": {"input_tokens": 1_000_000}}) == PRICE_PER_MILLION_INPUT
+    assert estimated_usd({}) == 0.0
     assert jev_patterns.JEV == TMP / "jev"
     assert isinstance(JevError("x"), RuntimeError)
 

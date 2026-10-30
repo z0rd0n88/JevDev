@@ -11,6 +11,7 @@ import time
 
 SOURCE = Path(__file__).parents[1] / "scope_sentinel.py"
 sys.path.insert(0, str(SOURCE.parent))
+import jev_patterns as ss_jp  # noqa: E402
 STUB = """#!/usr/bin/env python3
 import json, sys
 state = sys.stdin.read()
@@ -257,6 +258,8 @@ def check_bash_gate() -> None:
         assert row["repo"] == str(repo) and row["cwd"] == str(repo / "sub"), row
         assert row["jev_model"] == "typesafe/jev-stub-1" and row["host_model"] == "claude-test-1", row
         assert row["constraint_files"] == ["AGENTS.md"], row
+        assert row["input_tokens"] == 42, row
+        assert row["estimated_usd"] == row["input_tokens"] * ss_jp.PRICE_PER_MILLION_INPUT / 1_000_000, row
 
         # AC-1.3: the stub saw a JSON state with exactly four keys and the Phase 1 questions verbatim
         rec = json.loads((tmp / "rec.json").read_text())

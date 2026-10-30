@@ -10,6 +10,7 @@ import tempfile
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 import compact_advisor as ca  # noqa: E402
+import jev_patterns  # noqa: E402
 import scope_sentinel as ss  # noqa: E402
 
 ADVISOR = ROOT / "compact_advisor.py"
@@ -187,6 +188,7 @@ def check_claude_recommend() -> None:  # AC-4.1
             and isinstance(r["elapsed"], float)
             and r["model"] == "m-test"
         ), r
+        assert r["estimated_usd"] == r["input_tokens"] * jev_patterns.PRICE_PER_MILLION_INPUT / 1_000_000, r
         rec = json.loads((tmp / "rec.json").read_text())
         assert rec["argv"][rec["argv"].index("-m") + 1] == "m-test", rec["argv"]
         state = json.loads(rec["stdin"])
