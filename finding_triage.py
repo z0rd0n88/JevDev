@@ -105,13 +105,26 @@ BOLD = re.compile(r"^- \*\*(.+?)\*\*\s*(?:\([^)]*\))?:?\s*(.*)$")
 FIXER = re.compile(r"^([A-Z]+-?\d+)\s{2,}(fix-here|real-but-decided-elsewhere|refuted|skipped|open)\s{2,}(applied|no edit|skipped|open)\s+(.*)$")
 ATTR = re.compile(r"^\s*- \*{0,2}(Where|Location|Failure path|Description|Fix|Suggested fix|Evidence|Skeptic(?: confirmed by)?)\*{0,2}:\*{0,2}\s*(.*)$")
 ATTR_KEY = {"where": "where", "location": "where", "failure": "failure", "description": "failure", "fix": "fix", "suggested": "fix", "evidence": "evidence", "skeptic": "skeptic"}
-WHERE = re.compile(r"([\w./-]+\.\w{1,6}):(\d+)(?:-(\d+))?")
+WHERE = re.compile(r"([\w./-]+\.\w{1,6}):(\d+)(?:[-–—](\d+))?")  # reports use ASCII and en/em dashes for ranges
 PRIOR_REF = re.compile(r"\bFindings? (\d+(?:(?:,| and) \d+)*)")
-TOKEN = re.compile(r"(?:(?:sk|ghp|gho|ghu|github_pat|xox[a-z])[-_][A-Za-z0-9_-]{8,}|AKIA[A-Z0-9]{12,}|Bearer [A-Za-z0-9._-]{12,})")
+# Known key shapes (prefixed tokens, AWS, Google, JWT, PEM blocks) and generic `key=value` / `user:pass@` forms.
+# Every value class stops at quotes, commas, semicolons and whitespace so redacting a JSON document keeps it parseable.
+TOKEN = re.compile(
+    r"(?:(?:sk|ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|hf|glpat|npm|rpa)[-_][A-Za-z0-9_-]{8,}"
+    r"|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}"
+    r"|Bearer [A-Za-z0-9._-]{12,}"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----)",
+    re.S,
+)
+ASSIGNED = re.compile(r"(?i)\b([A-Za-z0-9_]*?(?:api[_-]?key|secret|token|password|passwd)[A-Za-z0-9_]*)(\s*[=:]\s*[\"']?)([^\"',;\s]{12,})")
+USERINFO = re.compile(r"(://)[^/\s:@\"']+:[^@\s\"']+@")
 
 
 def redact(text: str) -> str:
-    return TOKEN.sub("[REDACTED]", text)
+    text = TOKEN.sub("[REDACTED]", text)
+    text = ASSIGNED.sub(r"\1\2[REDACTED]", text)
+    return USERINFO.sub(r"\1[REDACTED]@", text)
 
 
 def section_verdict(heading: str) -> str | None:
@@ -231,16 +244,15 @@ def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, errors="replace", check=False).stdout
 
 
-def resolve_path(repo: Path, sha: str, path: str) -> str:
-    """A report may cite a bare file name; find it in the tree at `sha` when it is unique."""
+def resolve_path(repo: Path, sha: str, path: str) -> str | None:
+    """A report may cite a bare file name; find it in the tree at `sha`. None when it is absent or ambiguous."""
     if "/" in path:
         return path
     hits = [p for p in git(repo, "ls-tree", "-r", "--name-only", sha).splitlines() if p == path or p.endswith("/" + path)]
-    return hits[0] if len(hits) == 1 else path
+    return hits[0] if len(hits) == 1 else None
 
 
 def hunk(repo: Path, sha: str, path: str, start: int, end: int, context: int = HUNK_CONTEXT) -> str:
-    path = resolve_path(repo, sha, path)
     text = git(repo, "show", f"{sha}:{path}")
     if not text:
         return ""
@@ -251,7 +263,7 @@ def hunk(repo: Path, sha: str, path: str, start: int, end: int, context: int = H
 
 def blame(repo: Path, sha: str, path: str, start: int, end: int, pr_commits: set[str], at: datetime) -> dict:
     """Median age in days of the cited lines at `sha`, and the share of them written inside the PR."""
-    out = git(repo, "blame", "--line-porcelain", "-L", f"{start},{end}", sha, "--", resolve_path(repo, sha, path))
+    out = git(repo, "blame", "--line-porcelain", "-L", f"{start},{end}", sha, "--", path)
     ages, inside, total = [], 0, 0
     commit = None
     for line in out.splitlines():
@@ -276,25 +288,42 @@ def finding_state(f: dict, prior: list[dict], repo: Path | None, sha: str | None
         "prior_round": [{"id": p["id"], "severity": p.get("severity"), "title": p["title"], "where": p.get("where")} for p in prior],
         "hunk": "",
         "blame": None,
+        "state_error": None,
     }
-    if repo and sha and f.get("locations"):
-        path, start, end = f["locations"][0]
-        state["hunk"] = hunk(repo, sha, path, start, end)
-        state["blame"] = blame(repo, sha, path, start, end, pr_commits, at)
+    if not f.get("locations"):
+        state["state_error"] = "no location cited"
+        return state
+    if not (repo and sha):
+        state["state_error"] = "no checkout or commit to read"
+        return state
+    cited, start, end = f["locations"][0]
+    path = resolve_path(repo, sha, cited)
+    if path is None:
+        state["state_error"] = f"{cited} is absent or ambiguous at {sha[:8]}"
+        return state
+    state["hunk"] = hunk(repo, sha, path, start, end)
+    b = blame(repo, sha, path, start, end, pr_commits, at)
+    if not state["hunk"] or not b["lines"]:
+        state["state_error"] = f"{path}:{start}-{end} unreadable at {sha[:8]}"
+        state["hunk"] = ""
+        return state
+    state["blame"] = b
     return state
 
 
 # --- grading -------------------------------------------------------------------
 
 
-def label(answers: dict) -> dict:
+def label(answers: dict, has_blame: bool = True) -> dict:
+    """Labels from one finding's answers. Without blame evidence a finding is never called pre-existing."""
     intro = answers["introduced_by_this_diff"]["noul"]
     sev = SEVERITY[min(int(round(answers["severity"]["score"])), len(SEVERITY) - 1)]
-    pre_existing = 1 - intro >= PRE_EXISTING_AT
+    pre_existing = has_blame and 1 - intro >= PRE_EXISTING_AT
     return {
         "introduced_p": intro,
         "duplicate_p": answers["duplicate_of_prior_round"]["noul"],
         "mechanical_p": answers["fix_is_mechanical"]["noul"],
+        "severity_score": answers["severity"]["score"],
         "severity_jev": sev,
         "duplicate": answers["duplicate_of_prior_round"]["noul"] >= DUPLICATE_AT,
         "pre_existing": pre_existing,
@@ -311,7 +340,7 @@ def grade_round(findings: list[dict], prior: list[dict], *, repo=None, sha=None,
         state = finding_state(f, prior, repo, sha, set(pr_commits), at)
         r = call(state, FINDING_QUESTIONS, job=job, model=model)
         calls, usd, tokens = calls + 1, usd + _usd(r), tokens + _tokens(r)
-        graded.append({**f, **label(r["answers"]), "state_chars": len(str(state))})
+        graded.append({**f, **label(r["answers"], state["blame"] is not None), "blame": state["blame"], "state_error": state["state_error"], "state_chars": len(str(state))})
     round_state = {
         "round": [{"id": g["id"], "severity": g["severity"], "title": g["title"], "where": g.get("where")} for g in graded],
         "prior_round": [{"id": p["id"], "severity": p.get("severity"), "title": p["title"], "where": p.get("where")} for p in prior],
@@ -338,10 +367,15 @@ def grade_round(findings: list[dict], prior: list[dict], *, repo=None, sha=None,
 
 
 def converged(same_p: float | None, graded: list[dict]) -> bool:
-    """Loop stops when the round is materially the previous one and no new (non-duplicate) finding is HIGH or worse."""
+    """Loop stops when the round is materially the previous one and no new (non-duplicate, unrefuted) finding is HIGH or worse."""
     if same_p is None or same_p < SAME_ROUND_AT:
         return False
-    return not any(not g["duplicate"] and SEVERITY.index(g["severity_jev"]) >= SEVERITY.index("HIGH") for g in graded)
+    return not any(new_high(g) for g in graded)
+
+
+def new_high(g: dict) -> bool:
+    """A graded finding that would keep the loop open: not a duplicate, not refuted by the skeptic, HIGH or worse per Jev."""
+    return not g["duplicate"] and g.get("verdict") != "REFUTED" and SEVERITY.index(g["severity_jev"]) >= SEVERITY.index("HIGH")
 
 
 def _usd(r: dict) -> float:

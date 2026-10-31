@@ -1,0 +1,32 @@
+{
+  "pr": 1065,
+  "round": 2,
+  "note": "Hand labels for the dw-review round that followed the Multi-Agent Review of PR 1065. duplicate = same defect at the same place as a round-one finding (what the Jev question asks). follow_on = a new defect about a round-one subject, typically a missing test for its fix. prior = the round-one id, from the dw-review record's own 'Which of the 19 findings are closed' table (its 'Finding N' numbers are that table's ordinals, not ids). Rows F22-F25 are the skeptic's refuted items.",
+  "rows": {
+    "F1": {"duplicate": false, "follow_on": true, "prior": "FAIL-1", "reason": "new defect created by the FAIL-1 fix: reject() now needs the audit insert"},
+    "F2": {"duplicate": false, "follow_on": true, "prior": "SCHEMA-1", "reason": "latent defect in the SCHEMA-1 fix (regrole folding)"},
+    "F3": {"duplicate": false, "follow_on": true, "prior": "API-2", "reason": "new 500 after the API-2 fix removed the flag guard"},
+    "F4": {"duplicate": false, "follow_on": true, "prior": "MINT-1", "reason": "fix landed, no pinning test"},
+    "F5": {"duplicate": false, "follow_on": true, "prior": "MINT-2", "reason": "fix landed, no pinning test"},
+    "F6": {"duplicate": false, "follow_on": true, "prior": "API-1", "reason": "gate test covers 2 of 7 routes"},
+    "F7": {"duplicate": false, "follow_on": true, "prior": "CRYPTO-2", "reason": "fix landed, no test"},
+    "F8": {"duplicate": false, "follow_on": true, "prior": "SCHEMA-3", "reason": "fix landed, untested"},
+    "F9": {"duplicate": false, "follow_on": true, "prior": "CRYPTO-4", "reason": "fix landed, not asserted"},
+    "F10": {"duplicate": false, "follow_on": true, "prior": null, "reason": "ordinal 16 (country header) has no round-one id in the parsed report"},
+    "F11": {"duplicate": false, "follow_on": true, "prior": "SCHEMA-1", "reason": "test of the SCHEMA-1 fix cannot attribute the refusal"},
+    "F12": {"duplicate": false, "follow_on": true, "prior": "FAIL-2", "reason": "new edge created by the atomic-transition fix"},
+    "F13": {"duplicate": true, "follow_on": false, "prior": "FAIL-4", "reason": "same defect still present at eight pre-admission sites the fix missed"},
+    "F14": {"duplicate": false, "follow_on": true, "prior": "CRYPTO-1", "reason": "mislabelled timeout on one of the bounded calls"},
+    "F15": {"duplicate": false, "follow_on": true, "prior": "CRYPTO-3", "reason": "diagnostic write added by the fix is unchecked"},
+    "F16": {"duplicate": false, "follow_on": false, "prior": null, "reason": "new: swallowed exceptions with no log"},
+    "F17": {"duplicate": true, "follow_on": false, "prior": "CRYPTO-1", "reason": "same defect: getGenesisHash still has no bound"},
+    "F18": {"duplicate": false, "follow_on": true, "prior": "API-3", "reason": "rate-limit fix, test does not pin scope"},
+    "F19": {"duplicate": false, "follow_on": true, "prior": "SCHEMA-5", "reason": "index parity fix, DESC unrepresentable and untested"},
+    "F20": {"duplicate": false, "follow_on": true, "prior": "CRYPTO-1", "reason": "no service-level test for the timeout and cancellation fixes"},
+    "F21": {"duplicate": false, "follow_on": true, "prior": "API-4", "reason": "byte-cap fix, test cannot distinguish the check"},
+    "F22": {"duplicate": false, "follow_on": false, "prior": null, "reason": "refuted by the skeptic"},
+    "F23": {"duplicate": false, "follow_on": false, "prior": null, "reason": "refuted by the skeptic"},
+    "F24": {"duplicate": false, "follow_on": false, "prior": null, "reason": "refuted by the skeptic"},
+    "F25": {"duplicate": false, "follow_on": false, "prior": null, "reason": "refuted by the skeptic"}
+  }
+}

@@ -11,7 +11,7 @@ cached under .local/raw (gitignored); the corpus is one JSON row per (pr, round,
 from __future__ import annotations
 
 import argparse
-import difflib
+from collections.abc import Callable
 import glob
 import json
 import os
@@ -44,26 +44,39 @@ def sh(*args: str) -> str:
     return subprocess.run(list(args), capture_output=True, text=True, errors="replace", check=True).stdout
 
 
-def cached(path: Path, produce) -> str:
-    if not path.exists():
+CACHE = {"reused": 0, "fetched": 0}
+
+
+def cached(path: Path, produce: Callable[[], str]) -> str:
+    """Raw text under .local/raw, redacted before it touches disk, owner-readable only. Reused until --refresh."""
+    if path.exists():
+        CACHE["reused"] += 1
+    else:
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(0o700)
         path.write_text(redact(produce()))
+        path.chmod(0o600)
+        CACHE["fetched"] += 1
     return path.read_text()
 
 
+def raw_name(slug: str, n: int, kind: str) -> Path:
+    return RAW / f"{slug.replace('/', '-')}-pr-{n}-{kind}.json"
+
+
 def merged_prs(slug: str, limit: int, only: list[int]) -> list[dict]:
+    """The PR set is always fetched live; only per-PR detail is cached (keyed by repo so two repos never share PR N)."""
     fields = "number,title,mergedAt,headRefOid,headRefName,mergeCommit,commits"
     if only:
-        return [json.loads(cached(RAW / f"pr-{n}.json", lambda n=n: sh("gh", "pr", "view", str(n), "--repo", slug, "--json", fields))) for n in only]
-    text = cached(RAW / f"prs-merged-{limit}.json", lambda: sh("gh", "pr", "list", "--repo", slug, "--state", "merged", "--limit", str(limit), "--json", fields))
-    return json.loads(text)
+        return [json.loads(cached(raw_name(slug, n, "view"), lambda n=n: sh("gh", "pr", "view", str(n), "--repo", slug, "--json", fields))) for n in only]
+    return json.loads(sh("gh", "pr", "list", "--repo", slug, "--state", "merged", "--limit", str(limit), "--json", fields))
 
 
 def pr_comments(slug: str, n: int) -> list[dict]:
     """Issue comments, review bodies and review-thread comments, oldest first."""
     out = []
     for kind, route in (("issue", f"issues/{n}/comments"), ("review", f"pulls/{n}/reviews"), ("thread", f"pulls/{n}/comments")):
-        text = cached(RAW / f"pr-{n}-{kind}.json", lambda route=route: sh("gh", "api", "--paginate", f"repos/{slug}/{route}"))
+        text = cached(raw_name(slug, n, kind), lambda route=route: sh("gh", "api", "--paginate", f"repos/{slug}/{route}"))
         for c in json.loads(text):
             if c.get("body"):
                 out.append({"kind": kind, "author": c["user"]["login"], "ts": c.get("created_at") or c.get("submitted_at"), "body": c["body"]})
@@ -192,13 +205,8 @@ def build(pr: dict, sources: list[dict]) -> dict:
     rows = []
     for k, r in enumerate(rounds):
         prior = rounds[k - 1]["findings"] if k else []
-        nxt = rounds[k + 1]["findings"] if k + 1 < len(rounds) else None
         for f in r["findings"]:
-            num = int(re.sub(r"\D", "", f["id"]) or 0)
             ruling = next((fx["rulings"][f["id"]] for fx in fixers if f["id"] in fx["rulings"] and (fx["ts"] or "") >= (r["ts"] or "")), None)
-            restated = None
-            if nxt is not None:
-                restated = any(num in g["prior_refs"] or difflib.SequenceMatcher(None, f["title"], g["title"]).ratio() >= 0.6 for g in nxt)
             rows.append({
                 "pr": pr["number"],
                 "round": k + 1,
@@ -213,7 +221,6 @@ def build(pr: dict, sources: list[dict]) -> dict:
                 **f,
                 "prior_round": [{"id": p["id"], "severity": p["severity"], "title": p["title"], "where": p["where"]} for p in prior],
                 "fixer": ruling,
-                "restated_next_round": restated,
             })
     return {"pr": pr["number"], "title": pr["title"], "rounds": len(rounds), "fixer_reports": len(fixers), "rows": rows, "sources": [f"{s['kind']}:{s.get('ref', s['author'])}" for s in sources]}
 
@@ -226,7 +233,11 @@ def main() -> int:
     ap.add_argument("--pr", type=int, action="append", default=[])
     ap.add_argument("--out", default=str(LOCAL / "findings-corpus.jsonl"))
     ap.add_argument("--no-transcripts", action="store_true")
+    ap.add_argument("--refresh", action="store_true", help="drop the cached PR detail and comments for this repo and fetch again")
     a = ap.parse_args()
+    if a.refresh:
+        for p in RAW.glob(f"{a.repo_slug.replace('/', '-')}-pr-*.json"):
+            p.unlink()
     prs = merged_prs(a.repo_slug, a.limit, a.pr)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +257,7 @@ def main() -> int:
             print(f"PR {n:>5}  rounds={b['rounds']}  findings={len(b['rows']):>3}  with_verdict={verdicts:>3}  fixer_reports={b['fixer_reports']}  tools={','.join(tools) or '-'}  "
                   f"{'NO TOOL REVIEW FOUND  ' if not b['rows'] else ''}sources={len(b['sources'])}  {pr['title'][:50]}")
     print(f"\n{total} findings, {with_verdict} with a skeptic or finding-fixer verdict, {total - with_verdict} orphaned -> {out}")
+    print(f"raw cache: {CACHE['fetched']} fetched, {CACHE['reused']} reused from {RAW} (pass --refresh to refetch)")
     return 0
 
 
