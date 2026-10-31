@@ -6,7 +6,9 @@ the change implements, contradicts, leaves unaddressed, or defers the decision.
 """
 
 import argparse
+import html
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -17,7 +19,7 @@ CHOICES = ("implements", "contradicts", "unaddressed", "defers", "unclear")
 MAX_DIFF_BYTES = 1024 * 1024  # 1 MB
 
 SECRET = re.compile(
-    r"(?i)(authorization:\s*\S+\s+|bearer\s+|(?:token|secret|password|passwd|api[_-]?key)\w*[=:]\s*)\S+"
+    r"(?i)(authorization:[ \t]*\S+[ \t]+|bearer[ \t]+|(?:token|secret|password|passwd|api[_-]?key)\w*[=:][ \t]*)\S+"
     r"|://[^/\s:@]+:[^/\s@]+@"
     r"|\b(?:gh[pousr]_|github_pat_|sk-)[\w-]{10,}"
 )
@@ -69,7 +71,8 @@ def build_jev_questions() -> dict:
 
 
 def format_state_content(decision: str, diff: str) -> str:
-    """Format decision and untrusted diff into delimited XML tags."""
+    """Format decision and untrusted diff into delimited XML tags, escaping both so neither can close a tag."""
+    decision, diff = html.escape(decision, quote=False), html.escape(diff, quote=False)
     return f"<owner_decision>\n{decision}\n</owner_decision>\n\n<untrusted_diff_hunk>\n{diff}\n</untrusted_diff_hunk>"
 
 
@@ -94,8 +97,10 @@ def evaluate_drift(
     probs = answer.get("probabilities") or {}
     raw_conf = probs.get(choice, answer.get("confidence", 0.0))
     try:
-        confidence = float(raw_conf) if raw_conf is not None else 0.0
+        confidence = 0.0 if isinstance(raw_conf, bool) else float(raw_conf)
     except (ValueError, TypeError):
+        confidence = 0.0
+    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
         confidence = 0.0
 
     return {
@@ -137,7 +142,7 @@ def main():
         )
 
         if args.json:
-            print(json.dumps(result, indent=2))
+            print(json.dumps(result, indent=2, allow_nan=False))
         else:
             print(f"Decision: {args.decision}")
             print(f"Diff Size: {len(diff_content)} bytes")
