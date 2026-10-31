@@ -412,12 +412,12 @@ The 20-prompt bound is a JevDev addition: upstream's unbounded join is fine for 
 ```
 DEFAULT_LINES = {"notice": 80_000, "recommend": 110_000, "request": 160_000}
 
-decide_tier(answers: dict, tokens: int, lines: dict, state: dict) -> tuple[str, str]   # (tier, reason)
+decide_tier(answers: dict, tokens: int, lines: dict, prompts: list[str]) -> tuple[str, str]   # (tier, reason)
   if answers["mid_operation"]["noul"] > 0.6: return "silent", "mid operation"
   switched = answers["switched_gears"]["noul"] > 0.7
   boundary = answers["at_boundary"]["noul"] > 0.6 and answers["needs_history"]["score"] < 1
   if not switched and not boundary: return "silent", "same work continuing"
-  reason = (f'The task changed from "{trunc(state["previous_work"], 70)}" to "{trunc(state["current_request"], 70)}".' if switched
+  reason = (f'The task changed from "{trunc(redact(prompts[-2]), 70)}" to "{trunc(redact(prompts[-1]), 70)}".' if switched
             else "The last turn finished a unit of work and the next step needs little of the earlier context.")
   if tokens < lines["recommend"]: return "notice", reason
   if tokens < lines["request"]: return "recommend", reason
@@ -775,7 +775,7 @@ New file `install_user.py` (stdlib), idempotent, `--home PATH` (default `$HOME`)
   - Produces (`compact_advisor`):
     - `COMPACT_QUESTIONS: dict` (ids `switched_gears`, `at_boundary`, `needs_history`, `mid_operation`), `DEFAULT_LINES: dict`, `lines_from_env() -> dict`, `trunc(s: str, n: int) -> str`.
     - `build_state(scan: dict, last_assistant: str | None) -> dict` with the four §5.3 keys.
-    - `decide_tier(answers: dict, tokens: int, lines: dict, state: dict) -> tuple[str, str]`.
+    - `decide_tier(answers: dict, tokens: int, lines: dict, prompts: list[str]) -> tuple[str, str]`.
     - `tier_message(tier: str, reason: str, tokens: int, window: int | None) -> str | None`.
     - `run_hook(host: str, log: Path) -> None` reading stdin, writing the row, printing `{"systemMessage": …}` or nothing.
     - `scan_transcript` keys added in `scope_sentinel`: `tokens: int` (0 when absent), `window: int | None`, `last_assistant_text: str`, `tools_after_last_prompt: list[str]`, `compact_summary: str`.
@@ -785,7 +785,7 @@ New file `install_user.py` (stdlib), idempotent, `--home PATH` (default `$HOME`)
 - Non-goals: compacting on the agent's behalf; agy; percent-based tiers.
 - Depends on: Phase 1 (row conventions, `scope_sentinel` helpers)
 - Acceptance criteria:
-  - AC-4.1: Given a Claude transcript fixture with three user prompts (`add login`, `fix the test`, `now write the changelog`) and a last main-chain assistant entry whose four usage fields sum to 120 000, and a stub returning `switched_gears` 0.90, `at_boundary` 0.20, `needs_history` 0.40, `mid_operation` 0.10, when `hook claude` runs with the default lines, then stdout is exactly `{"systemMessage": "Recommended: compact now. Context is at 120k tokens. The task changed from \"add login\\nfix the test\" to \"now write the changelog\". Run /compact with a short note to yourself, then continue."}` and the row has `tier` `recommend`, `tokens` 120000, `window` null, `printed` true, `answers.needs_history` 0.4.
+  - AC-4.1: Given a Claude transcript fixture with three user prompts (`add login`, `fix the test`, `now write the changelog`) and a last main-chain assistant entry whose four usage fields sum to 120 000, and a stub returning `switched_gears` 0.90, `at_boundary` 0.20, `needs_history` 0.40, `mid_operation` 0.10, when `hook claude` runs with the default lines, then stdout is exactly `{"systemMessage": "Recommended: compact now. Context is at 120k tokens. The task changed from \"fix the test\" to \"now write the changelog\". Run /compact with a short note to yourself, then continue."}` and the row has `tier` `recommend`, `tokens` 120000, `window` null, `printed` true, `answers.needs_history` 0.4.
   - AC-4.2: Given a Codex rollout fixture whose last `token_count` has `total_tokens` 50 000 and `model_context_window` 258 400, when `hook codex` runs, then no Jev call is made (stub marker absent), stdout is empty, and the row has `tier` `silent`, `reason` `below the notice line`, `window` 258400; given `total_tokens` 170 000 and the AC-4.1 stub, then stdout is the request message containing `65.8% of the window`.
   - AC-4.3: Given the AC-4.1 stub answers, when `decide_tier` is called at tokens 80 000, 109 999, 110 000, 159 999, and 160 000, then the tiers are `notice`, `notice`, `recommend`, `recommend`, `request` respectively; when the hook runs at 79 999 tokens, then the stub is not called and the row is `silent` / `below the notice line`; and with `at_boundary` 0.70, `switched_gears` 0.10, `needs_history` 0.99 at 120 000 tokens the result is `recommend` with the boundary reason, while `needs_history` 1.0 yields `silent` / `same work continuing`.
   - AC-4.4: Given `mid_operation` 0.80, then `tier` `silent` with reason `mid operation` and empty stdout; given a single user prompt, then `silent` / `first request, nothing to move on from` with no Jev call; given a stub that exits 1, or a Codex event with `transcript_path` null, then exit 0, empty stdout, and a row with `error`; given `previous_work` built from 30 earlier prompts, then only the 20 most recent appear in the stub's state.

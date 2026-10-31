@@ -35,7 +35,7 @@ print(json.dumps({"model": "typesafe/jev-stub-1", "answers": {
 PROMPTS = ["add login", "fix the test", "now write the changelog"]
 AC41_OUT = (
     '{"systemMessage": "Recommended: compact now. Context is at 120k tokens. '
-    'The task changed from \\"add login\\nfix the test\\" to \\"now write the changelog\\". '
+    'The task changed from \\"fix the test\\" to \\"now write the changelog\\". '
     'Run /compact with a short note to yourself, then continue."}'
 )
 
@@ -159,7 +159,10 @@ def check_claude_recommend() -> None:  # AC-4.1
     with d:
         setup(tmp)
         out, rows = run(
-            tmp, "claude", event(tmp, write_lines(tmp, claude_lines(PROMPTS)))
+            tmp,
+            "claude",
+            event(tmp, write_lines(tmp, claude_lines(PROMPTS))),
+            {"JEV_MODEL": "m-test"},
         )
         assert out.strip() == AC41_OUT, out
         r = rows[-1]
@@ -180,9 +183,10 @@ def check_claude_recommend() -> None:  # AC-4.1
         assert (
             r["input_tokens"] == 33
             and isinstance(r["elapsed"], float)
-            and r["model"] == ca.model_name()
+            and r["model"] == "m-test"
         ), r
         rec = json.loads((tmp / "rec.json").read_text())
+        assert rec["argv"][rec["argv"].index("-m") + 1] == "m-test", rec["argv"]
         state = json.loads(rec["stdin"])
         assert list(state) == [
             "current_request",
@@ -278,7 +282,7 @@ def check_decide_tier() -> None:  # AC-4.3
         "needs_history": {"score": 0.40},
         "mid_operation": {"noul": 0.10},
     }
-    state = {"previous_work": "a", "current_request": "b"}
+    state = ["a", "b"]  # the prompts, oldest first
     got = [
         ca.decide_tier(ans, t, ca.DEFAULT_LINES, state)[0]
         for t in (80_000, 109_999, 110_000, 159_999, 160_000)
