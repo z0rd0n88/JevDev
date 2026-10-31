@@ -10,3 +10,7 @@ __pycache__/
 pilot-observations-*.jsonl
 pilot-score-*.json
 transcripts/
+
+# Claude Code and local agent worktrees
+.claude/worktrees/
+.worktrees/
