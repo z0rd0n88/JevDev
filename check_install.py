@@ -83,11 +83,11 @@ def trusted(state, config, event, i, j):
     return f"{config}:{event}:{i}:{j}" in state
 
 
-def codex_cell(found, state, config, event, ok="ok"):
+def codex_cell(found, state, config, event):
     if not found:
         return "missing"
     i, j = found[0][:2]
-    return ok if trusted(state, config, event, i, j) else "untrusted"
+    return "ok" if trusted(state, config, event, i, j) else "untrusted"
 
 
 def cli_cell(root):
@@ -164,7 +164,6 @@ def check(root, home, scope):
                 state,
                 cfg,
                 "pre_tool_use",
-                ok="ok (unavailable here)",
             ),
             "agy": ok(
                 find(

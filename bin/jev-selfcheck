@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Offline check for `jev`: asserts the request bodies it builds match the shapes
+# documented at docs.typesafe.ai / Cloudflare's typesafe/jev page. No API key needed.
+set -uo pipefail
+fail=0
+ck() { # ck <label> <expected-json> <actual-json>
+  if [ "$(jq -S . <<<"$2")" = "$(jq -S . <<<"$3")" ]; then
+    echo "ok   $1"
+  else
+    echo "FAIL $1"; diff <(jq -S . <<<"$2") <(jq -S . <<<"$3") | sed 's/^/     /'; fail=1
+  fi
+}
+
+ck noul \
+  '{"model":"jev-latest","state":"I want my money back","questions":{"q":{"type":"noul","instructions":"Does this request a refund?"}}}' \
+  "$(jev -n 'Does this request a refund?' 'I want my money back' 2>/dev/null)"
+
+ck choice \
+  '{"model":"jev-latest","state":"payouts failing","questions":{"q":{"type":"choice","instructions":"Which team?","criteria":{"billing":"billing","technical":"technical","sales":"sales"}}}}' \
+  "$(jev -n -c billing,technical,sales 'Which team?' 'payouts failing' 2>/dev/null)"
+
+ck score \
+  '{"model":"jev-latest","state":"this is the third time","questions":{"q":{"type":"score","instructions":"How frustrated?","criteria":["Calm","Frustrated","Very angry"]}}}' \
+  "$(jev -n -s 'Calm,Frustrated,Very angry' 'How frustrated?' 'this is the third time' 2>/dev/null)"
+
+ck raw \
+  '{"model":"jev-latest","state":"s","questions":{"a":{"type":"noul","instructions":"i"}}}' \
+  "$(jev -n -q '{"a":{"type":"noul","instructions":"i"}}' unused s 2>/dev/null)"
+
+ck model-flag \
+  '{"model":"jev-1.13.0","state":"s","questions":{"q":{"type":"noul","instructions":"i"}}}' \
+  "$(jev -n -m jev-1.13.0 i s 2>/dev/null)"
+
+# state from stdin, and a quoting hazard that would break hand-rolled JSON
+ck stdin-and-quoting \
+  '{"model":"jev-latest","state":"he said \"hi\"\\n\tand left","questions":{"q":{"type":"noul","instructions":"ok?"}}}' \
+  "$(printf 'he said "hi"\\n\tand left' | jev -n 'ok?' 2>/dev/null)"
+
+# The tutorial's state is a JSON object, not a string.
+ck object-state \
+  '{"model":"jev-latest","state":{"customer_tier":"enterprise","ticket":"blank screen"},"questions":{"q":{"type":"noul","instructions":"bug?"}}}' \
+  "$(jev -n 'bug?' '{"customer_tier":"enterprise","ticket":"blank screen"}' 2>/dev/null)"
+
+# A string that merely starts with { but is not valid JSON stays a string.
+ck malformed-brace-stays-string \
+  '{"model":"jev-latest","state":"{not json","questions":{"q":{"type":"noul","instructions":"q?"}}}' \
+  "$(jev -n 'q?' '{not json' 2>/dev/null)"
+
+jev -n 2>/dev/null; [ $? -eq 64 ] && echo "ok   no-args exits 64" || { echo "FAIL no-args exit"; fail=1; }
+
+# Key-prefix routing: -n reports the resolved route on stderr without calling it.
+route() { env -u TYPESAFE_API_KEY -u OPENROUTER_API_KEY -u JEV_BASE_URL "$@" \
+            jev -n i s 2>&1 >/dev/null | sed -n 's/^-> POST //p'; }
+for spec in "TYPESAFE_API_KEY=sk-or-x|https://openrouter.ai/api/v1/systemone" \
+            "TYPESAFE_API_KEY=vck_x|https://ai-gateway.vercel.sh/typesafe/v1/systemone" \
+            "TYPESAFE_API_KEY=ts_x|https://api.typesafe.ai/v1/systemone" \
+            "OPENROUTER_API_KEY=sk-or-y|https://openrouter.ai/api/v1/systemone" \
+            "TYPESAFE_API_KEY=ts_x JEV_BASE_URL=https://api.typesafe.ai/|https://api.typesafe.ai/v1/systemone" \
+            "TYPESAFE_API_KEY=sk-or-x JEV_BASE_URL=https://openrouter.ai/api|https://openrouter.ai/api/v1/systemone" \
+            "JEV_BASE_URL=http://127.0.0.1:8080 JEV_ALLOW_LOCAL=1|http://127.0.0.1:8080/v1/systemone"; do
+  kv=${spec%%|*}; want=${spec##*|}; got=$(route $kv)
+  [ "$got" = "$want" ] && echo "ok   route $kv -> ${want#https://}" \
+    || { echo "FAIL route $kv: want $want got ${got:-<none>}"; fail=1; }
+done
+
+# JEV_BASE_URL may only re-state the key's own https route, so it can never send the key elsewhere.
+for kv in "JEV_BASE_URL=https://example.test" \
+          "TYPESAFE_API_KEY=ts_x JEV_BASE_URL=https://api.typesafe.ai.evil.example" \
+          "TYPESAFE_API_KEY=ts_x JEV_BASE_URL=https://api.typesafe.ai@evil.example" \
+          "TYPESAFE_API_KEY=ts_x JEV_BASE_URL=http://api.typesafe.ai" \
+          "TYPESAFE_API_KEY=ts_x JEV_BASE_URL=https://openrouter.ai/api" \
+          "TYPESAFE_API_KEY=ts_x JEV_BASE_URL=http://127.0.0.1:8080"; do
+  env -u TYPESAFE_API_KEY -u OPENROUTER_API_KEY -u JEV_BASE_URL -u JEV_ALLOW_LOCAL $kv jev -n i s >/dev/null 2>&1
+  [ $? -eq 64 ] && echo "ok   refuse $kv" || { echo "FAIL refuse $kv: not exit 64"; fail=1; }
+done
+
+# A local route (opt-in) gets no Authorization header; the key's own route still gets it.
+fake=$(mktemp -d); trap 'rm -rf "$fake"' EXIT
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/args"\n{ [ -t 0 ] || cat; } >"%s/stdin"\necho "{\\"answers\\":{\\"q\\":{\\"noul\\":0.9}}}"\n' "$fake" "$fake" >"$fake/curl"
+chmod +x "$fake/curl"
+rm -f "$fake/args" "$fake/stdin"
+env -u OPENROUTER_API_KEY PATH="$fake:$PATH" TYPESAFE_API_KEY=ts_secret JEV_BASE_URL=http://localhost:9 JEV_ALLOW_LOCAL=1 \
+  jev i s >/dev/null 2>&1
+[ -f "$fake/args" ] && ! grep -qs ts_secret "$fake/args" "$fake/stdin" && echo "ok   local route sends no key" || { echo "FAIL local route was sent the key"; fail=1; }
+rm -f "$fake/args" "$fake/stdin"
+env -u OPENROUTER_API_KEY -u JEV_BASE_URL PATH="$fake:$PATH" TYPESAFE_API_KEY=ts_secret jev i s >/dev/null 2>&1
+grep -qs 'Bearer ts_secret' "$fake/stdin" && echo "ok   own route sends the key" || { echo "FAIL own route lost the key"; fail=1; }
+
+env -u TYPESAFE_API_KEY -u OPENROUTER_API_KEY jev i s >/dev/null 2>&1
+[ $? -eq 78 ] && echo "ok   no key exits 78" || { echo "FAIL no-key exit"; fail=1; }
+
+exit $fail

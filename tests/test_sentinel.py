@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -10,6 +11,7 @@ import time
 
 SOURCE = Path(__file__).parents[1] / "scope_sentinel.py"
 sys.path.insert(0, str(SOURCE.parent))
+import jev_patterns as ss_jp  # noqa: E402
 STUB = """#!/usr/bin/env python3
 import json, sys
 state = sys.stdin.read()
@@ -37,6 +39,8 @@ if cfg.get("append_to"):  # the host flushes its reply to the transcript while J
         f.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"model": "claude-late-1"}}) + "\\n")
 if cfg.get("sleep"):
     time.sleep(cfg["sleep"])
+if cfg.get("stderr"):
+    print(cfg["stderr"], file=sys.stderr)
 if cfg.get("exit"):
     sys.exit(cfg["exit"])
 if "kind" in json.loads(sys.argv[sys.argv.index("-q") + 1]):  # write gate: kind + contains_secret
@@ -154,6 +158,10 @@ def check_patterns() -> None:
     for text in ("git commit -m 'fix bearer token parsing'", "git checkout sk-feature-branch-name"):
         assert sentinel.redact(text) == text, "ordinary text must not be redacted"
     assert sentinel.redact("https://u:pw@host") == "https://u:[REDACTED]@host"
+    assert "ts_secret1234567890abcdef" not in sentinel.redact("key ts_secret1234567890abcdef")
+    assert "ts_abc-def-1234567890ab" not in sentinel.redact("key ts_abc-def-1234567890ab")
+    bare = subprocess.TimeoutExpired("jev", 1, stderr=b"boom")  # TimeoutExpired.stderr is bytes, not str
+    assert sentinel.error_detail(bare) == f"TimeoutExpired: {bare}", sentinel.error_detail(bare)
     start = time.perf_counter()
     for text in ("git -C " * 20000, "gh -R " * 20000, 'git -C "' * 20000, "find " * 20000):
         sentinel.is_risky(text)
@@ -187,12 +195,12 @@ def check_helpers() -> None:
         raise AssertionError("gate_bash must raise KeyError on a missing answer")
 
     claude = {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": "/w"}
-    assert s.tool_target(claude, "claude") == {"gate": "bash", "command": "ls", "cwd": "/w"}
+    assert s.tool_target(claude, "claude") == {"gate": "bash", "tool": "Bash", "command": "ls", "cwd": "/w"}
     assert s.tool_target({**claude, "tool_name": "Write"}, "claude") is None, "write branch lands in Phase 3"
     assert s.tool_target({"tool_name": "Read"}, "codex") is None
     assert s.tool_target(claude, "codex")["command"] == "ls"
     agy = {"toolCall": {"name": "run_command", "args": {"CommandLine": "ls", "Cwd": '"/w"'}}}
-    assert s.tool_target(agy, "agy") == {"gate": "bash", "command": "ls", "cwd": "/w"}, "agy Cwd quotes are stripped"
+    assert s.tool_target(agy, "agy") == {"gate": "bash", "tool": "run_command", "command": "ls", "cwd": "/w"}, "agy Cwd quotes are stripped"
     assert s.tool_target({"toolCall": {"name": "view_file", "args": {}}}, "agy") is None
 
     assert s.scan_transcript(Path("/nonexistent/t.jsonl"), "claude") == {"prompts": [], "last_model": None}
@@ -218,6 +226,51 @@ def check_helpers() -> None:
     assert s.host_model({"model": "gpt-x"}, "codex", {}) == "gpt-x"
     assert s.host_model({"modelName": "Gemini X"}, "agy", {}) == "Gemini X"
     assert s.host_model({}, "codex", {}) is None
+
+    # Subagent transcripts hold no typed prompt; the prompt is read from the session that spawned them.
+    root, child, mid = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b", "00000000-0000-0000-0000-00000000000c"
+    with tempfile.TemporaryDirectory() as d:
+        day = Path(d, "sessions/2026/10/29")
+        day.mkdir(parents=True)
+        Path(d, "sessions/2026/10/28").mkdir()
+        meta = lambda i, parent=None: {"type": "session_meta", "payload": {"id": i, "session_id": root, **({"parent_thread_id": parent} if parent else {})}}
+        (Path(d, "sessions/2026/10/28") / f"rollout-x-{root}.jsonl").write_text("\n".join(json.dumps(x) for x in [meta(root),
+            {"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "UserMessage", "content": [{"type": "text", "text": "placeholder"}]}}}]))
+        sub = day / f"rollout-x-{child}.jsonl"
+        sub.write_text("\n".join(json.dumps(x) for x in [meta(child, root),
+            {"type": "response_item", "payload": {"type": "agent_message", "author": "/root", "content": [{"type": "input_text", "text": "x"}]}}]))
+        assert s.latest_user_prompt(sub, "codex") == "placeholder", "a Codex subagent reads the root rollout's prompt"
+        (day / f"rollout-x-{mid}.jsonl").write_text(json.dumps(meta(mid, "../../x")))
+        assert s.latest_user_prompt(day / f"rollout-x-{mid}.jsonl", "codex") == "", "a parent id that is not a UUID is ignored"
+        cyc_a, cyc_b = "00000000-0000-0000-0000-0000000000a1", "00000000-0000-0000-0000-0000000000b1"
+        (day / f"rollout-x-{cyc_a}.jsonl").write_text(json.dumps(meta(cyc_a, cyc_b)))
+        (day / f"rollout-x-{cyc_b}.jsonl").write_text(json.dumps(meta(cyc_b, cyc_a)))
+        assert s.latest_user_prompt(day / f"rollout-x-{cyc_a}.jsonl", "codex") == "", "a parent cycle stops at the depth limit"
+
+        brain = Path(d, "brain")
+        def agy(cid, steps, parent=None, decoys=()):
+            gen = brain / cid / ".system_generated"
+            (gen / "logs").mkdir(parents=True)
+            (gen / "messages").mkdir()
+            (gen / "logs/transcript.jsonl").write_text("\n".join(json.dumps(x) for x in steps))
+            for i, tool in enumerate(decoys):  # sort before m.json, so taking the first message fails
+                (gen / f"messages/a{i}.json").write_text(json.dumps({"sender": "x", "recipient": cid, "content": "x",
+                    "sourceMetadata": {"tool": tool}}))
+            if parent:
+                (gen / "messages/m.json").write_text(json.dumps({"sender": parent, "recipient": cid, "content": "x",
+                    "sourceMetadata": {"tool": {"conversationId": parent, "toolCall": {"name": "invoke_subagent"}}}}))
+            return gen / "logs/transcript.jsonl"
+        agy(root, [{"type": "USER_INPUT", "content": "<USER_REQUEST>\nplaceholder\n</USER_REQUEST>"}])
+        system = {"type": "SYSTEM_MESSAGE", "source": "SYSTEM", "content": "<SYSTEM_MESSAGE>x</SYSTEM_MESSAGE>"}
+        agy(mid, [system], parent=root)
+        decoys = ({"conversationId": "00000000-0000-0000-0000-0000000000ee", "toolCall": {"name": "run_command"}}, "x", {"toolCall": "x"})
+        leaf = agy(child, [system, {"type": "PLANNER_RESPONSE", "source": "MODEL", "content": None}], parent=mid, decoys=decoys)
+        assert s.latest_user_prompt(leaf, "agy") == "placeholder", "an agy subagent reads its spawner's prompt, two levels up"
+        escaped = Path(d, "x/.system_generated/logs")  # where brain/../x would land
+        escaped.mkdir(parents=True)
+        (escaped / "transcript.jsonl").write_text(json.dumps({"type": "USER_INPUT", "content": "placeholder"}))
+        bad = agy("00000000-0000-0000-0000-00000000000d", [system], parent="../x")
+        assert s.latest_user_prompt(bad, "agy") == "", "an agy parent id that is not a UUID is ignored"
 
 
 def new_repo(tmp: Path, agents: str = "") -> Path:
@@ -253,6 +306,8 @@ def check_bash_gate() -> None:
         assert row["repo"] == str(repo) and row["cwd"] == str(repo / "sub"), row
         assert row["jev_model"] == "typesafe/jev-stub-1" and row["host_model"] == "claude-test-1", row
         assert row["constraint_files"] == ["AGENTS.md"], row
+        assert row["input_tokens"] == 42, row
+        assert row["estimated_usd"] == row["input_tokens"] * ss_jp.PRICE_PER_MILLION_INPUT / 1_000_000, row
 
         # AC-1.3: the stub saw a JSON state with exactly four keys and the Phase 1 questions verbatim
         rec = json.loads((tmp / "rec.json").read_text())
@@ -298,6 +353,12 @@ def check_bash_gate() -> None:
         run_hook(tmp, {**event("ls"), "transcript_path": late})
         row = rows(log, 6)[5]
         assert row["host_model"] == "claude-late-1" and "error" not in row, row
+        # the redacted first stderr line reaches the log; the key fragment does not
+        (tmp / "cfg.json").write_text(json.dumps({"exit": 2, "stderr": "curl: (22) HTTP 429 key ts_secret1234567890abcdef"}))
+        run_hook(tmp, event("ls"))
+        row = rows(log, 7, tries=300)[6]
+        assert "jev exited 2" in row["error"] and "HTTP 429" in row["error"], row
+        assert "ts_secret1234567890abcdef" not in row["error"], row
     ignored = subprocess.run(["git", "-C", str(SOURCE.parent), "check-ignore", "-q", "transcripts/_U-O5lYhJ7Q.md"])
     assert ignored.returncode == 0, "transcripts/ must be git-ignored"
 
@@ -339,7 +400,8 @@ def check_write_helpers() -> None:
     assert s.redact_count("plain text") == ("plain text", 0)
 
     wt = lambda tool, **inp: s.tool_target({"tool_name": tool, "tool_input": inp, "cwd": "/w"}, "claude")
-    assert wt("Write", file_path="/w/a", content="c") == {"gate": "write", "path": "/w/a", "content": "c", "cwd": "/w"}
+    assert wt("Write", file_path="/w/a", content="c") == \
+        {"gate": "write", "tool": "Write", "path": "/w/a", "content": "c", "cwd": "/w"}
     assert wt("Edit", file_path="/w/a", old_string="o", new_string="n")["content"] == "n"
     assert wt("Edit", file_path="/w/a", old_string="o", new_string="")["content"] == "", "a deleting edit is still a write"
     assert wt("NotebookEdit", notebook_path="/w/n.ipynb", new_source="src")["path"] == "/w/n.ipynb"
@@ -347,13 +409,16 @@ def check_write_helpers() -> None:
     assert wt("Read", file_path="/w/a") is None
     patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch"
     cx = lambda tool, cmd: s.tool_target({"tool_name": tool, "tool_input": {"command": cmd}, "cwd": "/w"}, "codex")
-    assert cx("apply_patch", patch) == {"gate": "write", "path": "README.md", "content": patch, "cwd": "/w"}
+    assert cx("apply_patch", patch) == \
+        {"gate": "write", "tool": "apply_patch", "path": "README.md", "content": patch, "cwd": "/w"}
     assert cx("apply_patch", "*** Begin Patch\n*** Add File: new.txt\n+x\n*** End Patch")["path"] == "new.txt"
     assert cx("apply_patch", "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch")["path"] == "old.txt"
-    assert cx("apply_patch", "no headers here") is None
+    assert cx("apply_patch", "no headers here") == \
+        {"gate": "write", "tool": "apply_patch", "path": None, "content": "no headers here", "cwd": "/w"}
+    assert cx("apply_patch_x", patch) is None and cx("apply_patch", None) is None
     agy = lambda name, **args: s.tool_target({"toolCall": {"name": name, "args": args}, "cwd": "/e"}, "agy")
     assert agy("write_to_file", TargetFile="/w/a", CodeContent="c", Cwd="'/w'") == \
-        {"gate": "write", "path": "/w/a", "content": "c", "cwd": "/w"}
+        {"gate": "write", "tool": "write_to_file", "path": "/w/a", "content": "c", "cwd": "/w"}
     assert agy("replace_file_content", TargetFile="/w/a", ReplacementContent="r")["content"] == "r"
     multi = agy("multi_replace_file_content", TargetFile="/w/a",
                 ReplacementChunks=[{"ReplacementContent": "x"}, {"ReplacementContent": "y"}])
@@ -385,6 +450,7 @@ def check_write_gate() -> None:
         assert list(questions) == ["kind", "contains_secret"], questions
         assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
         assert row["sentinel_version"] == "shadow-v4" and row["gate"] == "write" and "error" not in row, row
+        assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
         assert "content" not in row and "abc123" not in json.dumps(row), row
         assert row["would_block"] is True and row["block_reason"].startswith("contains a credential (0.90)"), row
@@ -406,11 +472,19 @@ def check_write_gate() -> None:
                        "cwd": str(repo)}, host="codex")
         row = rows(log, 3)[2]
         assert row["host"] == "codex" and row["gate"] == "write" and row["path"] == "README.md", row
+        assert row["tool"] == "apply_patch", row
         assert json.loads(json.loads(marker.read_text())["stdin"])["content"] == patch
+        marker.unlink()
+        run_hook(tmp, {"session_id": "c0", "tool_name": "apply_patch", "tool_input": {"command": "no headers here"},
+                       "cwd": str(repo)}, host="codex")
+        row = rows(log, 4)[3]
+        assert row["tool"] == "apply_patch" and row["gate"] == "write" and row["path"] is None, row
+        assert row["skipped"] == "no patch header" and "error" not in row and "would_block" not in row, row
+        assert not marker.exists(), "Jev must not be called for a headerless patch"
         run_hook(tmp, {"conversationId": "c1", "toolCall": {"name": "multi_replace_file_content", "args": {
             "TargetFile": str(repo / "a.txt"), "Cwd": json.dumps(str(repo)),
             "ReplacementChunks": [{"ReplacementContent": "x"}, {"ReplacementContent": "y"}]}}}, host="agy")
-        row = rows(log, 4)[3]
+        row = rows(log, 5)[4]
         assert json.loads(json.loads(marker.read_text())["stdin"])["content"] == "x\ny"
         assert row["host"] == "agy" and row["repo"] == str(repo) and row["path"] == "a.txt", row
         assert row["session_id"] == "c1" and "error" not in row, row
@@ -419,15 +493,68 @@ def check_write_gate() -> None:
         for target in ("/etc/hosts", str(repo)):
             marker.unlink(missing_ok=True)
             run_hook(tmp, write(target, "127.0.0.1 x"))
-            row = rows(log, 5 if target == "/etc/hosts" else 6)[-1]
+            row = rows(log, 6 if target == "/etc/hosts" else 7)[-1]
             assert row["would_block"] is True and row["block_reason"] == f"outside the repo: {target}", row
             assert row["gate"] == "write" and "kind" not in row and "content" not in row, row
             assert not marker.exists(), "Jev must not be called for an outside-repo write"
 
+        # the session's own scratchpad is allowed without a Jev call; another session's, or any other path, is not
+        sid, other = "11111111-2222-3333-4444-555555555555", "99999999-8888-7777-6666-555555555555"
+        pad = lambda s, uid=os.getuid(): f"/tmp/claude-{uid}/-home-alex-VistaMobileBE/{s}/scratchpad/notes.md"
+        marker.unlink(missing_ok=True)
+        run_hook(tmp, {**write(pad(sid), "hi"), "session_id": sid})
+        row = rows(log, 8)[-1]
+        assert row["scope"] == "scratchpad" and row["path"] == pad(sid) and row["gate"] == "write", row
+        assert "would_block" not in row and "block_reason" not in row and "error" not in row, row
+        assert not marker.exists(), "Jev must not be called for the session scratchpad"
+        run_hook(tmp, {**write(pad(sid), "hi"), "session_id": other})
+        row = rows(log, 9)[-1]
+        assert row["would_block"] is True and row["block_reason"] == f"outside the repo: {pad(sid)}", row
+        assert "scope" not in row, row
+        run_hook(tmp, {**write(pad(sid).replace("scratchpad/notes.md", "../../etc/x"), "x"), "session_id": sid})
+        row = rows(log, 10)[-1]
+        assert row["would_block"] is True and row["block_reason"].startswith("outside the repo") and "scope" not in row, row
+        run_hook(tmp, {**write(pad(sid, os.getuid() + 1), "x"), "session_id": sid})
+        row = rows(log, 11)[-1]
+        assert row["would_block"] is True and "scope" not in row, row
+        slug = Path(f"/tmp/claude-{os.getuid()}/test-sentinel-{os.getpid()}")
+        uid_dir = Path(f"/tmp/claude-{os.getuid()}")
+        made_uid_dir = not uid_dir.exists()
+        try:
+            (slug / sid).mkdir(parents=True)
+            (slug / sid / "link").symlink_to("/etc")
+            run_hook(tmp, {**write(str(slug / sid / "link" / "hosts"), "x"), "session_id": sid})
+            row = rows(log, 12)[-1]  # the judge is detached: keep the link until its row lands
+        finally:
+            shutil.rmtree(slug, ignore_errors=True)
+            if made_uid_dir:
+                shutil.rmtree(uid_dir, ignore_errors=True)
+        assert row["would_block"] is True and row["block_reason"].startswith("outside the repo") and "scope" not in row, row
+        run_hook(tmp, write("/home/alex/BotHaus/x.py", "x = 1"))
+        row = rows(log, 13)[-1]
+        assert row["would_block"] is True and row["block_reason"].startswith("outside the repo"), row
+        assert not marker.exists(), "Jev must not be called for an outside-repo write"
+
+        # a repo that lives inside the session scratchpad is still judged by Jev
+        padrepo = Path(f"/tmp/claude-{os.getuid()}/test-sentinel-repo-{os.getpid()}") / sid / "scratchpad" / "r"
+        try:
+            padrepo.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(padrepo)], check=True)
+            padrepo = padrepo.resolve()
+            (tmp / "cfg.json").write_text(json.dumps({"secret": 0.1}))
+            marker.unlink(missing_ok=True)
+            run_hook(tmp, {**write(str(padrepo / "x.py"), "x = 1"), "cwd": str(padrepo), "session_id": sid})
+            row = rows(log, 14)[-1]
+        finally:
+            shutil.rmtree(padrepo.parents[2], ignore_errors=True)
+            if made_uid_dir:
+                shutil.rmtree(uid_dir, ignore_errors=True)
+        assert marker.exists() and "scope" not in row and row["path"] == "x.py", row
+
         # fail open: a failing jev leaves an attributable error row
         (tmp / "cfg.json").write_text(json.dumps({"exit": 1}))
         run_hook(tmp, write(str(repo / "n.txt"), "hello"))
-        row = rows(log, 7)[-1]
+        row = rows(log, 15)[-1]
         assert row["gate"] == "write" and "jev exited 1" in row["error"] and "would_block" not in row, row
 
 

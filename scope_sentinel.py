@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from jev_patterns import call, input_tokens, model_name
+from jev_patterns import call, estimated_usd, input_tokens, model_name
 
 SENTINEL_VERSION = "shadow-v4"
 MAX_JUDGES = 4  # concurrent detached Jev calls; extra commands log a "skipped" row
@@ -35,6 +35,7 @@ RISKY = re.compile(
     r"|\bfind\b" + _NEAR + r"\s-delete\b"
 )
 DRY_RUN = re.compile(r"\s--dry-run\b")
+SCRATCHPAD = re.compile(rf"^/tmp/claude-{os.getuid()}/[^/]+/([0-9a-f-]{{36}})/")
 SEGMENT = re.compile(r"&&|\|\||[;|\n]")
 _VALUE = r"""[^\s'"]+"""
 # Each pattern keeps group 1 (possibly empty) and replaces the rest of the match.
@@ -48,6 +49,7 @@ SECRETS = [re.compile(p) for p in (
     r"(://[^/\s:@]+:)[^/\s@]+(?=@)",
     r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
     r"()\bsk-(?=[\w-]*\d)[\w-]{20,}",
+    r"()\bts_[\w-]{16,}",
     r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
     r"()\bxox[abposr]-[\w-]{10,}",
 )]
@@ -55,6 +57,7 @@ TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-c
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
 AGY_REQUEST = re.compile(r"<USER_REQUEST>(.*?)</USER_REQUEST>", re.S)
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>")
 # A typed slash command: a skill opens with <command-message> and counts as "/name args"; a built-in opens with
 # <command-name> and is not a task ("/exit", "/model opus"), except the instructions given to /compact.
@@ -67,6 +70,13 @@ def redact(text: str) -> str:
     for pattern in SECRETS:
         text = pattern.sub(lambda m: f"{m.group(1)}[REDACTED]", text)
     return text
+
+
+def error_detail(e: BaseException, prefix: bool = True) -> str:
+    """Log text for a failed hook: the error, plus the redacted first jev stderr line when it has one."""
+    text = f"{type(e).__name__}: {e}" if prefix else str(e)
+    stderr = getattr(e, "stderr", "")
+    return f"{text} | {clip(redact(stderr))}" if isinstance(stderr, str) and stderr else text
 
 
 def is_risky(command: str) -> bool:
@@ -247,6 +257,7 @@ def judge_write(rel_path: str, content: str) -> dict:
         "block_reason": block_reason,
         "elapsed": response["elapsed"],
         "input_tokens": input_tokens(response),
+        "estimated_usd": estimated_usd(response),
         "jev_model": response.get("model"),
     }
 
@@ -268,6 +279,7 @@ def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> di
         "block_reason": block_reason,
         "elapsed": response["elapsed"],
         "input_tokens": input_tokens(response),
+        "estimated_usd": estimated_usd(response),
         "jev_model": response.get("model"),
     }
 
@@ -314,11 +326,33 @@ def _blocks(content, kind: str) -> list[dict]:
     return [b for b in content if isinstance(b, dict) and b.get("type") == kind] if isinstance(content, list) else []
 
 
-def scan_transcript(transcript: Path, host: str = "claude") -> dict:
+def parent_transcript(transcript: Path, host: str, codex_parent=None):
+    """Transcript of the session that spawned this subagent session, or None. A subagent's transcript holds no typed
+    prompt: Codex names the parent in session_meta, agy in the invoke_subagent message that started the conversation."""
+    parent = codex_parent
+    if host == "agy":
+        for message in sorted((transcript.parent.parent / "messages").glob("*.json")):
+            try:
+                tool = (json.loads(message.read_text()).get("sourceMetadata") or {}).get("tool") or {}
+                if (tool.get("toolCall") or {}).get("name") == "invoke_subagent":
+                    parent = tool.get("conversationId")
+                    break
+            except (OSError, ValueError, AttributeError):
+                continue
+    if not isinstance(parent, str) or not UUID.fullmatch(parent) or len(transcript.parents) < 4:
+        return None
+    root = transcript.parents[3]  # Codex: sessions/<y>/<m>/<d>/rollout; agy: brain/<id>/.system_generated/logs/transcript
+    if host == "codex":
+        return next(root.glob(f"*/*/*/rollout-*-{parent}.jsonl"), None)
+    return root / parent / transcript.parent.parent.name / transcript.parent.name / transcript.name
+
+
+def scan_transcript(transcript: Path, host: str = "claude", follow_parent: bool = False, depth: int = 0) -> dict:
     """One pass over a host transcript: typed prompts, the Claude model of the last main-chain reply, and
     (Claude and Codex only) the compaction-advisor inputs: tokens, window, last reply text, tools used since the
-    last prompt, and the last compact summary."""
-    prompts, last_model = [], None
+    last prompt, and the last compact summary. With follow_parent, a Codex or agy subagent transcript borrows its
+    spawner's prompts (the sentinel); the advisor leaves it off, since tokens and turns stay the subagent's."""
+    prompts, last_model, codex_parent = [], None, None
     user_text = {"codex": codex_user_text, "agy": agy_user_text}.get(host, claude_user_text)
     extra = {"tokens": 0, "window": None, "last_assistant_text": "", "tools_after_last_prompt": [], "compact_summary": ""}
     try:
@@ -353,7 +387,9 @@ def scan_transcript(transcript: Path, host: str = "claude") -> dict:
                     extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(msg.get("content"), "text"))
                     extra["tools_after_last_prompt"] += [b.get("name", "") for b in _blocks(msg.get("content"), "tool_use")]
             elif host == "codex":
-                if entry.get("type") == "event_msg" and payload.get("type") == "token_count":
+                if entry.get("type") == "session_meta":
+                    codex_parent = codex_parent or payload.get("parent_thread_id")
+                elif entry.get("type") == "event_msg" and payload.get("type") == "token_count":
                     info = payload.get("info") or {}
                     extra["tokens"] = int((info.get("last_token_usage") or {}).get("total_tokens") or 0)
                     window = info.get("model_context_window")
@@ -363,11 +399,15 @@ def scan_transcript(transcript: Path, host: str = "claude") -> dict:
                         extra["tools_after_last_prompt"].append(payload.get("name", ""))
                     elif payload.get("type") == "message" and payload.get("role") == "assistant":
                         extra["last_assistant_text"] = "\n".join(b.get("text", "") for b in _blocks(payload.get("content"), "output_text"))
+    if follow_parent and not prompts and host in ("codex", "agy") and depth < 3:
+        parent = parent_transcript(transcript, host, codex_parent)
+        if parent:
+            prompts = scan_transcript(parent, host, True, depth + 1)["prompts"]
     return {"prompts": prompts, "last_model": last_model, **({} if host == "agy" else extra)}
 
 
 def user_prompts(transcript: Path, host: str = "claude") -> list[str]:
-    return scan_transcript(transcript, host)["prompts"]
+    return scan_transcript(transcript, host, follow_parent=True)["prompts"]
 
 
 def latest_user_prompt(transcript: Path, host: str = "claude") -> str:
@@ -417,8 +457,8 @@ def _unquote(text):
 
 
 def tool_target(event: dict, host: str):
-    """What a pre-tool event acts on: {"gate": "bash", "command", "cwd"}, {"gate": "write", "path", "content", "cwd"},
-    or None for any other tool."""
+    """What a pre-tool event acts on: {"gate": "bash", "tool", "command", "cwd"}, {"gate": "write", "tool", "path",
+    "content", "cwd"} (path None for a Codex patch with no file header), or None for any other tool."""
     name, args = event.get("tool_name"), event.get("tool_input") or {}
     cwd, path, content = event.get("cwd"), None, None
     if host == "agy":
@@ -427,7 +467,8 @@ def tool_target(event: dict, host: str):
         cwd = _unquote(args.get("Cwd")) or cwd
         if name == "run_command":
             command = args.get("CommandLine")
-            return {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()} if isinstance(command, str) else None
+            return {"gate": "bash", "tool": name, "command": command, "cwd": cwd or os.getcwd()} \
+                if isinstance(command, str) else None
         path = args.get("TargetFile")
         if name == "write_to_file":
             content = args.get("CodeContent")
@@ -441,7 +482,8 @@ def tool_target(event: dict, host: str):
             return None
     elif name == "Bash":
         command = args.get("command")
-        return {"gate": "bash", "command": command, "cwd": cwd or os.getcwd()} if isinstance(command, str) else None
+        return {"gate": "bash", "tool": name, "command": command, "cwd": cwd or os.getcwd()} \
+            if isinstance(command, str) else None
     elif host == "codex" and name == "apply_patch":
         content = args.get("command")
         match = PATCH_HEADER.search(content) if isinstance(content, str) else None
@@ -450,9 +492,11 @@ def tool_target(event: dict, host: str):
         path, content = {"Write": ("file_path", "content"), "Edit": ("file_path", "new_string"),
                          "NotebookEdit": ("notebook_path", "new_source")}[name]
         path, content = args.get(path), args.get(content)
+    if host == "codex" and name == "apply_patch" and path is None and isinstance(content, str):
+        return {"gate": "write", "tool": name, "path": None, "content": content, "cwd": cwd or os.getcwd()}
     if not isinstance(path, str) or not path or not isinstance(content, str):
         return None
-    return {"gate": "write", "path": path, "content": content, "cwd": cwd or os.getcwd()}
+    return {"gate": "write", "tool": name, "path": path, "content": content, "cwd": cwd or os.getcwd()}
 
 
 def run_hook(log: Path, host: str, user: bool = False) -> None:
@@ -489,13 +533,13 @@ def run_judge(log: Path, host: str) -> None:
         target = tool_target(event, host)
         root = repo_root(target["cwd"])
         row.update(session_id=event.get("session_id") or event.get("conversationId"), gate=target["gate"],
-                   cwd=target["cwd"], repo=str(root), host_model=host_model(event, host, {}))
+                   tool=target["tool"], cwd=target["cwd"], repo=str(root), host_model=host_model(event, host, {}))
         transcript = event.get("transcript_path") or event.get("transcriptPath")
         if target["gate"] == "write":
             judge_write_event(row, event, host, target, root, transcript, log)
         else:
             row.update(command=clip(redact(target["command"])), risky=is_risky(target["command"]))
-            scan = scan_transcript(Path(transcript or event["transcriptPath"]), host)
+            scan = scan_transcript(Path(transcript or event["transcriptPath"]), host, follow_parent=True)
             row["host_model"] = host_model(event, host, scan)
             row["instruction"] = clip(redact((scan["prompts"] or [""])[-1]))
             if not row["instruction"]:
@@ -509,13 +553,25 @@ def run_judge(log: Path, host: str) -> None:
                 row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
     except Exception as e:
         # Fails open; the error row keeps silent gaps visible.
-        row["error"] = f"{type(e).__name__}: {e}"
+        row["error"] = error_detail(e)
     append_row(log, row)
+
+
+def is_scratchpad(path: str, cwd: str, session_id) -> bool:
+    """True for a path under this session's own Claude scratchpad, never another session's; `..` and symlinks are resolved first."""
+    match = SCRATCHPAD.match(os.path.realpath(os.path.join(cwd, path)))
+    return bool(match) and match.group(1) == session_id
 
 
 def judge_write_event(row: dict, event: dict, host: str, target: dict, root: Path, transcript, log: Path) -> None:
     """Fill the write row: local outside-repo block, else a redacted Jev judgement. Content is never logged."""
+    if target["path"] is None:
+        row.update(path=None, skipped="no patch header")
+        return
     rel = inside_repo(target["path"], target["cwd"], root)
+    if rel is None and is_scratchpad(target["path"], target["cwd"], row.get("session_id")):
+        row.update(path=target["path"], scope="scratchpad")
+        return
     if transcript:
         row["host_model"] = host_model(event, host, scan_transcript(Path(transcript), host))
     if rel is None:

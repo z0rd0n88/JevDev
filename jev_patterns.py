@@ -64,6 +64,13 @@ def input_tokens(response: dict) -> int:
     return int((response.get("usage") or {}).get("input_tokens") or 0)
 
 
+PRICE_PER_MILLION_INPUT = 0.042
+
+
+def estimated_usd(response: dict) -> float:
+    return input_tokens(response) * PRICE_PER_MILLION_INPUT / 1_000_000
+
+
 def call(
     state,
     questions: dict,

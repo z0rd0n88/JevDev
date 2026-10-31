@@ -19,7 +19,7 @@ import time
 
 import yaml
 
-from jev_patterns import call, input_tokens, model_name
+from jev_patterns import PRICE_PER_MILLION_INPUT, call, input_tokens, model_name
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
@@ -31,7 +31,6 @@ SHARD_SIZE = 255
 EXCERPT = 700
 GATE_THRESHOLD = 0.30
 FITS_THRESHOLD = 0.30
-PRICE_PER_MILLION_INPUT = 0.042
 GATES = {
     "acts_on_user_system": "Is the assistant being asked to act on the user's files, accounts, devices, or online services, rather than only to explain or advise?",
     "would_follow_documented_procedure": "Would a careful expert answering this consult a specific documented procedure or set of commands, rather than answering from general understanding?",

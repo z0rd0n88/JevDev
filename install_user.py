@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Idempotent user-scope installer for the Jev gates, advisor, and skills (Codex and agy).
 
-Writes under --home only: ~/.codex/hooks.json, ~/.gemini/config/hooks.json, four skill symlinks, and
+Writes under --home only: ~/.codex/hooks.json, ~/.gemini/config/hooks.json, four skill symlinks, two ~/.local/bin symlinks, and
 ~/.local/state/jevdev. The Claude part lives in the ClaudeConfig repo, so it is printed, never applied.
 """
 
@@ -13,6 +13,7 @@ import sys
 
 OWNED = ("scope_sentinel.py", "compact_advisor.py")
 SKILLS = ("hyper-jev", "ask-jev")
+BIN = ("jev", "jev-selfcheck")
 LINK_DIRS = (".agents/skills", ".gemini/antigravity-cli/skills")
 AGY_WRITE = "write_to_file|replace_file_content|multi_replace_file_content"
 
@@ -102,28 +103,33 @@ def write_json(path, data):
 
 
 def link_plan(home, jevdev, removing):
-    """(link, target, action) per skill link; raises Refused before anything is touched."""
+    """(link, target, action) per skill and bin link; raises Refused before anything is touched."""
+    pairs = [
+        (home / d / name, jevdev / ".agents/skills" / name)
+        for d in LINK_DIRS
+        for name in SKILLS
+    ] + [(home / ".local/bin" / name, jevdev / "bin" / name) for name in BIN]
     plan = []
-    for d in LINK_DIRS:
-        for name in SKILLS:
-            link, target = home / d / name, jevdev / ".agents/skills" / name
-            if link.is_symlink():
-                ours = str(link.readlink()).startswith(str(jevdev))
-                action = (
-                    "remove"
-                    if removing and ours
-                    else "keep"
-                    if removing or link.readlink() == target
-                    else "relink"
-                )
-            elif link.exists():
-                if not removing:
-                    kind = "directory" if link.is_dir() else "file"
-                    raise Refused(f"refusing to replace a real {kind}: {link}")
-                action = "keep"
-            else:
-                action = "keep" if removing else "create"
-            plan.append((link, target, action))
+    for link, target in pairs:
+        if not removing and not target.exists():
+            raise Refused(f"refusing to link to a missing target: {target}")
+        if link.is_symlink():
+            ours = str(link.readlink()).startswith(str(jevdev))
+            action = (
+                "remove"
+                if removing and ours
+                else "keep"
+                if removing or link.readlink() == target
+                else "relink"
+            )
+        elif link.exists():
+            if not removing:
+                kind = "directory" if link.is_dir() else "file"
+                raise Refused(f"refusing to replace a real {kind}: {link}")
+            action = "keep"
+        else:
+            action = "keep" if removing else "create"
+        plan.append((link, target, action))
     return plan
 
 
