@@ -103,10 +103,12 @@ def test_redacts_tokens() -> None:
     }
     for raw, want in cases.items():
         assert ft.redact(raw) == want, (raw, ft.redact(raw))
-    doc = {"body": 'token="ghp_abcdefghijklmnop", pw=password=abcdefghijklmnop; ok', "n": 1}
+    doc = {"body": 'token="ghp_abcdefghijklmnop", pw=password=abcdefghijklmn0p; ok', "n": 1}
     out = json.loads(ft.redact(json.dumps(doc)))  # redacting a JSON document keeps it parseable
-    assert out["n"] == 1 and "ghp_" not in out["body"] and "abcdefghijklmnop" not in out["body"], out
-    assert ft.redact("WithdrawalService.kt:1224-1231 reads skip_question and the ok_token") == "WithdrawalService.kt:1224-1231 reads skip_question and the ok_token"
+    assert out["n"] == 1 and "ghp_" not in out["body"] and "abcdefghijklmn0p" not in out["body"], out
+    assert ft.redact("password=abcdefghijklmnop") == "password=abcdefghijklmnop"  # no digit: treated as a word, not a secret
+    for plain in ("WithdrawalService.kt:1224-1231 reads skip_question and the ok_token", "ask_jev_files.py files -q ask-jev", "token: WITHDRAWAL_STORE_UNAVAILABLE is the 503 vocabulary"):
+        assert ft.redact(plain) == plain, ft.redact(plain)
 
 
 def test_resolves_bare_paths_and_reads_blame_from_a_repo() -> None:
