@@ -10,6 +10,8 @@ import threading
 
 
 SOURCE = Path(__file__).parents[1] / "skill_router.py"
+# Test the repo's jev, not whatever is installed; JEV resolves at import, so set it first.
+os.environ.setdefault("JEV_BIN", str(SOURCE.parent / "bin/jev"))
 sys.path.insert(0, str(SOURCE.parent))
 spec = importlib.util.spec_from_file_location("skill_router", SOURCE)
 router = importlib.util.module_from_spec(spec)
