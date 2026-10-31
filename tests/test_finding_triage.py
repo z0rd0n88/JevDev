@@ -106,7 +106,9 @@ def test_redacts_tokens() -> None:
     doc = {"body": 'token="ghp_abcdefghijklmnop", pw=password=abcdefghijklmn0p; ok', "n": 1}
     out = json.loads(ft.redact(json.dumps(doc)))  # redacting a JSON document keeps it parseable
     assert out["n"] == 1 and "ghp_" not in out["body"] and "abcdefghijklmn0p" not in out["body"], out
-    assert ft.redact("password=abcdefghijklmnop") == "password=abcdefghijklmnop"  # no digit: treated as a word, not a secret
+    assert ft.redact("password=abcdefghijklmnop") == "password=[REDACTED]"  # only all-caps constants are exempt
+    escaped = json.loads(ft.redact(json.dumps({"b": "x\nghp_abcdefghijklmnop", "c": "t\tvck_abcdefghijklmnop"})))
+    assert escaped == {"b": "x\n[REDACTED]", "c": "t\t[REDACTED]"}, escaped  # a JSON escape before the prefix is not a word
     for plain in ("WithdrawalService.kt:1224-1231 reads skip_question and the ok_token", "ask_jev_files.py files -q ask-jev", "token: WITHDRAWAL_STORE_UNAVAILABLE is the 503 vocabulary"):
         assert ft.redact(plain) == plain, ft.redact(plain)
 

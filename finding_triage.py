@@ -110,15 +110,15 @@ PRIOR_REF = re.compile(r"\bFindings? (\d+(?:(?:,| and) \d+)*)")
 # Known key shapes (prefixed tokens, AWS, Google, JWT, PEM blocks) and generic `key=value` / `user:pass@` forms.
 # Every value class stops at quotes, commas, semicolons and whitespace so redacting a JSON document keeps it parseable.
 TOKEN = re.compile(
-    r"(?:\b(?:sk|ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|hf|glpat|npm|rpa)[-_][A-Za-z0-9_-]{8,}"
+    r"(?:(?:(?<![A-Za-z0-9])|(?<=\\[nrt]))(?:sk|ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|hf|glpat|npm|rpa)[-_][A-Za-z0-9_-]{8,}"
     r"|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}"
     r"|Bearer [A-Za-z0-9._-]{12,}"
     r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----)",
     re.S,
 )
-# The value must carry a digit and a lowercase letter, so `token: WITHDRAWAL_STORE_UNAVAILABLE` (an error-code constant) stays.
-ASSIGNED = re.compile(r"(?i)\b([A-Za-z0-9_]*?(?:api[_-]?key|secret|token|password|passwd)[A-Za-z0-9_]*)(\s*[=:]\s*[\"']?)((?=[^\"',;\s]*\d)(?=[^\"',;\s]*[a-z])[^\"',;\s]{12,})")
+# Only an all-caps constant is exempt (`token: WITHDRAWAL_STORE_UNAVAILABLE` is an error code, not a secret).
+ASSIGNED = re.compile(r"(?i)\b([A-Za-z0-9_]*?(?:api[_-]?key|secret|token|password|passwd)[A-Za-z0-9_]*)(\s*[=:]\s*[\"']?)((?-i:(?![A-Z0-9_]+(?:[\"',;\s]|$)))[^\"',;\s]{12,})")
 USERINFO = re.compile(r"(://)[^/\s:@\"']+:[^@\s\"']+@")
 
 
