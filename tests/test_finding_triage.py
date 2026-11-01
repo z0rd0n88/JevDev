@@ -141,15 +141,17 @@ def test_redaction_leaves_code_and_constants_alone() -> None:
         "tokenizer = AutoTokenizer.from_pretrained(path)", "secretary: somebodyelse1234",
         "token: `WITHDRAWAL_STORE_UNAVAILABLE`", "the token: WITHDRAWAL_STORE_UNAVAILABLE.",
         'val token = request.headers["Authorization"]', "secret = System.getenv(name)", "token = config.authHeaderName",
-        "http://localhost:8080/api/@me",
+        "http://localhost:8080/api/@me", "http://localhost:8080/@me",
     ):
         assert ft.redact(plain) == plain, (plain, ft.redact(plain))
     assert ft.redact("postgres://alex:s3cretpassw0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"
     assert ft.redact("postgres://alex:pa/ss?w0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"  # a raw slash in a password
+    assert ft.redact("postgres://alex:2024/pw@db") == "postgres://[REDACTED]@db"  # digits first, but the `@` does not open a path segment
+    assert ft.redact("postgres://alex:p@ss@db/x") == "postgres://[REDACTED]@db/x"  # a raw `@` in a password
 
 
 def test_redaction_exempts_only_a_whole_value_that_names_something() -> None:
-    for raw in ("password=abcdefgh(ijklmnop1234", "password=hunter[2hunter2hunter2", "token=ABC_DEF/xyz123456789", "token=ABC_DEF.real1234567", "secret=abcdefgh.ijklmnop/qrst"):
+    for raw in ("password=abcdefgh(ijklmnop1234", "password=hunter[2hunter2hunter2", "token=ABC_DEF/xyz123456789", "token=ABC_DEF.real1234567", "secret=abcdefgh.ijklmnop/qrst", "password=abc(hunter2hunter2)", "token=abcdefgh[xyz1234567]"):
         assert ft.redact(raw).endswith("=[REDACTED]"), (raw, ft.redact(raw))
     assert ft.redact_json({"password": "ABC_DEF correct horse", "token": "getenv(x) real1234"}) == {"password": "[REDACTED]", "token": "[REDACTED]"}
     assert ft.redact_json({"ghp_abcdefghijklmnop": 1}) == {"[REDACTED]": 1}  # a key can hold a token too
@@ -158,6 +160,7 @@ def test_redaction_exempts_only_a_whole_value_that_names_something() -> None:
 def test_redaction_stays_fast_on_a_long_run_of_keywords() -> None:
     start = time.perf_counter()
     ft.redact("token" * 13000)
+    ft.redact("http://a:1/" * 20000)
     assert time.perf_counter() - start < 1.0
 
 

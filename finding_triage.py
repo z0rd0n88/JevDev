@@ -121,16 +121,16 @@ TOKEN = re.compile(
 )
 # A keyword as a whole identifier part: `tokenizer` and `secretary` are out, `accessToken` and `DISCORD_BOT_TOKEN` are in.
 _SECRET_KEY = r"[A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|password|passwd)s?(?:(?:[_-]|(?-i:[A-Z]))[A-Za-z0-9_-]{0,40})?"
-# Values that name something instead of holding it, with nothing else up to where the value ends: `A_CONSTANT`, a closed call or
-# index (`getenv(name)`, `headers["x"]`), a dotted reference.
+# Values that name something instead of holding it, with nothing else up to where the value ends: `A_CONSTANT`, a call or index
+# whose one argument is a digit-free name (`getenv(name)`, `headers["x"]`), a dotted reference.
 # ponytail: a digit-free underscored all-caps secret passes as a constant; none seen in the corpus.
 _END = r"\.?[)\]}]*(?:[\\\"'`,;\s]|$)"
-_NOT_SECRET = rf"(?:[A-Z]+(?:_[A-Z]+)+|[A-Za-z_][A-Za-z_.]*[(\[][^\s)\]]*[)\]]|[a-z]+(?:\.[A-Za-z]+)+){_END}"
+_NOT_SECRET = rf"(?:[A-Z]+(?:_[A-Z]+)+|[A-Za-z_][A-Za-z_.]*[(\[][\"']?[A-Za-z_.-]*[\"']?[)\]]|[a-z]+(?:\.[A-Za-z]+)+){_END}"
 ASSIGNED = re.compile(rf"(?i)({_SECRET_KEY})(\\*[\"'`]?\s*[=:]\s*\\*[\"'`]?)(?!(?-i:{_NOT_SECRET}))[^\\\"'`,;\s]{{12,}}")
 SECRET_KEY = re.compile(_SECRET_KEY, re.I)
 NOT_SECRET = re.compile(_NOT_SECRET)
-# `host:8080/path/@me` is a port and a path; a raw `/` in a real password still counts.
-USERINFO = re.compile(r"(://)[^/\s:@\"']+:(?!\d+(?:[/?#]|$))[^\\@\s\"']+@")
+# `host:8080/path/@me` is a port and a path because the `@` opens a path segment; `alex:2024/pw@db` and `alex:p@ss@db` are passwords.
+USERINFO = re.compile(r"(://)[^/\s:@\"']{1,256}:(?!\d+/(?:[^@\s\"'\\]{0,256}/)?@)[^\\\s\"']{1,256}@")
 
 
 def redact(text: str) -> str:
