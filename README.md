@@ -175,11 +175,11 @@ New callers import `jev_patterns.call` and keep their thresholds in code, never 
 
 `pruner/` is a Claude Code mod that trims Bash output over 10,000 estimated tokens before the model reads it. Jev scores 20-line chunks through OpenRouter, and low-scoring chunks become `[N lines omitted]` markers. Failed commands, binary output, and documents such as diffs and JSON pass through whole. It is a pinned copy of [`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-pruner); [`pruner/README.md`](pruner/README.md) records the commit and every change from upstream.
 
-- **What leaves the machine:** the command, the output chunks, and the last three typed prompts, redacted and clipped to 500 characters each. Conversation history is not sent.
-- **Skipped without a call:** a command or output that matches the secret patterns, output past 4,000,000 characters, a missing `OPENROUTER_API_KEY`, or a key without the `sk-or-` prefix. Each returns the original result. So does a failed or late scoring call (60 s budget).
+- **What leaves the machine:** the command, the output chunks, and the last three user messages, with leading injected tag blocks removed, redacted, and clipped to 500 characters each. Conversation history is not sent. The secret patterns are a denylist, so an unlisted shape is sent; [`pruner/README.md`](pruner/README.md) names the known misses.
+- **Skipped without a call:** a command or output that matches the secret patterns, output past 1,000,000 characters, a missing `OPENROUTER_API_KEY`, or a key without the `sk-or-` prefix. Each returns the original result. So does a failed or late scoring call (60 s budget).
 - **The full output:** saved to `~/.local/state/jevdev/pruner/`, outside every repo, and named in the footer. Files there are not deleted automatically.
-- **Key:** read through `with_jev_key.sh`, never from Claude's environment, where a project's `env` could substitute another account.
-- **Logs:** each decision goes to the debug log as counts only, with no command or output text. Read it with `claude --debug`.
+- **Key:** read from your secrets file through `with_jev_key.sh`, in an empty environment with `HOME` from the passwd file, so a project's `env` cannot substitute another account. A key set only in Claude's environment is ignored here.
+- **Logs:** each decision goes to the debug log as counts only, with no command or output text. Read it with `claude --debug`. The first output in a session that cannot be trimmed (no key, no archive folder, a failed call) also prints one dim transcript line, which the model does not see.
 - **Hosts:** Claude only. Codex would need `sandbox_workspace_write.network_access=true`, which opens the network to every sandboxed command.
 
 Tests need no npm install and make no network calls:

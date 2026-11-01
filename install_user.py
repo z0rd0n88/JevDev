@@ -199,8 +199,9 @@ def apply(home, jevdev, removing):
             link.symlink_to(target)
         changed.append(str(link))
     state = home / ".local/state/jevdev"
-    if not removing and not state.exists():
-        state.mkdir(mode=0o700, parents=True)
+    if not removing and not state.is_symlink() and (not state.exists() or state.stat().st_mode & 0o077):
+        state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        state.chmod(0o700)
         changed.append(str(state))
     return {
         "changed": changed,

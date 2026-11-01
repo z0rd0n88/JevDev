@@ -255,6 +255,22 @@ def check_pruner_dir_must_hold_the_plugin():
         assert check_install.check(JEVDEV, home, "user")["bash output pruner"]["claude"] == "missing"
 
 
+def check_pruner_dir_accepts_tilde_and_needs_this_plugin():
+    """Claude expands `~` in the var, and only the jev-pruner manifest counts, whatever the folder's name."""
+    with tempfile.TemporaryDirectory() as tmp:
+        home, snippet = user_home(tmp)
+        apply_claude_snippet(home, snippet)
+        settings = json.loads((home / ".claude/settings.json").read_text())
+        for name, plugin, want in (("pinned", "jev-pruner", "ok"), ("pruner", "other", "missing")):
+            manifest = home / name / ".claude-plugin/plugin.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"name": plugin}))
+            settings["env"]["CLAUDE_CODE_PLUGIN_DIRS"] = f"~/{name}"
+            (home / ".claude/settings.json").write_text(json.dumps(settings))
+            cell = check_install.check(JEVDEV, home, "user")["bash output pruner"]["claude"]
+            assert cell == want, (name, cell)
+
+
 def check_user_scope_trusted():
     """Codex trust is keyed on ~/.codex/hooks.json, not the project config path."""
     with tempfile.TemporaryDirectory() as tmp:

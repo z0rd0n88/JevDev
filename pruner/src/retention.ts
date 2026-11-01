@@ -5,7 +5,7 @@ const REFERENCE_PATTERN = new RegExp([
   '^---\\r?\\n[\\w-]+:',
   '^\\S[^\\n]*\\n(?:={3,}|-{3,})[ \\t\\r]*$',
   '^Help on (?:class|function|module)',
-  '^[ \\t]*\\|?[ \\t]*(?:Parameters|Returns|Examples)[ \\t\\r]*$',
+  '^[ \\t]*(?:\\|[ \\t]*)?(?:Parameters|Returns|Examples)[ \\t\\r]*$',
   '^[ \\t]*(?:export[ \\t]+)?(?:async[ \\t]+)?(?:function|class|def)[ \\t]+\\w',
   '^[ \\t]*(?:export[ \\t]+)?(?:const|let|var)[ \\t]+\\w+[ \\t]*[=:]',
   '^[ \\t]*(?:from[ \\t]+[\\w.]+[ \\t]+import|import[ \\t]+.+(?:from[ \\t]+|;|$))',
@@ -18,12 +18,12 @@ const REFERENCE_PATTERN = new RegExp([
 const DIAGNOSTIC_PATTERN = new RegExp(
   [
     '\\b(ERROR|FATAL|FAILED|FAILURE|PANIC|WARN|WARNING)\\b',
-    '\\b(error|warning|failure|exception|panic|traceback|assertion)s?\\s*:',
+    '\\b(error|warning|failure|exception|panic|fatal|traceback|assertion)s?\\s*:',
     '\\berror TS\\d+:|^E\\s+\\S',
-    '\\b(failed|failing|cannot|could not|unable to|denied|refused|timed out)\\s+\\w',
+    '\\b(failed|failing|cannot|could not|unable to)\\s+\\w|\\b(denied|refused|timed out|command not found|No such file or directory)\\b',
     '\\b\\w*(Error|Exception)\\b\\s*[:(]',
     '\\bTraceback \\(most recent call last\\)',
-    '^[ \\t]*at[ \\t]+\\S+\\(.*:\\d+',
+    '^[ \\t]*at[ \\t]+\\S[^\\s(]*\\(.*:\\d+',
     '\\b(severity )?vulnerabilit(y|ies)\\b',
     '\\bCrashLoopBackOff\\b|\\bOOMKilled\\b',
     '\\bHTTP/[0-9.]+ [45]\\d\\d\\b|\\bstatus[=: ]\\s*[45]\\d\\d\\b',
@@ -31,8 +31,8 @@ const DIAGNOSTIC_PATTERN = new RegExp(
   'm',
 );
 const RESULT_PATTERN = /^[ \t]*(?:(?:Test Suites|Tests|Snapshots|Coverage|Results?|Summary|Exit code|Exit status)[ \t]*:|(?:Build|Compilation|Tests?)[ \t]+(?:succeeded|completed|finished|passed|failed)\b|(?:Artifact|Output file|Report|Coverage report)(?: path)?[ \t]*[:=][ \t]*\S)/im;
-const PYTEST_RESULT_PATTERN = /^=+ .*\b\d+ (?:passed|failed|skipped|deselected|xfailed|xpassed|errors?|warnings?)\b.*=+[ \t\r]*$/im;
-const TEST_PROGRESS_PATTERN = /^\S+::\S+\s+PASSED(?:\s+\[\s*\d+%\])?\s*$/i;
+const PYTEST_RESULT_PATTERN = /^=+ (?=.*=[ \t\r]*$)(?=.*\b\d+ (?:passed|failed|skipped|deselected|xfailed|xpassed|errors?|warnings?)\b)/im;
+const TEST_PROGRESS_PATTERN = /^(?=\S+::\S)\S+\s+PASSED(?:\s+\[\s*\d+%\])?\s*$/i;
 const PROGRESS_PATTERN = /^\s*(?:\[[^\]\n]+\]\s*)?(?:INFO\s+)?(?:progress\b|cache(?:d)?\b|download(?:ing)?\b|compil(?:ing|ed)\b)/i;
 const MAX_DISPOSABLE_KEEP_PROBABILITY = 0.1;
 

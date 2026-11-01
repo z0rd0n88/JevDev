@@ -15,9 +15,10 @@ import { classifyInformation } from '../src/retention.js';
 import type { InformationCategory } from '../src/retention.js';
 
 const STATE_DIR = '.local/state/jevdev';
+const CLEAN_ENV = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin'];
 const DEFAULT_MAX_SCORING_REQUESTS = 11;
 const VISIBLE_CHARS_PER_REQUEST = 192;
-const MAX_OUTPUT_CHARS = 4_000_000;
+const MAX_OUTPUT_CHARS = 1_000_000;
 const SCORING_DEADLINE_MS = 60_000;
 const DEFAULTS = {
   persistedMaxChars: 8_000,
@@ -63,6 +64,7 @@ function optionNumber(options: PluginOptions, key: string, fallback: number): nu
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+/** The manifest declares no userConfig, so `options` is empty and a project's `pluginConfigs` cannot change these defaults. */
 export function resolveHookConfig(options: PluginOptions): HookConfig {
   const config: HookConfig = {
     chunkLines: optionNumber(options, 'chunkLines', DEFAULTS.chunkLines),
@@ -75,7 +77,7 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   };
   const chunkChars = optionNumber(options, 'chunkChars', 0);
   if (chunkChars > 0) config.chunkChars = chunkChars;
-  if (options.diagnostics === true) config.diagnostics = true;
+  if (options.diagnostics !== false) config.diagnostics = true;
   if (options.maxScoringRequests !== undefined) {
     config.maxScoringRequests = Math.max(0, Math.floor(
       optionNumber(options, 'maxScoringRequests', DEFAULT_MAX_SCORING_REQUESTS),
@@ -101,26 +103,43 @@ export function jevAsker(
   };
 }
 
+// The blocks of scope_sentinel.py's TAG_BLOCK. Anchored, so one attempt and linear.
+const INJECTED = /^(?:\s*<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>[\s\S]*?<\/\1>)+\s*/;
+
 export function goalFromMessages(messages: readonly SessionMessage[]): string {
   return messages
     .filter(
       (message) =>
         message.role === 'user' &&
-        message.text.trim().length > 0 &&
         (!message.toolResults || message.toolResults.length === 0),
     )
+    .map((message) => message.text.replace(INJECTED, ''))
+    .filter((text) => text.trim().length > 0)
     .slice(-3)
-    .map((message) => redact(message.text).slice(0, 500))
+    .map((text) => redact(text).slice(0, 500))
     .join('\n');
 }
 
 /**
- * Reads the key through JevDev's with_jev_key.sh, never the environment or settings,
- * where a cloned repo's project `env` could substitute its own account.
+ * The account's home from the passwd file, never `HOME`, which a cloned repo's project `env` can set.
+ * `sh`, not `bash`: `bash -c` sources ~/.bashrc when its stdin is a socket.
  */
-async function getApiKey($: Parameters<BashHook>[0]): Promise<string | undefined> {
+async function realHome($: Parameters<BashHook>[0]): Promise<string | undefined> {
   const { exitCode, stdout } = await $.process.run(
-    ['bash', `${$.plugin.root}/../with_jev_key.sh`, 'printenv', 'OPENROUTER_API_KEY'],
+    [...CLEAN_ENV, 'sh', '-c', 'getent passwd "$(id -u)" | cut -d: -f6'],
+    { timeoutMs: 5_000 },
+  );
+  const home = stdout.trim();
+  return exitCode === 0 && home.startsWith('/') ? home : undefined;
+}
+
+/**
+ * Reads the key through JevDev's with_jev_key.sh in an empty environment, so a project `env`
+ * cannot substitute its own account through OPENROUTER_API_KEY, HOME, PATH or BASH_ENV.
+ */
+async function getApiKey($: Parameters<BashHook>[0], home: string): Promise<string | undefined> {
+  const { exitCode, stdout } = await $.process.run(
+    [...CLEAN_ENV, `HOME=${home}`, 'bash', `${$.plugin.root}/../with_jev_key.sh`, 'printenv', 'OPENROUTER_API_KEY'],
     { timeoutMs: 5_000 },
   );
   const key = stdout.trim();
@@ -128,8 +147,7 @@ async function getApiKey($: Parameters<BashHook>[0]): Promise<string | undefined
 }
 
 /** The private archive folder: install_user.py makes its parent 0700, outside every repo. */
-async function archiveDir($: Parameters<BashHook>[0]): Promise<string | undefined> {
-  const home = await $.env.get('HOME');
+async function archiveDir($: Parameters<BashHook>[0], home: string): Promise<string | undefined> {
   const stat = await $.fs.stat(`${home}/${STATE_DIR}`).catch(() => undefined);
   return stat?.kind === 'directory' && !stat.isLink ? `${home}/${STATE_DIR}/pruner` : undefined;
 }
@@ -137,10 +155,11 @@ async function archiveDir($: Parameters<BashHook>[0]): Promise<string | undefine
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
   const archives = new Set<string>();
+  let noticed = false;
 
   on('tool.call', { tool: 'Bash' }, async ($, event, next) => {
     const answer = await next(event);
-    const started = Date.now();
+    const started = await $.clock.now();
     let decision = answer.deny !== undefined ? 'denied' : answer.isError ? 'tool_error' : 'missing_result';
     let stage = 'result';
     let requests = 0;
@@ -178,11 +197,12 @@ export const register: Register = (on: On, options: PluginOptions) => {
       decision = 'secret';
       if (looksSecret(event.command, combined)) return answer;
       stage = 'credentials';
-      const apiKey = await getApiKey($);
+      const home = await realHome($);
+      const apiKey = home && await getApiKey($, home);
       decision = 'missing_key';
-      if (!apiKey) return answer;
+      if (!home || !apiKey) return answer;
       stage = 'archive_dir';
-      const archive = persisted ? undefined : await archiveDir($);
+      const archive = persisted ? undefined : await archiveDir($, home);
       decision = 'no_archive_dir';
       if (!persisted && !archive) return answer;
       stage = 'history';
@@ -222,8 +242,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
             stage = 'archive';
             await (archived ??= saveOutput());
             stage = 'scoring';
+            const left = SCORING_DEADLINE_MS - (await $.clock.now() - started);
+            if (left <= 0) throw new Error('scoring deadline passed');
             requests += 1;
-            const left = SCORING_DEADLINE_MS - (Date.now() - started);
             const response = await Promise.race([
               $.http.fetch(url, init),
               $.clock.sleep(left).then(() => { throw new Error('scoring deadline passed'); }),
@@ -260,7 +281,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const result = { ...record, stdout };
       delete result.persistedOutputPath;
       delete result.persistedOutputSize;
-      if (persisted) result.stderr = '';
       hookStdoutCharsAfter = stdout.length;
       return { result };
     } catch (error) {
@@ -269,6 +289,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
       $.ui.log(`bash output trim skipped (stage=${stage}${status ? ` status=${status}` : ''})`, { to: 'debug' });
       return answer;
     } finally {
+      if (!noticed && ['missing_key', 'no_archive_dir', 'hook_error'].includes(decision)) {
+        noticed = true;
+        $.ui.log(`Bash output left untrimmed (${decision}, stage=${stage}). The model got the full output. Repeats go to the debug log only.`);
+      }
       if (configured.diagnostics) {
         try {
           $.ui.log(`fast-jev-output decision ${JSON.stringify({
@@ -279,11 +303,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
             modelVisibleBudgetChars,
             sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
             hookStderrCharsBefore: original?.stderr.length ?? null,
-            hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath
-              ? 0 : original?.stderr.length ?? null,
+            hookStderrCharsAfter: original?.stderr.length ?? null,
             chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
             withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
-            requests, requestLimit, elapsedMs: Date.now() - started,
+            requests, requestLimit, elapsedMs: await $.clock.now() - started,
           })}`, { to: 'debug' });
         } catch {
           // Diagnostics cannot change the tool result.

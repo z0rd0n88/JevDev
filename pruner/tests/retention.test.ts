@@ -24,6 +24,11 @@ describe('information retention rules', () => {
     ['reference', 'def simulate(samples):\n    return samples'],
     ['diagnostic', 'WARNING: deprecated option'],
     ['diagnostic', 'ValueError: bad input'],
+    ['diagnostic', 'find: x: Permission denied'],
+    ['diagnostic', 'connect: Connection refused'],
+    ['diagnostic', 'fatal: not a git repository'],
+    ['diagnostic', 'bash: foo: command not found'],
+    ['diagnostic', 'cat: x: No such file or directory'],
     ['result', 'Tests: 17 passed, 0 failed'],
     ['result', 'Artifact: dist/app.js'],
     ['progress', 'INFO cache hit\nDownloading package 1/200'],
@@ -72,6 +77,24 @@ describe('information retention rules', () => {
     for (const line of retained) expect(result.output).toContain(line);
     expect(result.output).toContain(lines[99]);
     expect(result.output).toContain(lines[101]);
+  });
+
+  it.each([
+    'find: x: Permission denied',
+    'connect: Connection refused',
+    'fatal: not a git repository',
+    'bash: foo: command not found',
+    'cat: x: No such file or directory',
+  ])('retains %s at score 0 under budget pressure', async line => {
+    const lines = noise.split('\n');
+    lines[219] = line;
+    const result = await trimOutput(
+      { command: 'npm test', output: lines.join('\n'), goal: 'g' },
+      { ask: score(0) },
+      { maxChars: 20_000 },
+    );
+    expect(result.trimmed).toBe(true);
+    expect(result.output).toContain(line);
   });
 
   it.each([0.11, 0.49, 0.99])('keeps uncertain or needed content at score %s despite budget pressure', async probability => {
