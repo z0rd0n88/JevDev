@@ -1,0 +1,6 @@
+{
+  "name": "jev-pruner",
+  "version": "0.1.0",
+  "description": "Trim long Bash output with Jev through OpenRouter before the model sees it",
+  "license": "MIT"
+}

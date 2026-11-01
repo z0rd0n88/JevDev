@@ -20,6 +20,7 @@ FEATURES = [
     "write gate",
     "compaction advisor",
     "ask_jev_files CLI",
+    "bash output pruner",
 ]
 HOOK_KEYS = ["pre_tool_use:0:0", "pre_tool_use:1:0", "stop:0:0"]
 
@@ -72,7 +73,7 @@ def run_cli(root, home):
 
 
 def check_all_ok():
-    """AC-7.1: wired and trusted tree reads ok except the agy compaction advisor (n/a); exit 0."""
+    """AC-7.1: wired and trusted tree reads ok except the agy compaction advisor and the pruner (n/a); exit 0."""
     with tempfile.TemporaryDirectory() as tmp:
         root = make_root(tmp)
         home = make_home(tmp, root)
@@ -82,8 +83,12 @@ def check_all_ok():
             assert list(cells) == ["claude", "codex", "agy"], cells
             for host, cell in cells.items():
                 want = "ok"
-                if (feature, host) == ("compaction advisor", "agy"):
+                if (feature, host) == ("compaction advisor", "agy") or (
+                    feature == "bash output pruner" and host != "claude"
+                ):
                     want = "n/a (unavailable)"
+                elif feature == "bash output pruner":
+                    want = "n/a (user scope only)"
                 assert cell == want, (feature, host, cell)
         r = run_cli(root, home)
         assert r.returncode == 0, (r.stdout, r.stderr)
@@ -212,8 +217,16 @@ def check_user_scope():
         home, snippet = user_home(tmp)
         table = check_install.check(JEVDEV, home, "user")
         assert list(table) == FEATURES, list(table)
-        for feature in ["hyper-jev skill", "ask-jev skill", "bash gate", "write gate", "compaction advisor"]:
+        for feature in [
+            "hyper-jev skill",
+            "ask-jev skill",
+            "bash gate",
+            "write gate",
+            "compaction advisor",
+            "bash output pruner",
+        ]:
             assert table[feature]["claude"] == "missing", (feature, table[feature])
+        assert table["bash output pruner"]["codex"] == "n/a (unavailable)", table
         for feature in ["hyper-jev skill", "ask-jev skill"]:
             assert table[feature]["codex"] == table[feature]["agy"] == "ok", table[feature]
         for feature in ["bash gate", "write gate", "compaction advisor"]:
@@ -228,6 +241,34 @@ def check_user_scope():
         assert all(cell == "ok" for row in table.values() for cell in [row["claude"]]), table
         r = run_user(home)
         assert r.returncode == 0, (r.stdout, r.stderr)  # untrusted alone keeps exit 0
+
+
+def check_pruner_dir_must_hold_the_plugin():
+    """The env var alone is not enough: a listed folder without the plugin reads missing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        home, snippet = user_home(tmp)
+        apply_claude_snippet(home, snippet)
+        settings = json.loads((home / ".claude/settings.json").read_text())
+        assert settings["env"]["CLAUDE_CODE_PLUGIN_DIRS"] == f"{JEVDEV}/pruner", settings["env"]
+        settings["env"]["CLAUDE_CODE_PLUGIN_DIRS"] = f"{tmp}/nope/pruner"
+        (home / ".claude/settings.json").write_text(json.dumps(settings))
+        assert check_install.check(JEVDEV, home, "user")["bash output pruner"]["claude"] == "missing"
+
+
+def check_pruner_dir_accepts_tilde_and_needs_this_plugin():
+    """Claude expands `~` in the var, and only the jev-pruner manifest counts, whatever the folder's name."""
+    with tempfile.TemporaryDirectory() as tmp:
+        home, snippet = user_home(tmp)
+        apply_claude_snippet(home, snippet)
+        settings = json.loads((home / ".claude/settings.json").read_text())
+        for name, plugin, want in (("pinned", "jev-pruner", "ok"), ("pruner", "other", "missing")):
+            manifest = home / name / ".claude-plugin/plugin.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(json.dumps({"name": plugin}))
+            settings["env"]["CLAUDE_CODE_PLUGIN_DIRS"] = f"~/{name}"
+            (home / ".claude/settings.json").write_text(json.dumps(settings))
+            cell = check_install.check(JEVDEV, home, "user")["bash output pruner"]["claude"]
+            assert cell == want, (name, cell)
 
 
 def check_user_scope_trusted():

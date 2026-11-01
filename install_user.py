@@ -143,11 +143,13 @@ def claude_snippet(jevdev):
         "Stop": [group(advisor, 45)],
     }
     links = [f"ln -s {jevdev}/.agents/skills/{n} ~/.claude/skills/{n}" for n in SKILLS]
+    env = {"CLAUDE_CODE_PLUGIN_DIRS": f"{jevdev}/pruner"}
+    deny = [f"Edit(/{jevdev}/pruner/**)", f"Edit(/{jevdev}/with_jev_key.sh)"]  # "//" + path is absolute
     return "\n".join(
         [
             "Claude part, not applied (~/.claude is the ClaudeConfig repo): open a PR with no Claude session "
-            "running and merge these hooks into ~/.claude/settings.json:",
-            json.dumps({"hooks": hooks}, indent=2),
+            "running and merge this env, these deny rules and these hooks into ~/.claude/settings.json:",
+            json.dumps({"env": env, "permissions": {"deny": deny}, "hooks": hooks}, indent=2),
             "then run:",
             *links,
         ]
@@ -157,7 +159,8 @@ def claude_snippet(jevdev):
 def removal_snippet():
     return (
         "Claude part, not applied: in a ClaudeConfig PR with no Claude session running, delete the hook entries "
-        "whose command contains scope_sentinel.py or compact_advisor.py from ~/.claude/settings.json, then run:\n"
+        "whose command contains scope_sentinel.py or compact_advisor.py and env.CLAUDE_CODE_PLUGIN_DIRS's pruner "
+        "entry from ~/.claude/settings.json, then run:\n"
         "rm " + " ".join(f"~/.claude/skills/{n}" for n in SKILLS)
     )
 
@@ -197,8 +200,9 @@ def apply(home, jevdev, removing):
             link.symlink_to(target)
         changed.append(str(link))
     state = home / ".local/state/jevdev"
-    if not removing and not state.exists():
-        state.mkdir(mode=0o700, parents=True)
+    if not removing and not state.is_symlink() and (not state.exists() or state.stat().st_mode & 0o077):
+        state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        state.chmod(0o700)
         changed.append(str(state))
     return {
         "changed": changed,

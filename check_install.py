@@ -7,6 +7,7 @@ Exit 1 when any cell is `missing`; `untrusted` alone keeps exit 0.
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -21,6 +22,7 @@ FEATURES = [
     "write gate",
     "compaction advisor",
     "ask_jev_files CLI",
+    "bash output pruner",
 ]
 CLAUDE_WRITE = ["Write", "Edit", "NotebookEdit"]
 AGY_WRITE = ["write_to_file", "replace_file_content", "multi_replace_file_content"]
@@ -104,6 +106,19 @@ def cli_cell(root):
     except Exception:
         ok = False
     return "ok" if ok else "missing"
+
+
+def pruner_cell(settings, home):
+    """A CLAUDE_CODE_PLUGIN_DIRS entry that holds jev-pruner, `~` allowed. Claude reads that var from user settings only."""
+    env = settings.get("env") if isinstance(settings, dict) else None
+    dirs = env.get("CLAUDE_CODE_PLUGIN_DIRS") if isinstance(env, dict) else None
+    entries = dirs.split(os.pathsep) if isinstance(dirs, str) else []
+    manifests = [
+        load(Path(re.sub(r"^~(?=/)", str(home), d)) / ".claude-plugin/plugin.json", json.load)
+        for d in entries
+    ]
+    found = any(isinstance(m, dict) and m.get("name") == "jev-pruner" for m in manifests)
+    return "ok" if found else "missing"
 
 
 def check(root, home, scope):
@@ -194,6 +209,11 @@ def check(root, home, scope):
             "agy": "n/a (unavailable)",
         },
         "ask_jev_files CLI": {h: cli for h in HOSTS},
+        "bash output pruner": {
+            "claude": pruner_cell(claude, home) if scope == "user" else "n/a (user scope only)",
+            "codex": "n/a (unavailable)",
+            "agy": "n/a (unavailable)",
+        },
     }
     return table
 

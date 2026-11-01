@@ -120,7 +120,12 @@ def check_install_twice():
             and "~/.claude/skills/hyper-jev" in out
             and "~/.claude/skills/ask-jev" in out
         ), out
-        claude = json.loads(out[out.index("{") : out.rindex("}") + 1])["hooks"]
+        snippet = json.loads(out[out.index("{") : out.rindex("}") + 1])
+        assert snippet["permissions"]["deny"] == [
+            f"Edit(/{JEVDEV}/pruner/**)",
+            f"Edit(/{JEVDEV}/with_jev_key.sh)",
+        ], snippet["permissions"]
+        claude = snippet["hooks"]
         assert [g.get("matcher") for g in claude["PreToolUse"]] == [
             "Bash",
             "Write|Edit|NotebookEdit",
@@ -264,6 +269,19 @@ def check_bin_links():
         assert r.returncode == 2, (r.stdout, r.stderr)
         assert json.loads(r.stdout) == {"error": f"refusing to link to a missing target: {bare}/bin/jev"}, r.stdout
         assert snapshot(home) == before, "a refusal must change nothing"
+
+
+def check_existing_state_dir_is_tightened():
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / ".local/state/jevdev"
+        state.mkdir(parents=True, mode=0o755)
+        state.chmod(0o755)
+        r = run(tmp)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        assert oct(state.stat().st_mode & 0o777) == "0o700"
+        assert str(state) in r.stdout, r.stdout
+        again = run(tmp)
+        assert str(state) not in again.stdout.split("Claude part")[0], again.stdout
 
 
 if __name__ == "__main__":
