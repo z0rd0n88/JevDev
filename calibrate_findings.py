@@ -2,13 +2,14 @@
 
     bash with_jev_key.sh python3 calibrate_findings.py               # all rows in .local/findings-corpus.jsonl
     bash with_jev_key.sh python3 calibrate_findings.py --pr 1110     # one PR
-    python3 calibrate_findings.py --from-graded                       # re-cut the report, no Jev calls
+    python3 calibrate_findings.py --from-graded                       # re-cut the report, no Jev calls (--pr filters --out, the full file by default)
 
 Truth:
   duplicate   = hand label from tests/fixtures/findings/labels-pr<N>-r<K>.json when the row has one (same defect as a
-                prior-round finding, at the same or additional sites, the Jev question's own definition); else the
+                prior-round finding, at the same or additional sites with the same cause, the Jev question's own definition); else the
                 proxy: title matches a prior-round title at ratio >= 0.6. follow_on (new defect about a prior subject)
-                is a separate label and is never counted as duplicate.
+                is a separate label and is never counted as duplicate. Refuted rows would never reach a duplicate gate,
+                so they stay out of its numbers and are listed on their own.
   introduced  = blame: at least half the cited lines were written inside the PR. Rows with no readable blame are
                 excluded and counted. The skeptic's "pre-existing pattern" notes are reported on their own line.
 Every number is printed as counted; nothing is rounded away.
@@ -76,8 +77,8 @@ def prf(pairs: list[tuple[bool, bool]]) -> str:
 
 def live_out(out: str, prs: list[int]) -> Path:
     """A --pr run on the default path writes beside it, so the full file --from-graded reads is never replaced by a subset."""
-    if prs and out == DEFAULT_OUT:
-        return Path(out).with_name(f"calibration-pr{'-'.join(map(str, prs))}.jsonl")
+    if prs and Path(out).resolve() == Path(DEFAULT_OUT).resolve():
+        return Path(DEFAULT_OUT).with_name(f"calibration-pr{'-'.join(map(str, prs))}.jsonl")
     return Path(out)
 
 
@@ -88,7 +89,7 @@ def grade(rows: list[dict], checkout: Path, model: str | None, out: Path) -> tup
     graded_rows: list[dict] = []
     calls, usd, tokens = 0, 0.0, 0
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(".tmp")  # replaces `out` only once every round is graded; a failed run leaves its paid answers here
+    tmp = out.with_name(out.name + ".tmp")  # replaces `out` only once every round is graded; a failed run's finished rounds stay here until the next run
     with tmp.open("w") as fh:
         for (pr, k), fs in sorted(rounds.items()):
             at = datetime.fromisoformat(fs[0]["merged_at"].replace("Z", "+00:00"))
@@ -114,20 +115,24 @@ def report(graded_rows: list[dict], labels: dict, calls: int, usd: float, tokens
     print("## Calibration\n")
     print(f"Rows: {len(graded_rows)} findings in {len(per_round)} rounds across {len({g['pr'] for g in graded_rows})} PRs. {source}\n")
     dup_rows = [g for g in graded_rows if g["prior_round"]]
-    labelled = [g for g in dup_rows if label_of(g, labels)]
-    print(f"- duplicate_of_prior_round at {ft.DUPLICATE_AT} (rows with a prior round; {len(labelled)} of {len(dup_rows)} hand-labelled, the rest by title proxy): {prf([(g['duplicate'], truth_duplicate(g, labels)) for g in dup_rows])}")
+    gate_rows = [g for g in dup_rows if g["verdict"] != "REFUTED"]
+    refuted = [g for g in dup_rows if g["verdict"] == "REFUTED"]
+    labelled = [g for g in gate_rows if label_of(g, labels)]
+    print(f"- duplicate_of_prior_round at {ft.DUPLICATE_AT} (rows with a prior round, {len(refuted)} refuted rows excluded; {len(labelled)} of {len(gate_rows)} hand-labelled, the rest by title proxy): {prf([(g['duplicate'], truth_duplicate(g, labels)) for g in gate_rows])}")
     for t in (0.3, 0.4, 0.5, 0.6, 0.7):
-        print(f"  - at {t}: {prf([(g['duplicate_p'] >= t, truth_duplicate(g, labels)) for g in dup_rows])}")
+        print(f"  - at {t}: {prf([(g['duplicate_p'] >= t, truth_duplicate(g, labels)) for g in gate_rows])}")
+    pos, neg = [g["duplicate_p"] for g in gate_rows if truth_duplicate(g, labels)], [g["duplicate_p"] for g in gate_rows if not truth_duplicate(g, labels)]
+    print(f"  - rank: {sum(p > n for p in pos for n in neg)} of {len(pos) * len(neg)} (duplicate, other) pairs have the duplicate scored higher")
     if labelled:
         print(f"  - title proxy vs hand label on the labelled rows: {prf([(proxy_duplicate(g), label_of(g, labels)['duplicate']) for g in labelled])}")
         follow = [g for g in labelled if label_of(g, labels)["follow_on"]]
         dups = [g for g in labelled if label_of(g, labels)["duplicate"]]
         rest = [g for g in labelled if g not in follow and g not in dups]
-        for name, gs in (("duplicate", dups), ("follow_on", follow), ("neither", rest)):
+        for name, gs in (("duplicate", dups), ("follow_on", follow), ("neither", rest), ("refuted", refuted)):
             if gs:
                 print(f"  - mean duplicate_p on hand-labelled {name} rows: {sum(g['duplicate_p'] for g in gs) / len(gs):.2f} (n={len(gs)}, min {min(g['duplicate_p'] for g in gs):.2f}, max {max(g['duplicate_p'] for g in gs):.2f})")
-    print("  - duplicate_p per row (truth in brackets: D duplicate, F follow-on, - neither): " + ", ".join(
-        f"{g['id']}={g['duplicate_p']:.2f}[{'D' if truth_duplicate(g, labels) else 'F' if (label_of(g, labels) or {}).get('follow_on') else '-'}]" for g in dup_rows))
+    print("  - duplicate_p per row (truth in brackets: D duplicate, F follow-on, - neither, R refuted): " + ", ".join(
+        f"{g['id']}={g['duplicate_p']:.2f}[{'R' if g['verdict'] == 'REFUTED' else 'D' if truth_duplicate(g, labels) else 'F' if (label_of(g, labels) or {}).get('follow_on') else '-'}]" for g in dup_rows))
 
     intro = [(g["introduced_p"] > INTRODUCED_AT, t) for g in graded_rows if (t := truth_introduced(g)) is not None]
     excluded = Counter(g["state_error"] or "blame empty" for g in graded_rows if truth_introduced(g) is None)
@@ -200,9 +205,12 @@ def main() -> int:
     rows = [json.loads(line) for line in Path(a.corpus).read_text().splitlines()]
     if a.pr:
         rows = [r for r in rows if r["pr"] in a.pr]
+    if not rows:
+        print(f"no corpus rows for --pr {a.pr}; {a.out} left alone", file=sys.stderr)
+        return 1
     out = live_out(a.out, a.pr)
     graded_rows, calls, usd, tokens = grade(rows, Path(a.checkout), a.model, out)
-    report(graded_rows, labels, calls, usd, tokens, f"Live run; graded rows written to {out}.")
+    report(graded_rows, labels, calls, usd, tokens, f"Live run; graded rows written to {os.path.relpath(out, ROOT)}.")
     return 0
 
 

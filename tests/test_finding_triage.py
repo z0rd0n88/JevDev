@@ -2,6 +2,8 @@
 labels on a five-finding fixture, and convergence on a two-round fixture. Uses a stub jev on JEV_BIN."""
 
 import atexit
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -131,42 +133,66 @@ def test_redaction_reaches_every_json_form_and_keeps_it_parseable() -> None:
 def test_redaction_catches_digit_bearing_caps_and_vendor_shapes() -> None:
     for raw in ("API_KEY=A1B2C3D4E5F6A1B2C3D4", "secret=483920184739201", "SECRET=JBSWY3DPEHPK3PXP", "accessToken=abcdefghijklmnop", "secretKey: abcdefghijklmnop", '"api_key": "abcdefghijklmnop"', "auth_tokens=abcdefghijklmnop"):
         assert "[REDACTED]" in ft.redact(raw) and not ft.redact(raw).endswith(("mnop", 'mnop"')) and "A1B2" not in ft.redact(raw) and "4839" not in ft.redact(raw) and "JBSW" not in ft.redact(raw), (raw, ft.redact(raw))
-    for raw in ("sk-ant-api03-abcDEF123456789xyzabc", "sk_live_abcDEF123456789xyzabc", "hf_abcdefghijklmnopqrstuvwxyz123456", "npm_abcdefghijklmnopqrstuvwxyz1234567890", "ghp_abcdefghijklmnop"):
+    for raw in ("sk-ant-api03-abcDEF123456789xyzabc", "sk_live_abcDEF123456789xyzabc", "sk-abc123def456", "hf_abcdefghijklmnopqrstuvwxyz123456", "npm_abcdefghijklmnopqrstuvwxyz1234567890", "ghp_abcdefghijklmnop"):
         assert ft.redact(raw) == "[REDACTED]", (raw, ft.redact(raw))
+    assert ft.redact("x_ghp_abcdefghijklmnop") == "x_[REDACTED]" and ft.redact("k_xoxb-abcdefghijklmnop") == "k_[REDACTED]"
 
 
-def test_redaction_leaves_code_and_constants_alone() -> None:
-    for plain in (
-        "npm_package_version is set", "hf_hub_download(repo)", "sk-learn-extras==1.0",
-        "tokenizer = AutoTokenizer.from_pretrained(path)", "secretary: somebodyelse1234",
-        "token: `WITHDRAWAL_STORE_UNAVAILABLE`", "the token: WITHDRAWAL_STORE_UNAVAILABLE.",
-        'val token = request.headers["Authorization"]', "secret = System.getenv(name)", "token = config.authHeaderName",
-        "http://localhost:8080/api/@me", "http://localhost:8080/@me",
+def test_redaction_fails_closed_on_key_spellings_delimiters_and_typed_forms() -> None:
+    s = "abcdefghijklmnop"
+    for key in ("password1", "API_KEY2", "TOKEN2", "secret1", "apikey2", "mypassword9", "secretkey", "tokenvalue", "passwordhash", "secretaccesskey", "private_key", "privateKey", "mnemonic", "credentials", "DB_PASS", "passphrase", "pwd"):
+        assert ft.redact(f"{key}={s}") == f"{key}=[REDACTED]", key
+        assert ft.redact_json({key: s}) == {key: "[REDACTED]"}, key
+    for raw, tail in (("password=ab\\cdefghijklmnop1234", "1234"), ("PASSWORD=Sup3r\\!SecretTail99", "Tail99"), ("password=abc,defghijklmnop1234", "1234"), ("DB_PASSWORD=Ab1;Cd2efGh3ijKl4mnOp", "mnOp"), ("password=abcdefghijklmnop;tailsecret123", "tail"),
+                      ("password=correct.horse.battery.staple", "staple"), ("secret=hunter(abcdefghijkl)", "hunter")):
+        assert tail not in ft.redact(raw) and "[REDACTED]" in ft.redact(raw), (raw, ft.redact(raw))
+    for raw in (f'val apiKey: String = "{s}"', f'val secret: Map<String, String>? = "{s}"', f'ApiKey("{s}")', f'"password" to "{s}"', f"token := {s}", f'secret => "{s}"'):
+        assert s not in ft.redact(raw), (raw, ft.redact(raw))
+    assert ft.redact_json({"secrets": {"db": "abc"}}) == {"secrets": {"db": "[REDACTED]"}}  # a nested value under a secret key
+    assert ft.parse_fixer_report(f"F1  fix-here  applied  password={s}\n")["F1"]["note"] == "password=[REDACTED]"
+    # names, calls and references are redacted too: a lost word costs nothing, a leaked secret does
+    for raw in ("tokenizer = AutoTokenizer.from_pretrained(path)", 'val token = request.headers["Authorization"]', "secret = System.getenv(name)", "token = config.authHeaderName"):
+        assert "[REDACTED]" in ft.redact(raw), raw
+
+
+def test_redaction_of_url_credentials() -> None:
+    for raw, want in (
+        ("postgres://alex:s3cretpassw0rd@db.local/x", "postgres://[REDACTED]@db.local/x"),
+        ("postgres://alex:pa/ss?w0rd@db.local/x", "postgres://[REDACTED]@db.local/x"),  # a raw slash in a password
+        ("postgres://alex:2024/pw@db", "postgres://[REDACTED]@db"),
+        ("postgres://alex:2024/@db", "postgres://[REDACTED]@db"),
+        ("postgres://alex:p@ss@db/x", "postgres://[REDACTED]@db/x"),  # a raw `@` in a password
+        ("postgres://me@corp.com:pw0@db", "postgres://[REDACTED]@db"),  # `@` in a user name
+        ("postgres://alex:" + "p/" * 2500 + "@db/x", "postgres://[REDACTED]@db/x"),  # no length cap to slip past
+        ("redis://:pw0123456@host:6379", "redis://[REDACTED]@host:6379"),  # empty user name
+        ("amqp://:pw@h", "amqp://[REDACTED]@h"),
+        ("mssql://CORP\\svc:pw0123456@db.local/x", "mssql://[REDACTED]@db.local/x"),  # domain user
+        ("https://abcdef0123456789xyz@host/x", "https://[REDACTED]@host/x"),  # a token as user name
+        ("http://localhost:8080/api/@me,postgres://alex:pw@db", "http://[REDACTED]@db"),  # fails closed on the whole run
     ):
+        assert ft.redact(raw) == want, (raw, ft.redact(raw))
+    for plain in ("ssh://git@github.com/x", "https://github.com/a/b", "http://localhost:8080/x", "see https://github.com/a/b/pull/58#issuecomment-1 now"):
         assert ft.redact(plain) == plain, (plain, ft.redact(plain))
-    assert ft.redact("postgres://alex:s3cretpassw0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"
-    assert ft.redact("postgres://alex:pa/ss?w0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"  # a raw slash in a password
-    assert ft.redact("postgres://alex:2024/pw@db") == "postgres://[REDACTED]@db"  # digits first, but the `@` does not open a path segment
-    assert ft.redact("postgres://alex:p@ss@db/x") == "postgres://[REDACTED]@db/x"  # a raw `@` in a password
-    assert ft.redact("postgres://alex:" + "p/" * 2500 + "@db/x") == "postgres://[REDACTED]@db/x"  # no length cap to slip past
-    assert ft.redact("http://localhost:8080/api/@me,postgres://alex:pw@db") == "http://localhost:8080/api/@me,postgres://[REDACTED]@db"  # an exempt URL first
-    assert "alex:pw" not in ft.redact("http://host:8080/a,postgres://alex:pw/@db")  # the exemption stays inside its own URL
 
 
-def test_redaction_exempts_only_a_whole_value_that_names_something() -> None:
-    for raw in ("password=abcdefgh(ijklmnop1234", "password=hunter[2hunter2hunter2", "token=ABC_DEF/xyz123456789", "token=ABC_DEF.real1234567", "secret=abcdefgh.ijklmnop/qrst", "password=abc(hunter2hunter2)", "token=abcdefgh[xyz1234567]"):
+def test_redaction_leaves_ordinary_names_and_constants_alone() -> None:
+    for plain in ("npm_package_version is set", "hf_hub_download(repo)", "sk-learn-extras==1.0", "ask_jev_files.py", "token: `WITHDRAWAL_STORE_UNAVAILABLE`", "the token: WITHDRAWAL_STORE_UNAVAILABLE.", "(token: WITHDRAWAL_STORE_UNAVAILABLE)"):
+        assert ft.redact(plain) == plain, (plain, ft.redact(plain))
+    for raw in ("password=abcdefgh(ijklmnop1234", "password=hunter[2hunter2hunter2", "token=ABC_DEF/xyz123456789", "token=ABC_DEF.real1234567", "token=ABC_DEF,real1234567", "secret=abcdefgh.ijklmnop/qrst", "password=abc(hunter2hunter2)", "token=abcdefgh[xyz1234567]"):
         assert ft.redact(raw).endswith("=[REDACTED]"), (raw, ft.redact(raw))
     assert ft.redact_json({"password": "ABC_DEF correct horse", "token": "getenv(x) real1234"}) == {"password": "[REDACTED]", "token": "[REDACTED]"}
     assert ft.redact_json({"ghp_abcdefghijklmnop": 1}) == {"[REDACTED]": 1}  # a key can hold a token too
 
 
-def test_redaction_stays_fast_on_a_long_run_of_keywords() -> None:
-    start = time.perf_counter()
-    ft.redact("token" * 13000)
-    ft.redact("http://a:1/" * 20000)
-    ft.redact("http://a:" + "b" * 200000)
-    ft.redact("http://a:1/@" * 20000)
-    assert time.perf_counter() - start < 1.0
+def test_redaction_of_a_truncated_private_key_runs_to_the_end_of_the_text() -> None:
+    assert ft.redact("x\n-----BEGIN PRIVATE KEY-----\nMIIE\nabc") == "x\n[REDACTED]"
+
+
+def test_redaction_stays_fast_on_long_runs() -> None:
+    for text in ("token" * 13000, "token_" * 11000, "sk-" * 22000, "eyJ" * 22000, "-----BEGIN PRIVATE KEY-----\n" * 2400, "http://a:1/" * 6000, "http://a:1/@" * 6000, "http://a:" + "b" * 65000):
+        start = time.perf_counter()
+        ft.redact(text)
+        assert time.perf_counter() - start < 1.0, text[:20]
 
 
 def test_json_cache_decodes_before_redacting_and_refetches_a_corrupt_file() -> None:
@@ -207,10 +233,10 @@ def test_failed_grade_leaves_the_previous_calibration_file_intact() -> None:
         except RuntimeError:
             pass
         assert out.read_text() == "previous complete run\n"
-        assert [json.loads(line)["pr"] for line in out.with_suffix(".tmp").read_text().splitlines()] == [1]  # the paid answers survive
+        assert [json.loads(line)["pr"] for line in out.with_name(out.name + ".tmp").read_text().splitlines()] == [1]  # the finished rounds survive until the next run
         seen.clear()
         cal.grade(_round_rows(1), TMP, None, out)
-        assert [json.loads(line)["pr"] for line in out.read_text().splitlines()] == [1] and not out.with_suffix(".tmp").exists()
+        assert [json.loads(line)["pr"] for line in out.read_text().splitlines()] == [1] and not out.with_name(out.name + ".tmp").exists()
     finally:
         ft.grade_round = real
 
@@ -219,6 +245,35 @@ def test_pr_subset_does_not_replace_the_full_calibration_file() -> None:
     assert cal.live_out(cal.DEFAULT_OUT, []) == Path(cal.DEFAULT_OUT)
     assert cal.live_out(cal.DEFAULT_OUT, [1110, 1065]) == Path(cal.DEFAULT_OUT).with_name("calibration-pr1110-1065.jsonl")
     assert cal.live_out("/x/mine.jsonl", [1110]) == Path("/x/mine.jsonl")
+    assert cal.live_out(os.path.relpath(cal.DEFAULT_OUT), [1110]).name == "calibration-pr1110.jsonl"  # the same file by another spelling
+
+
+def test_pr_matching_no_corpus_rows_leaves_the_output_alone() -> None:
+    corpus, out = TMP / "corpus.jsonl", TMP / "keep.jsonl"
+    corpus.write_text(json.dumps(_round_rows(1)[0]) + "\n")
+    out.write_text("previous complete run\n")
+    argv, sys.argv = sys.argv, ["calibrate_findings.py", "--corpus", str(corpus), "--out", str(out), "--pr", "999"]
+    try:
+        assert cal.main() == 1
+    finally:
+        sys.argv = argv
+    assert out.read_text() == "previous complete run\n"
+
+
+def _graded(fid: str, p: float, verdict: str = "CONFIRMED") -> dict:
+    return {**finding(fid, "LOW", fid), "pr": 1, "round": 2, "tool": "x", "verdict": verdict, "duplicate_p": p, "duplicate": False, "prior_round": [finding("P1", "LOW", "p")], "introduced_p": 0.5, "severity_jev": "LOW", "severity_score": 0.0,
+            "pre_existing": False, "mechanical": False, "noted_not_blocking": False, "round_same_p": 0.1, "round_converged": False, "round_keystone": fid, "blame": None, "state_error": "no location cited", "fixer": None}
+
+
+def test_report_keeps_refuted_rows_out_of_the_duplicate_gate_numbers() -> None:
+    labels = {(1, 2): {"A": {"duplicate": True, "follow_on": False}, "B": {"duplicate": False, "follow_on": True}, "R": {"duplicate": False, "follow_on": False}}}
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cal.report([_graded("A", 0.6), _graded("B", 0.2), _graded("R", 0.9, "REFUTED")], labels, 0, 0.0, 0, "test")
+    text = buf.getvalue()
+    assert "at 0.5: n=2 tp=1 fp=0 fn=0 tn=1" in text, text
+    assert "rank: 1 of 1 (duplicate, other) pairs" in text, text
+    assert "R=0.90[R]" in text, text
 
 
 def test_duplicate_question_covers_additional_sites_and_excludes_follow_ons() -> None:
@@ -238,6 +293,7 @@ def test_resolves_bare_paths_and_reads_blame_from_a_repo() -> None:
     (repo / "b/Same.kt").write_text("x\n")
     (repo / "Only.kt").write_text("l1\nl2\nl3\nl4\n")
     (repo / "Key.kt").write_text('val password = "abcdefghijklmnop"\n')
+    (repo / "Pem.kt").write_text("before\n-----BEGIN PRIVATE KEY-----\n" + "MIIEsecretbody\n" * 50 + "-----END PRIVATE KEY-----\nafter\n")
     env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x", "PATH": os.environ["PATH"], "HOME": str(TMP)}
     for args in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "one"]):
         subprocess.run(["git", "-C", str(repo), *args], check=True, env=env, capture_output=True)
@@ -262,6 +318,9 @@ def test_resolves_bare_paths_and_reads_blame_from_a_repo() -> None:
     assert ft.finding_state(finding("F4", "LOW", "x"), [], repo, sha, {sha}, now)["state_error"] == "no location cited"
     keyed = {**finding("F5", "LOW", "x"), "locations": [("Key.kt", 1, 1)]}
     assert "abcdefghijklmnop" not in ft.finding_state(keyed, [], repo, sha, {sha}, now)["hunk"]
+    in_key = ft.finding_state({**finding("F6", "LOW", "x"), "locations": [("Pem.kt", 30, 30)]}, [], repo, sha, {sha}, now)["hunk"]
+    assert "MIIE" not in in_key and in_key.startswith("15: [REDACTED]"), in_key  # the cited window sits wholly inside the key
+    assert ft.hunk(repo, sha, "Pem.kt", 54, 54, context=0) == "54: after"  # line numbers hold after the block
 
 
 def test_grades_five_findings_two_duplicates_one_pre_existing() -> None:

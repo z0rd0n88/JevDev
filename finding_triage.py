@@ -107,45 +107,42 @@ ATTR = re.compile(r"^\s*- \*{0,2}(Where|Location|Failure path|Description|Fix|Su
 ATTR_KEY = {"where": "where", "location": "where", "failure": "failure", "description": "failure", "fix": "fix", "suggested": "fix", "evidence": "evidence", "skeptic": "skeptic"}
 WHERE = re.compile(r"([\w./-]+\.\w{1,6}):(\d+)(?:[-–—](\d+))?")  # reports use ASCII and en/em dashes for ranges
 PRIOR_REF = re.compile(r"\bFindings? (\d+(?:(?:,| and) \d+)*)")
-# Known key shapes (prefixed tokens, AWS, Google, JWT, PEM blocks) and generic `key=value` / `user:pass@` forms.
-# Every value class stops at quotes, backslashes, commas, semicolons and whitespace so redacting serialized JSON keeps it parseable.
-# `sk`, `hf` and `npm` also start ordinary names (`sk-learn`, `hf_hub_download`, `npm_package_version`), so those need the key's own shape.
+# Redaction fails closed: this text goes to an outside service, so a redacted `tokenizer` costs nothing and a missed secret does.
+# Known key shapes first (prefixed tokens, AWS, Google, JWT, PEM blocks, a truncated one to the end of the text); `sk`, `hf` and `npm`
+# also start ordinary names (`sk-learn`, `hf_hub_download`, `npm_package_version`), so those need the key's own shape.
+_PEM = r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"
+PEM_BLOCK = re.compile(_PEM, re.S)
 TOKEN = re.compile(
-    r"(?:(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(?:(?:ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|glpat|rpa)[-_][A-Za-z0-9_-]{8,}"
-    r"|sk[-_](?=[A-Za-z_-]*\d)[A-Za-z0-9_-]{20,}|(?:hf|npm)_[A-Za-z0-9]{30,})"
+    r"(?:(?<![A-Za-z0-9])|(?<=\\[nrt]))(?:ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|glpat|rpa)[-_][A-Za-z0-9_-]{8,}"
+    r"|(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(?:sk[-_](?=[A-Za-z_-]{0,40}\d)[A-Za-z0-9_-]{12,}|(?:hf|npm)_[A-Za-z0-9]{30,})"
     r"|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}"
     r"|Bearer [A-Za-z0-9._-]{12,}"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?"
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----)",
+    r"|eyJ[A-Za-z0-9_-]{10,2048}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?"
+    rf"|{_PEM}",
     re.S,
 )
-# A keyword as a whole identifier part: `tokenizer` and `secretary` are out, `accessToken` and `DISCORD_BOT_TOKEN` are in.
-_SECRET_KEY = r"[A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|password|passwd)s?(?:(?:[_-]|(?-i:[A-Z]))[A-Za-z0-9_-]{0,40})?"
-# Values that name something instead of holding it, with nothing else up to where the value ends: `A_CONSTANT`, a call or index
-# whose one argument is a digit-free name (`getenv(name)`, `headers["x"]`), a dotted reference.
+# A keyword anywhere in an identifier, then `=`, `:`, `:=`, `=>`, a typed declaration, or a quoted `to "..."` / `("...")`.
+# A value runs to whitespace, a quote, a backtick, or a `\"` / `\\` from serialized JSON; only those keep JSON parseable.
+_SECRET_WORD = r"(?:api[_-]?key|secret|token|password|passwd|pwd|passphrase|private[_-]?key|mnemonic|credential|[_-]pass(?![a-z]))"
+_OPERATOR = r"\\*[\"'`]?(?:\s*:\s*[A-Za-z_][\w.<>?, ]{0,60}\s*=|\s*:=|\s*=>|\s*[=:]|\s+to\s+(?=\\*[\"'])|\((?=\\*[\"']))\s*\\*[\"'`]?"
+_VALUE_CHAR = r"(?:[^\\\"'`\s]|\\(?![\\\"]))"
+# Only a whole all-caps constant is exempt (`token: WITHDRAWAL_STORE_UNAVAILABLE` is an error code, not a secret).
 # ponytail: a digit-free underscored all-caps secret passes as a constant; none seen in the corpus.
-_END = r"\.?[)\]}]*(?:[\\\"'`,;\s]|$)"
-_NOT_SECRET = rf"(?:[A-Z]+(?:_[A-Z]+)+|[A-Za-z_][A-Za-z_.]*[(\[][\"']?[A-Za-z_.-]*[\"']?[)\]]|[a-z]+(?:\.[A-Za-z]+)+){_END}"
-ASSIGNED = re.compile(rf"(?i)({_SECRET_KEY})(\\*[\"'`]?\s*[=:]\s*\\*[\"'`]?)(?!(?-i:{_NOT_SECRET}))[^\\\"'`,;\s]{{12,}}")
-SECRET_KEY = re.compile(_SECRET_KEY, re.I)
-NOT_SECRET = re.compile(_NOT_SECRET)
-# URL credentials are found per whitespace- and quote-free run with string search: no length cap to slip past, and linear on a run of URLs.
-URL_RUN = re.compile(r"[^\\\s\"']+")
-URL_USER = re.compile(r"://[^/:@]+:")
-# `host:8080/path/@me`: the `@` opens a path segment of this URL; `alex:2024/pw@db` is a password.
-PORT_THEN_PATH = re.compile(r"\d+/(?:(?:(?!://)[^@])*/)?@")
+_CONSTANT = r"[A-Z]+(?:_[A-Z]+)+[.,;)\]}]*(?:[\\\"'`\s]|$)"
+ASSIGNED = re.compile(rf"(?i)({_SECRET_WORD}[A-Za-z0-9_-]{{0,80}})({_OPERATOR})(?!(?-i:{_CONSTANT})){_VALUE_CHAR}{{12,}}")
+SECRET_WORD = re.compile(_SECRET_WORD, re.I)
+CONSTANT = re.compile(_CONSTANT)
+# URL credentials, per run of text with string search: no length cap to slip past, and linear on a run of URLs. Anything from the
+# first `://user:` to the last `@` in the run goes, so a port and path with an `@` in it is redacted too.
+URL_RUN = re.compile(r"(?:[^\\\s\"']|\\(?![\\\"]))+")
+URL_USER = re.compile(r"://(?:[^/:]*:|[^/:@]{16,}(?=@))")
 
 
 def _redact_userinfo(m: re.Match) -> str:
-    run, start = m.group(0), 0
-    while user := URL_USER.search(run, start):
-        port = PORT_THEN_PATH.match(run, user.end())
-        if port:
-            start = port.end()  # exempt only this URL; a later one in the run still counts
-            continue
-        at = run.rfind("@", user.end())
-        return run if at < 0 else f"{run[:user.start()]}://[REDACTED]@{run[at + 1:]}"
-    return run
+    run = m.group(0)
+    user = URL_USER.search(run)
+    at = run.rfind("@", user.end()) if user else -1
+    return run if at < 0 else f"{run[:user.start()]}://[REDACTED]@{run[at + 1:]}"
 
 
 def redact(text: str) -> str:
@@ -155,15 +152,15 @@ def redact(text: str) -> str:
 
 
 def redact_json(value, key: str = ""):
-    """A decoded JSON value: strings by content, and whole when their key names a secret, since no `key=` is left to match."""
+    """A decoded JSON value: strings by content, and whole under a key that names a secret, since no `key=` is left to match."""
     if isinstance(value, str):
-        if value and SECRET_KEY.fullmatch(key) and not NOT_SECRET.fullmatch(value):
+        if value and SECRET_WORD.search(key) and not CONSTANT.fullmatch(value):
             return "[REDACTED]"
         return redact(value)
     if isinstance(value, list):
         return [redact_json(v, key) for v in value]
     if isinstance(value, dict):
-        return {redact(k): redact_json(v, k) for k, v in value.items()}
+        return {redact(k): redact_json(v, k if SECRET_WORD.search(k) else key) for k, v in value.items()}
     return value
 
 
@@ -269,7 +266,7 @@ def _new(findings, prefix, sev, title, verdict, fid=None) -> dict:
 def parse_fixer_report(text: str) -> dict[str, dict]:
     """finding-fixer Step 5 lines, keyed by the reviewer's finding id."""
     out = {}
-    for line in text.splitlines():
+    for line in redact(text).splitlines():
         m = FIXER.match(line.strip())
         if m:
             fid, ruling, action, note = m.groups()
@@ -296,7 +293,8 @@ def hunk(repo: Path, sha: str, path: str, start: int, end: int, context: int = H
     text = git(repo, "show", f"{sha}:{path}")
     if not text:
         return ""
-    lines = text.splitlines()
+    # blocks go first, on the whole file: a window inside a key has no BEGIN or END for redact() to find
+    lines = PEM_BLOCK.sub(lambda m: "\n".join("[REDACTED]" for _ in m.group(0).split("\n")), text).splitlines()
     lo, hi = max(1, start - context), min(len(lines), end + context)
     return "\n".join(f"{n}: {lines[n - 1]}" for n in range(lo, hi + 1))
 
