@@ -25,8 +25,10 @@ from jev_patterns import JevError, NO_KEY, call, has_key, model_name
 from scope_sentinel import (
     BASH_QUESTIONS,
     BLOCK_NOTICE,
+    MAX_JUDGED_COMMAND,
     SENTINEL_VERSION,
     append_row,
+    command_view,
     gate_bash,
     is_risky,
     redact,
@@ -288,19 +290,26 @@ def parse_own_state(text: str) -> dict:
 
 def gate_command(command: str, cwd: Path, root: Path, model: str):
     """Judge command live and log the decision. Returns (blocked, reason); raises RuntimeError or KeyError."""
-    response = call(
-        {"command": redact(command)[:2000], "cwd": str(root)},
-        BASH_QUESTIONS,
-        job="ask_jev_gate",
-        model=model,
-    )
-    answers = response["answers"]
-    blocked, reason = gate_bash(answers)
+    view, hits, unreliable, hid_operator = command_view(command)
     log_dir = (
         Path(os.environ["JEV_LOG_DIR"])
         if os.environ.get("JEV_LOG_DIR")
         else root / ".local"
     )
+    answers, response = None, {}
+    if len(command) > MAX_JUDGED_COMMAND:
+        blocked, reason = True, f"the judge reads {MAX_JUDGED_COMMAND} characters and this command has {len(command)}"
+    elif unreliable:
+        blocked, reason = True, "the command could not be read as shell, so the judge would not see what it runs"
+    else:
+        response = call(
+            {"command": view, "cwd": str(root)},
+            BASH_QUESTIONS,
+            job="ask_jev_gate",
+            model=model,
+        )
+        answers = response["answers"]
+        blocked, reason = gate_bash(answers)
     append_row(
         log_dir / "sentinel.jsonl",
         {
@@ -314,11 +323,15 @@ def gate_command(command: str, cwd: Path, root: Path, model: str):
             "gate": "bash",
             "cwd": str(cwd),
             "repo": str(root),
-            "command": redact(command)[:2000],
+            "command": view[:MAX_JUDGED_COMMAND],
             "risky": is_risky(command),
-            "effect": answers["effect"]["choice"],
-            "effect_confidence": answers["effect"]["confidence"],
-            "destructive_intent": answers["destructive_intent"]["noul"],
+            "redacted_hits": hits,
+            "scan_unreliable": unreliable,
+            "hidden_operator": hid_operator,
+            "clipped": len(command) > MAX_JUDGED_COMMAND,
+            "effect": answers["effect"]["choice"] if answers else None,
+            "effect_confidence": answers["effect"]["confidence"] if answers else None,
+            "destructive_intent": answers["destructive_intent"]["noul"] if answers else None,
             "would_block": blocked,
             "block_reason": reason,
             "jev_model": response.get("model"),
@@ -378,6 +391,7 @@ def cmd_ask(args) -> int:
             done = subprocess.run(
                 args.command,
                 shell=True,
+                executable="/bin/bash",  # the shell command_view reads
                 cwd=root,
                 timeout=60,
                 capture_output=True,
@@ -389,12 +403,13 @@ def cmd_ask(args) -> int:
             return emit({"error": "command timed out after 60 s"}, 2)
         output = redact_deep(
             {
-                "command": args.command,
+                "command": "",
                 "exit_code": done.returncode,
                 "stdout": done.stdout[:200000],
                 "stderr": done.stderr[:200000],
             }
         )
+        output["command"] = command_view(args.command)[0]
     parts = {
         **{k: tokens(v) for k, v in own.items()},
         **{rel: tokens(text) for rel, text in files.items()},

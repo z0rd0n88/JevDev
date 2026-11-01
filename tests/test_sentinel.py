@@ -2,12 +2,15 @@
 
 import json
 import os
+import random
+import re
 import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
+from unittest import mock
 
 SOURCE = Path(__file__).parents[1] / "scope_sentinel.py"
 sys.path.insert(0, str(SOURCE.parent))
@@ -327,7 +330,7 @@ def new_repo(tmp: Path, agents: str = "") -> Path:
 
 
 def check_bash_gate() -> None:
-    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v6 row, fail-open."""
+    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v7 row, fail-open."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "jev").write_text(REC_STUB)
@@ -343,7 +346,7 @@ def check_bash_gate() -> None:
         # AC-1.1: irreversible 0.90 -> would_block, nothing on stdout, fast
         assert run_hook(tmp, event("rm -rf build")) < 2
         row = rows(log, 1)[0]
-        assert row["sentinel_version"] == "shadow-v6" and row["gate"] == "bash" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v7" and row["gate"] == "bash" and "error" not in row, row
         assert row["risky"] is True and row["effect"] == "irreversible", row
         assert row["effect_confidence"] == 0.9 and row["destructive_intent"] == 0.2, row
         assert row["would_block"] is True and row["block_reason"].startswith("irreversible (0.90)"), row
@@ -493,7 +496,7 @@ def check_write_gate() -> None:
         questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
         assert list(questions) == ["kind", "contains_secret"], questions
         assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
-        assert row["sentinel_version"] == "shadow-v6" and row["gate"] == "write" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v7" and row["gate"] == "write" and "error" not in row, row
         assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
         assert "content" not in row and "abc123" not in json.dumps(row), row
@@ -694,8 +697,232 @@ def check_write_configs() -> None:
                 assert hook["timeout"] == 10, hook
 
 
+def check_bash_differential(sentinel) -> None:
+    """Fuzz against bash itself: a command bash really ran stays visible to the judge, and a key's value does not."""
+    parts = ["token=SEKRET", "password='SEK RET'", 'API_KEY="SEKRET"', "--password SEKRET", "--token=SEKRET", "token=$'SEKRET'", "token=${x:-SEKRET}",
+             "export TOKEN=SEKRET", "mark1", "mark2 a", "$(mark3)", "`mark4`", '"$(mark5)"', "token=$(mark6)", 'token="$(mark7)"', "(mark8)", "{ mark9; }",
+             "sh -c 'token=SEKRET;mark1'", "bash -ec 'token=SEKRET&&mark2'", "eval 'token=SEKRET;mark3'", "eval token=SEKRET\\;mark4", "echo 'token=SEKRET;mark5'|sh",
+             "bash <<E\ntoken=SEKRET&&mark6\nE", "cat <<'E' | bash\ntoken=SEKRET&&mark7\nE", "bash <<<'token=SEKRET;mark8'", "env bash <<E\ntoken=SEKRET;mark9\nE",
+             "true <<E\ntoken=$(mark1)SEKRET\nE", "trap 'token=SEKRET;mark2' EXIT", "token=", "token:", "authorization:", "Authorization: Bearer", "https://u:p", "true", "x@h",
+             "#", "# don't", "don\\'t", "\\", "$'it\\'s'", "${x:-y}", "$((1+2))", "((1<<0))", "[ a = a ]", "if true; then mark1; fi", "for i in 1; do mark2; done",
+             "case a in a) mark3;; esac", "x=1 mark4", "FOO=--token mark5", "A=token: mark6", "a\xa0b", "a\rb", ">/dev/null", "--token"]
+    joins = [" ", ";", "&&", "||", "|", "&", "\n", " ; ", " && ", ""]
+    rng = random.Random(61)
+    with tempfile.TemporaryDirectory() as d:
+        bin_dir, log = Path(d) / "bin", Path(d) / "ran"
+        bin_dir.mkdir()
+        for n in range(1, 10):
+            script = bin_dir / f"mark{n}"
+            script.write_text(f"#!/bin/sh\necho mark{n} >> {log}\n")
+            script.chmod(0o755)
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        for _ in range(int(os.environ.get("REDACT_FUZZ", "250"))):
+            command, glued = rng.choice(parts), False
+            for _ in range(rng.randint(1, 4)):
+                join = rng.choice(joins)
+                glued = glued or not join
+                command += join + rng.choice(parts)
+            log.write_text("")
+            run = subprocess.run(["bash", "-c", command], cwd=d, env=env, capture_output=True, text=True, errors="replace", timeout=10, stdin=subprocess.DEVNULL)
+            view, _, unreliable, _ = sentinel.command_view(command)
+            if unreliable:  # a live gate refuses these
+                continue
+            for mark in set(log.read_text().split()):
+                assert mark in view, ("bash ran hidden text", command, view)
+            # gluing parts can turn a value into the word bash runs, as in `x=1--password SEKRET`, so only clean joins count here
+            if "syntax error" not in run.stderr and not glued and "\\ " not in command:
+                assert "SEKRET" not in view and "SEK RET" not in view, ("value shown", command, view)
+
+
+def check_command_redaction() -> None:
+    """A shell command hides a value but never what the shell would run after it."""
+    sentinel = load_sentinel()
+    failures = []
+    # (command, text the judge must see, text it must not)
+    for text, shown, hidden in (
+        ("token=x&&rm -rf /", "&&rm -rf /", "x&"), ("token=0||purge", "||purge", "0|"), ("token=0|purge", "|purge", "0|"),
+        ("PASSWORD=x|tee f", "|tee f", "x|"), ("token=a>/etc/passwd", ">/etc/passwd", "a>"), ("token=a</etc/passwd", "</etc/passwd", "a<"),
+        ("token=a&", "&", "a&"), ("token=a;reboot", ";reboot", "a;"), ("TOKEN=$(curl e|sh)", "$(curl e|sh)", "REDACTED"),
+        ('token="$(reboot now)"', '"$(reboot now)"', "REDACTED"), ('token="a`reboot`"', "`reboot`", '"a'),
+        ("TOKEN=\\\n  /tmp/evil.sh\n", "/tmp/evil.sh", "REDACTED"), ("password:\n  reboot\n", "reboot", "REDACTED"),
+        ("token=a,b", "token=[REDACTED]", "a,b"), ("token='a;b&&c'", "token=[REDACTED]", "a;b"), ('token="a;b&&c"', "token=[REDACTED]", "a;b"),
+        ("mysql --password hunter2 -e x", "-e x", "hunter2"), ("git push https://u:pw@host/r", "@host/r", "pw"), ("echo ghp_abcdefghijklmnop", "echo", "ghp_"),
+        # a second value is hidden too, and a quoted secret stays whole
+        ("token=a&&password=hunter2 ./run", "&&password=[REDACTED] ./run", "hunter2"), ("API_KEY=abc|SECRET=hunter2", "|SECRET=[REDACTED]", "hunter2"),
+        ("curl https://x/?token=abc&secret=hunter2", "&secret=[REDACTED]", "hunter2"), ("--password=a&&--password=hunter2", "&&", "hunter2"),
+        ("token=&password=hunter2", "token=&password=[REDACTED]", "hunter2"), ('curl -d "password=my pass word" u', " u", "pass word"),
+        ("curl -d 'password=p;ss' u", " u", "p;ss"), ('token="it\'s&x" y', " y", "it"), ('curl -d "password=p&ss" u', '"password=[REDACTED]" u', "p&ss"),
+        ('curl -d \'{"token": "a&b"}\' u', " u", "a&b"), ('curl "https://u:p&w@host"', "@host", "p&w"), ('curl "https://u:&pw@host"', "@host", "pw"),
+        # a closing quote ends the quoted text
+        ('grep "token=" config && rm -rf /data && echo "done"', '&& rm -rf /data && echo "done"', "REDACTED"),
+        ('echo "Enter password:"; rm -rf /data; echo "done"', '; rm -rf /data; echo "done"', "REDACTED"),
+        ('curl -d "token="$TOKEN && rm -rf /data && echo "done"', "&& rm -rf /data", "REDACTED"),
+        ("export 'token='x&&rm -rf /data", "&&rm -rf /data", "x&"), ('echo "token="a&whoami', "&whoami", 'a&'),
+        ('curl "https://u:x";reboot;echo@h', ";reboot;echo@h", "REDACTED"), ("curl 'https://u:x'&reboot@h", "&reboot@h", "REDACTED"),
+        ('echo "https://u:p"&id&"q@h"', "&id&", "REDACTED"), ('echo "https://u:p"&&whoami;echo"@h"', "&&whoami;echo", "REDACTED"),
+        ("curl https://u:x;reboot;echo@h", ";reboot;echo@h", "REDACTED"), ("curl https://u:x&reboot&echo@h", "&reboot&echo@h", "REDACTED"),
+        # whitespace after = ends the assignment, so the next word is the command
+        ("token= reboot", "token= reboot", "REDACTED"), ("token= rm -rf /data", "rm -rf /data", "REDACTED"), ("API_KEY= /tmp/evil.sh --wipe", "/tmp/evil.sh --wipe", "REDACTED"),
+        ("token=&reboot", "token=&reboot", "REDACTED"),
+        # ansi quotes, comments, heredocs and nested substitutions do not confuse the quote state
+        ("echo $'it\\'s'; token=a&&rm -rf /data", "&&rm -rf /data", "a&"), ("true;# don't\ntoken=a&&rm -rf /data", "&&rm -rf /data", "a&"),
+        ("cat <<X\ndon't\nX\ntoken=a&&rm -rf /data", "&&rm -rf /data", "a&"), ('echo "$(echo "it\'s")" token=a&&rm -rf /data', "&&rm -rf /data", "a&"),
+        ("echo x # don't\ntoken=a&reboot", "&reboot", "a&"), ('echo "don\'t" && token=a&reboot', "&reboot", "a&"), ('echo \\" && token=a&reboot', "&reboot", "a&"),
+        ('cat <<EOF\n"\nEOF\ncurl -d "password=p&ss" u', " u", "p&ss"),
+        # quote state describes the original command
+        ('token="$(true)" ; curl --password a&&rm -rf /data', "&&rm -rf /data", "a&"), ('TOKEN="$(cat f)"; curl -u me:pw&&rm -rf /data', "&&rm -rf /data", "pw"),
+        ("token='a\"b' true --password=x&&whoami", "&&whoami", "x&"), ('token="$(date)" ; curl "https://u:p&w@h"', "@h", "p&w"),
+        # the authorization scheme stops at the command boundary
+        ("authorization:foo;rm -rf /data", ";rm -rf /data", "REDACTED"), ("echo authorization: a; whoami", "; whoami", "REDACTED"), ("echo Authorization: a;whoami -u", "whoami -u", "REDACTED"),
+        ('curl -H "Authorization: Bearer abcdefghijklmnop1234" u', " u", "abcdefgh"), ("echo Authorization: Bearer abcdefghijklmnop1234", "echo", "abcdefgh"),
+        # an escaped operator is part of the word, and comments and heredoc bodies are text
+        ("PASSWORD=p\\&ss\\|w0rd ./run", " ./run", "ss"), ("mysql --password=ab\\|cd -e x", "-e x", "cd"), ("curl -u user:pw\\>rd u", " u", "rd"),
+        ('token="ab\\$(cd12"', "token=", "cd12"), ("# password=p&ssSECRET", "#", "SECRET"), ("# token=)hunter2", "#", "hunter2"),
+        ("cat > .env <<'EOF'\nDB_PASSWORD=p&ssw0rd|x\nAPI_KEY=&abc123\nEOF\nrm -rf /data", "rm -rf /data", "ssw0rd"), ("cat <<EOF\npassword:\n  hunter2\nEOF", "EOF", "hunter2"),
+        ("cat <<EOF\nAPI_KEY=&abc123\nEOF", "EOF", "abc123"),
+        # literal text around an expansion is hidden, the expansion is not
+        ('token="$(date)hunter2"', "$(date)", "hunter2"), ('token="abc$(x)hunter2"', "$(x)", "hunter2"), ('curl "https://u:$(x)hunter2@h"', "$(x)", "hunter2"),
+        ('curl "https://u:$(reboot)@h"', "$(reboot)", "REDACTED"), ("token=$HOME", "$HOME", "REDACTED"),
+        # code nested in a quoted argument is still code
+        ('ssh prod "export TOKEN=x&&rm -rf /data"', "&&rm -rf /data", "x&"), ("sh -c 'token=x&&rm -rf /data'", "&&rm -rf /data", "x&"),
+        ("bash -c 'token=x&&rm -rf /data'", "&&rm -rf /data", "x&"), ("docker exec c sh -c 'password=x||mkfs /dev/sda'", "||mkfs /dev/sda", "x|"),
+        ("bash -c 'token=a&&rm${IFS}-rf${IFS}/data'", "&&rm${IFS}-rf${IFS}/data", "a&"), ('eval "token=x&&reboot"', "&&reboot", "x&"), ("bash <<EOF\ntoken=x&&reboot\nEOF", "&&reboot", "x&"),
+        # credential forms the list used to miss in commands
+        ("token=$'hunter2'", "token=", "hunter2"), ("token=abc'hunter2'", "token=", "hunter2"), ('mysql --password "hunter2"', "--password", "hunter2"), ("mysql --password 'a b' -e x", "-e x", "a b"),
+        ('curl -u "user:hunter2" h', " h", "hunter2"), ('curl -d "{\\"password\\":\\"hunter2\\"}" u', " u", "hunter2"), ("export TOKEN=\\\nhunter2", "TOKEN=", "hunter2"),
+        ("TOKEN=(\n  hunter2\n)\necho ok", "echo ok", "hunter2"), ("token=(hunter2)", "token=(", "hunter2"), ("token={hunter2}", "token=", "hunter2"), ("token=a{b}", "token=", "{b}"),
+        ("true --password whoami", "--password", "whoami"), ("true --password --verbose", "--verbose", "REDACTED"),
+        # found by fuzzing against bash
+        ("<<<token=hunter2 cat", " cat", "hunter2"), ("cat <<E\ntoken=$(reboot)hunter2\nE", "$(reboot)", "hunter2"), ("cat <<'E'\n$(reboot)\nE", "$(reboot)", "REDACTED"),
+        ('sh -c "token=x;reboot"y', ";reboot", "x;"), ("# && token=$'hunter2'", "#", "hunter2"), ("#|token=a||password='my pass'\necho ok", "echo ok", "my pass"),
+        ("--password x --password hunter2", "--password", "hunter2"),
+        # no character can stall the lexer
+        *((f"echo a{ws}b;reboot", ";reboot", "REDACTED") for ws in "\x0b\x0c\x1c\x1d\x1e\x1f\x85\xa0\u1680\u2000\u200a\u2028\u2029\u202f\u205f\u3000"),
+        # every spelling of a shell reading code
+        ("bash -ec 'token=x&&reboot'", "&&reboot", "x&"), ("bash -xc 'token=x&&reboot'", "&&reboot", "x&"), ("sh -euc 'token=x&&reboot'", "&&reboot", "x&"),
+        ("bash -c -- 'token=x&&reboot'", "&&reboot", "x&"), ("bash -c \\\n 'token=x&&reboot'", "&&reboot", "x&"), ('"bash" -c \'token=x&&reboot\'', "&&reboot", "x&"),
+        ("\\bash -c 'token=x&&reboot'", "&&reboot", "x&"), ("$BASH -c 'token=x&&reboot'", "&&reboot", "x&"), ('"$0" -c \'token=x&&reboot\'', "&&reboot", "x&"),
+        ('e"val" \'token=x&&reboot\'', "&&reboot", "x&"), ("\\eval 'token=x&&reboot'", "&&reboot", "x&"), ("eval token=a\\;reboot", ";reboot", "a;"),
+        ("sh -c token=a\\&\\&reboot", "&&reboot", "a&"), ("bash -c $'token=x\\nreboot'", "reboot", "=x"), ("trap 'token=x&&reboot' EXIT", "&&reboot", "x&"),
+        ("bash -ec 'TOKEN=abc rm -rf /data'", "rm -rf /data", "abc"),
+        # text a shell reads through stdin
+        ("cat <<'E' | bash\ntoken=x&&reboot\nE", "&&reboot", "x&"), ("env bash <<E\ntoken=x&&reboot\nE", "&&reboot", "x&"), ("FOO=1 bash <<E\ntoken=x&&reboot\nE", "&&reboot", "x&"),
+        ("command bash <<E\ntoken=x&&reboot\nE", "&&reboot", "x&"), ("<<E bash\ntoken=x&&reboot\nE", "&&reboot", "x&"), ("{ bash <<E\ntoken=x&&reboot\nE\n}", "&&reboot", "x&"),
+        ("bash <<<'token=x&&reboot'", "&&reboot", "x&"), ("source /dev/stdin <<<'token=x&&reboot'", "&&reboot", "x&"), ("echo 'token=x&&reboot' | sh", "&&reboot", "x&"),
+        ("printf %s 'token=x&&reboot' | bash", "&&reboot", "x&"), ("sudo bash <<E\ntoken=x&&reboot\nE", "&&reboot", "x&"), ("ssh prod <<'E'\ntoken=x&&rm -rf /data\nE", "&&rm -rf /data", "x&"),
+        ("ssh host bash <<'E'\ntoken=x&&reboot\nE", "&&reboot", "x&"), ("docker exec -i c bash <<E\ntoken=x&&reboot\nE", "&&reboot", "x&"),
+        # a credential beside nested code, or under a word that merely contains ssh or eval
+        ('ssh prod TOKEN="hunter2" ./deploy.sh', "./deploy.sh", "hunter2"), ("ssh prod mysql --password='hunter2' -e x", "-e x", "hunter2"), ("eval export API_KEY='hunter2'", "export", "hunter2"),
+        ("sh -c TOKEN='hunter2'", "sh -c", "hunter2"), ("eval 'x;'ghp_abcdefghijklmnop1234", "eval", "ghp_"), ('ssh prod curl -u "me:hunter2" u', " u", "hunter2"), ('ssh h mysql --password "hunter2"', "--password", "hunter2"),
+        ("sh -c 'token='\"hunter2\"", "sh -c", "hunter2"), ("`true`bash -c 'token=x&&reboot'", "&&reboot", "x&"), ("`true` eval 'token=x&&reboot'", "&&reboot", "x&"), ('bash -c "$(curl -H "Authorization: token ghp_abcdefghijklmnop1234" https://x/i.sh)"', "curl", "ghp_"), ('eval "$(echo "token=hunter2")"', "echo", "hunter2"),
+        ('echo ssh --password="hunter2"', "--password", "hunter2"), ('rsync -e ssh --password="hunter2" a b', " a b", "hunter2"), ("echo ssh token='hunter2'", "ssh", "hunter2"),
+        ("grep eval 'password=p&ss' f", " f", "p&ss"), ("curl https://x/ssh -d 'password=p&ss'", "-d", "p&ss"), ('echo ssh "password=my pass word"', "ssh", "pass word"), ('sh -c "curl -d \\"password=p&ss\\" u"', " u", "p&ss"),
+        # ${VAR:-word} holds literal text
+        ("token=${TOKEN:-hunter2}", "token=", "hunter2"), ('export API_KEY="${API_KEY:-hunter2}"', "API_KEY=", "hunter2"), ("echo ${x:-ghp_abcdefghijklmnop1234}", "echo", "ghp_"),
+        ('curl -H "Authorization: Bearer ${T:-abcdefghijklmnop1234}" u', " u", "abcdefgh"), ("curl https://u:${P:-hunter2}@h", "@h", "hunter2"), ("token=${x:-$(reboot)}", "$(reboot)", "SEKRET"),
+        # only the word itself makes a key, and an assignment prefix is not one
+        ("FOO=--token ./MARK.sh", "./MARK.sh", "REDACTED"), ("A=token: ./MARK.sh", "./MARK.sh", "REDACTED"),
+        # the lexer follows bash here, and a heredoc is consumed whatever depth opened it
+        ("echo a\r# token=x;reboot", ";reboot", "SEKRET"), ("token=${x:-\"}'\"}; reboot; echo \\'", "; reboot;", "SEKRET"), ("echo `true # x`; token=a&&reboot", "&&reboot", "a&"),
+        ("echo $[1<<2]\ntoken=a&&reboot", "&&reboot", "a&"), ("((1<<0\n+0)); token=x&&reboot", "&&reboot", "x&"), ("(cat <<E) >.env\nDB_PASSWORD=p&ssw0rd|x\nE", "E", "ssw0rd"),
+        ("cat <<E\nDB_PASSWORD=ab\nE\r\nDB_PASSWORD=p&ssw0rd\nE", "E", "ssw0rd"),
+        # file redirects and values that start like flags
+        ("echo --token > OUT", "> OUT", "REDACTED"), ("echo password: >OUT", ">OUT", "REDACTED"), ("echo --password >> OUT2", ">> OUT2", "REDACTED"),
+        ("cat <<E\ncurl -u me:hunter2 h\nE", " h", "hunter2"), ('echo "curl -u me:hunter2 h"', " h", "hunter2"), ("mysql --password -hunter2 -e x", "-e x", "hunter2"), ("mysql --password -S3cret! -e x", "-e x", "S3cret"),
+        ("token=$1hunter2", "token=", "hunter2"), ("PASSWORD=abc$def", "PASSWORD=", "def"), ('PASSWORD="x$1secret"', "PASSWORD=", "secret"), ('curl "https://u:pa$sw0rd@h"', "@h", "sw0rd"),
+        ("token=$x", "$x", "REDACTED"), ("token=$1", "$1", "REDACTED"),
+        # key forms split across words or lines
+        ("password =hunter2", "password", "hunter2"), ("x token :hunter2", "token", "hunter2"), ("make TOKEN := hunter2", ":=", "hunter2"), ("curl -H Authorization:Bearer abcdefghijklmnop1234 u", " u", "abcdefgh"),
+        ('curl -d {"token": "hunter2"} u', " u", "hunter2"), ("mysql --password \\\n  hunter2", "--password", "hunter2"), ("curl -u \\\n me:hunter2 u", " u", "hunter2"),
+        ('curl -d "user=a&password=my pass word" u', " u", "pass word"), ('psql "host=x password=my pass"', "host=x", "my pass"), ("curl --user me:x u", " u", ":x"), ("curl -ume:hunter2 u", " u", "hunter2"),
+        ("--client-secret hunter2", "--client-secret", "hunter2"), ("--access-token hunter2", "--access-token", "hunter2"), ("sshpass -p hunter2 ssh h", "ssh h", "hunter2"), ("TOKEN[0]=hunter2", "TOKEN[0]=", "hunter2"),
+    ):
+        view = sentinel.redact_command(text)
+        if shown not in view or hidden in view:
+            failures.append((text, view, shown, hidden))
+    assert not failures, "\n".join(map(repr, failures))
+    # file text keeps a secret's punctuation and a next-line value hidden
+    assert sentinel.redact("PASSWORD=p(ss)word") == "PASSWORD=[REDACTED]"
+    assert sentinel.redact("password:\n  hunter2\n") == "password:\n  [REDACTED]\n"
+    assert sentinel.redact('{\\"password\\":\\"hunter2\\"}').count("hunter2") == 0
+    # the row gets a signal when the view was hidden from, or could not be read
+    assert sentinel.command_view("token=a&&b")[1:] == (1, False, False)
+    assert sentinel.command_view("echo ok")[1:] == (0, False, False)
+    assert sentinel.command_view('curl -d "password=p&ss" u')[3] is True
+    assert sentinel.command_view("echo 'open")[2] is True
+    assert sentinel.command_view('echo "open\ncurl -d "password=p&ss" u')[2] is True
+    assert sentinel.command_view("x" * 300_000)[2] is True
+    # a command the lexer cannot follow says so, and one U+E000 cannot force that
+    for text in ("bash <<<'token=x;reboot'\\", '"$(' * 40, "cat <<$'E'\nx\nE", "cat <<E$xy\nx\nE", "cat <<$(true)\nx\nE", "$(" * 40, 'echo "open', "echo $'open"):
+        assert sentinel.command_view(text)[2] is True, text
+    assert sentinel.command_view("token=x&&echo \ue000")[0] == "token=[REDACTED]&&echo \ue000"
+    assert sentinel.command_view("echo \ue000; token=x&&reboot")[2] is False
+    # a backslash inside a quoted value does not end it, in file text too
+    for text in ('{"password":"p\\\\ssw0rd"}', '"api_key": "abc\\/def"', '{"token": "ab\\ncd"}'):
+        assert "ssw0rd" not in sentinel.redact(text) and "def" not in sentinel.redact(text) and "cd" not in sentinel.redact(text), text
+    # every secret pattern is reachable through the hint that guards it
+    for text in ("Authorization: Basic abc", "bearer abcdefghijklmnop1234", "token=a", "--password=a", " -u me:a", "https://u:p@h", "ghp_abcdefghij", "sk-abc1234567890123456789",
+                 "ts_abcdefghijklmnop", "AKIAIOSFODNN7EXAMPLE", "xoxb-123456789012", "eyJabcdefghijk.abcdefghijk.abcdefghijk", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC"):
+        assert sentinel.redact(text) != text and sentinel._SECRET_HINT.search(text), text
+    for text in ("token&" * 30_000, "token=a&" * 25_000, "' " * 95_000, '"' * 190_000, "$(" * 90_000, "\\\\" * 95_000, "(" * 190_000, "# token=a\n" * 18_000,
+                 '"$(' * 60_000, "\xa0" * 190_000, "a\n" * 95_000, "bash <<A\n" * 20_000, "cat <<A\n" * 20_000, "${" * 90_000, "`" * 190_000, "|sh " * 45_000):
+        start = time.perf_counter()
+        sentinel.redact_command(text)
+        assert time.perf_counter() - start < 5, ("command redaction must stay linear", text[:12])
+    check_bash_differential(sentinel)
+
+    command = "export token=x&&rm -rf /data"
+    want = "export token=[REDACTED]&&rm -rf /data"
+    seen = []
+
+    def stop(state, *args, **kwargs):
+        seen.append(state)
+        raise RuntimeError("stop")
+
+    with mock.patch.object(sentinel, "call", stop):
+        try:
+            sentinel.judge_bash("clean up", "", command, "/repo")
+        except RuntimeError:
+            pass
+    assert seen[0]["command"] == want, seen
+
+    import ask_jev_files
+    answers = {"effect": {"choice": "reversible", "confidence": 0.9}, "destructive_intent": {"noul": 0.1}}
+    with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"JEV_LOG_DIR": d}):
+        with mock.patch.object(ask_jev_files, "call", return_value={"answers": answers, "model": "m"}) as call:
+            ask_jev_files.gate_command(command, Path(d), Path(d), "m")
+        assert call.call_args.args[0]["command"] == want, call.call_args
+        row = json.loads((Path(d) / "sentinel.jsonl").read_text().splitlines()[-1])
+        assert row["command"] == want, row
+        assert row["redacted_hits"] == 1 and row["scan_unreliable"] is False and row["hidden_operator"] is False, row
+        # a command the judge could not read in full is refused, without a Jev call
+        with mock.patch.object(ask_jev_files, "call") as call:
+            blocked, reason = ask_jev_files.gate_command(": " + "a" * 2100 + "; whoami", Path(d), Path(d), "m")
+        assert blocked and "2000" in reason and not call.called, reason
+        row = json.loads((Path(d) / "sentinel.jsonl").read_text().splitlines()[-1])
+        assert row["would_block"] is True and row["clipped"] is True, row
+        with mock.patch.object(ask_jev_files, "call") as call:
+            blocked, reason = ask_jev_files.gate_command("echo 'open; reboot", Path(d), Path(d), "m")
+        assert blocked and not call.called, reason
+
+    # the hook's logged row uses the same view
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "jev").write_text(REC_STUB)
+        (tmp / "jev").chmod(0o755)
+        repo = new_repo(tmp, "")
+        prompt = transcript(tmp, [{"type": "user", "message": {"content": "clean up"}},
+                                  {"type": "assistant", "isSidechain": False, "message": {"model": "claude-test-1"}}])
+        run_hook(tmp, {"session_id": "s1", "transcript_path": prompt, "tool_name": "Bash",
+                       "tool_input": {"command": command}, "cwd": str(repo / "sub")})
+        row = rows(tmp / ".local" / "sentinel.jsonl", 1)[0]
+        assert row["command"] == want, row
+        assert row["redacted_hits"] == 1 and row["scan_unreliable"] is False and row["clipped"] is False, row
+
+
 def main() -> None:
     check_patterns()
+    check_command_redaction()
     check_key_only()
     check_helpers()
     check_bash_gate()
@@ -821,6 +1048,10 @@ def main() -> None:
             "hook must not wait on Jev"
         )
     print("sentinel hook ok")
+
+
+def test_command_redaction() -> None:
+    check_command_redaction()
 
 
 if __name__ == "__main__":
