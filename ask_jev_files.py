@@ -25,6 +25,7 @@ from jev_patterns import JevError, NO_KEY, call, has_key, model_name
 from scope_sentinel import (
     BASH_QUESTIONS,
     BLOCK_NOTICE,
+    MAX_JUDGED_COMMAND,
     SENTINEL_VERSION,
     append_row,
     command_view,
@@ -289,15 +290,17 @@ def parse_own_state(text: str) -> dict:
 
 def gate_command(command: str, cwd: Path, root: Path, model: str):
     """Judge command live and log the decision. Returns (blocked, reason); raises RuntimeError or KeyError."""
-    view, hits, unreliable = command_view(command)
+    view, hits, unreliable, hid_operator = command_view(command)
     log_dir = (
         Path(os.environ["JEV_LOG_DIR"])
         if os.environ.get("JEV_LOG_DIR")
         else root / ".local"
     )
     answers, response = None, {}
-    if len(view) > 2000:
-        blocked, reason = True, f"the judge reads 2000 characters and this command has {len(view)}"
+    if len(command) > MAX_JUDGED_COMMAND:
+        blocked, reason = True, f"the judge reads {MAX_JUDGED_COMMAND} characters and this command has {len(command)}"
+    elif unreliable:
+        blocked, reason = True, "the command could not be read as shell, so the judge would not see what it runs"
     else:
         response = call(
             {"command": view, "cwd": str(root)},
@@ -320,11 +323,12 @@ def gate_command(command: str, cwd: Path, root: Path, model: str):
             "gate": "bash",
             "cwd": str(cwd),
             "repo": str(root),
-            "command": view[:2000],
+            "command": view[:MAX_JUDGED_COMMAND],
             "risky": is_risky(command),
             "redacted_hits": hits,
             "scan_unreliable": unreliable,
-            "clipped": len(view) > 2000,
+            "hidden_operator": hid_operator,
+            "clipped": len(command) > MAX_JUDGED_COMMAND,
             "effect": answers["effect"]["choice"] if answers else None,
             "effect_confidence": answers["effect"]["confidence"] if answers else None,
             "destructive_intent": answers["destructive_intent"]["noul"] if answers else None,
@@ -387,6 +391,7 @@ def cmd_ask(args) -> int:
             done = subprocess.run(
                 args.command,
                 shell=True,
+                executable="/bin/bash",  # the shell command_view reads
                 cwd=root,
                 timeout=60,
                 capture_output=True,
