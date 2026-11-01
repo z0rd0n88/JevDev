@@ -119,13 +119,13 @@ python3 tests/test_ask_jev_files.py
 
 ## Decision Drift Radar
 
-`drift_radar.py` asks Jev whether a diff implements, contradicts, leaves unaddressed, or defers one recorded owner decision, or is too thin to tell (`unclear`). `defers` flags a diff that fills in something the owner explicitly deferred. The diff (a file up to 1 MB, text only) is redacted before it is sent and framed as untrusted data. Verdicts are review leads, not approvals.
+`drift_radar.py` asks Jev whether a diff implements, contradicts, leaves unaddressed, or defers one recorded owner decision, or is too thin to tell (`unclear`). `defers` flags a diff that fills in something the owner explicitly deferred. The diff (a file up to 1 MB, text only) is redacted with the Scope Sentinel's secret list before it is sent and framed as untrusted data. Redaction is greedy: any value after a name containing `token`, `secret`, `password` or `api_key` is replaced, including harmless ones such as `max_tokens=1024`, so the output reports how many values were hidden and a gate can treat a non-zero count as needing a human look. Verdicts are review leads, not approvals.
 
 ```
 python3 drift_radar.py --decision TEXT --diff PATH [--json] [--fail-on-drift] [--model M] [--timeout S]
 ```
 
-`--json` prints `result`, `confidence`, `elapsed`, `input_tokens`. Exit codes: 0 ok; 2 with `--fail-on-drift` on `contradicts`, `unaddressed`, or `defers` (`unclear` exits 0 with a warning); 1 on any error, including no Jev key; 130 on Ctrl-C.
+`--json` prints `result`, `confidence`, `elapsed`, `input_tokens`, `redacted` (values hidden from the judge). Exit codes: 0 ok; 2 with `--fail-on-drift` on `contradicts`, `unaddressed`, or `defers` (`unclear` exits 0 with a warning); 1 on any error, including no Jev key, an empty decision or diff, and a Jev answer whose choice or confidence is invalid; 64 usage error; 130 on Ctrl-C. When Jev fails, stderr carries the first line of `jev`'s stderr with secrets redacted, or the library's safe message when there is none.
 
 ```bash
 python3 tests/test_drift_radar.py

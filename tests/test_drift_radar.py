@@ -27,8 +27,8 @@ def test_load_diff():
     with tempfile.TemporaryDirectory() as d:
         test_diff = Path(d) / "test_dummy.diff"
         test_diff.write_text("--- a/file\n+++ b/file\n+ added line")
-        content = module.load_diff_file(str(test_diff))
-        assert "added line" in content
+        content, redacted = module.load_diff_file(str(test_diff))
+        assert "added line" in content and redacted == 0
 
 
 def test_missing_diff():
@@ -62,7 +62,7 @@ def test_binary_and_regular_file_checks():
 
         latin1_file = Path(d) / "latin1.diff"
         latin1_file.write_bytes(b"--- a/f\n+++ b/f\n+ accent \xe9\n")
-        content = module.load_diff_file(str(latin1_file))
+        content, _ = module.load_diff_file(str(latin1_file))
         assert "accent" in content
 
 
@@ -77,19 +77,86 @@ def test_size_ceiling_and_secret_redaction():
         except ValueError as e:
             assert "exceeds maximum allowed size" in str(e)
 
+        # Secret-bearing diff lines, each with the fragment that must not reach the provider.
+        leaks = {
+            "+ token = ghp_abcdef12345678901234": "ghp_abcdef12345678901234",
+            "+ key = sk-1234567890abcdef1234567890": "sk-1234567890abcdef1234567890",
+            '+PASSWORD = "hunter2"': "hunter2",
+            "+token = 'abc'": "abc",
+            '+  "api_key": "abcd1234efgh",': "abcd1234efgh",
+            "+cfg = {'password': 'hunter2'}": "hunter2",
+            '+password="hunter2"': "hunter2",
+            "+mysql --password hunter2": "hunter2",
+            "+curl -u user:hunter2 http://h": "hunter2",
+            "+AWS_KEY = AKIAIOSFODNN7EXAMPLE": "AKIA",
+            "+slack = xoxb-123456789012-abcdefghij": "xoxb",
+            "+gl = glpat-abcdefghij1234567890": "glpat",
+            "+ts_secret1234567890abcdef": "ts_secret",
+            "+STRIPE = sk_live_abcdefghijklmnopqrstu1": "sk_live",
+            "+jwt = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefgh1234": "eyJ",
+            "+-----BEGIN PRIVATE KEY-----\n+MIIEvQIBADANBg\n+kqhkiG9w0BAQ==\n+-----END PRIVATE KEY-----": "MIIE",
+            "+url = redis://:hunter2@host": "hunter2",
+            "+url = https://u:hunter2@host/x": "hunter2",
+        }
         secret_file = Path(d) / "secret.diff"
-        secret_file.write_text(
-            "+ token = ghp_abcdef12345678901234\n+ key = sk-1234567890abcdef1234567890\n"
-        )
-        content = module.load_diff_file(str(secret_file))
-        assert "ghp_abcdef12345678901234" not in content
-        assert "sk-1234567890abcdef1234567890" not in content
-        assert "[REDACTED]" in content
+        secret_file.write_text("\n".join(leaks) + "\n")
+        content, redacted = module.load_diff_file(str(secret_file))
+        for line, fragment in leaks.items():
+            assert fragment not in content, line
+        assert redacted == len(leaks), redacted
+        assert "https://u:[REDACTED]@host/x" in content, content
 
     # F2: whitespace in a secret match must not cross the newline into the next line.
-    kept = module.redact("+# Authorization: Basic\n+enforce_owner_approval=false\n")
+    kept = module.redact_count("+# Authorization: Basic\n+enforce_owner_approval=false\n")[0]
     assert "enforce_owner_approval=false" in kept, kept
-    assert module.redact("bearer\n+x=1") == "bearer\n+x=1"
+    assert module.redact_count("bearer\n+x=1")[0] == "bearer\n+x=1"
+
+
+def test_redaction_count_reported():
+    """A diff author cannot blind the judge silently: hidden values are counted in text and --json."""
+    module = load_module()
+    with tempfile.TemporaryDirectory() as d:
+        diff_file = Path(d) / "blind.diff"
+        diff_file.write_text("+secret=0;shutil.rmtree(user.data_dir)\n+max_tokens=1024\n")
+        orig_evaluate, orig_argv = module.evaluate_drift, sys.argv
+        try:
+            module.evaluate_drift = lambda decision, diff, **kwargs: {
+                "result": "implements", "confidence": 0.9, "elapsed": 0.1, "input_tokens": 5,
+            }
+            import io
+
+            buf = io.StringIO()
+            sys.argv = ["drift_radar.py", "--decision", "d", "--diff", str(diff_file), "--json"]
+            with mock.patch("sys.stdout", buf):
+                module.main()
+            assert json.loads(buf.getvalue())["redacted"] == 2, buf.getvalue()
+            buf = io.StringIO()
+            sys.argv = ["drift_radar.py", "--decision", "d", "--diff", str(diff_file)]
+            with mock.patch("sys.stdout", buf):
+                module.main()
+            assert "Redacted: 2 value(s) hidden from the judge" in buf.getvalue(), buf.getvalue()
+        finally:
+            module.evaluate_drift, sys.argv = orig_evaluate, orig_argv
+
+
+def test_rejects_empty_decision_and_diff():
+    module = load_module()
+    with tempfile.TemporaryDirectory() as d:
+        empty = Path(d) / "empty.diff"
+        empty.write_text(" \n\t\n")
+        try:
+            module.load_diff_file(str(empty))
+            assert False, "Should have raised ValueError on an empty diff"
+        except ValueError as e:
+            assert "empty" in str(e)
+    with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+        with mock.patch("subprocess.run") as run:
+            try:
+                module.evaluate_drift("   ", "--- a/f\n+++ b/f\n+line\n")
+                assert False, "Should have raised ValueError on an empty decision"
+            except ValueError as e:
+                assert "empty" in str(e)
+            assert not run.called, "No Jev call may be paid for an empty decision"
 
 
 def test_prompt_injection_defense():
@@ -157,6 +224,7 @@ def test_cli_drift_flags_and_json():
             parsed = json.loads(buf.getvalue())
             assert parsed["result"] == "defers"
             assert parsed["confidence"] == 0.9
+            assert parsed["redacted"] == 0
 
             # Test --fail-on-drift flag exits with 2
             sys.argv = [
@@ -258,24 +326,29 @@ def test_rejects_unknown_choice_and_bad_confidence():
             except RuntimeError as e:
                 assert "approve" in str(e)
 
-        with respond({"choice": "Unclear", "probabilities": {"unclear": "high"}}):
+        with respond({"choice": "Unclear", "probabilities": {"unclear": 0.0}}):
             res = module.evaluate_drift("decision", "diff")
             assert res["result"] == "unclear"
             assert res["confidence"] == 0.0
 
-        # F5: non-finite, out-of-range, and boolean confidence values are not confidence.
-        for bad in ("NaN", "inf", 95, -0.1, True):
-            with respond({"choice": "implements", "probabilities": {"implements": bad}}):
-                res = module.evaluate_drift("decision", "diff")
-                assert res["confidence"] == 0.0, (bad, res)
-                json.dumps(res, allow_nan=False)
+        # F5: a missing, non-numeric, non-finite, out-of-range, or boolean confidence raises, never 0.0.
+        bad_answers = [{"choice": "implements"}, {"choice": "implements", "probabilities": {"contradicts": 0.99}}]
+        for bad in ("high", "NaN", "inf", 95, -0.1, True, None):
+            bad_answers.append({"choice": "implements", "probabilities": {"implements": bad}})
+        for answer in bad_answers:
+            with respond(answer):
+                try:
+                    module.evaluate_drift("decision", "diff")
+                    assert False, f"Should have rejected the confidence in {answer!r}"
+                except RuntimeError as e:
+                    assert "confidence" in str(e), (answer, e)
 
 
 STUB_JEV = """#!/usr/bin/env python3
 import json, sys
 state = sys.stdin.read()
 if "FAIL_EXIT" in state:
-    sys.stderr.write("jev mock failure\\n")
+    sys.stderr.write("jev mock failure: Bearer sk-stub-secret-123456\\n")
     sys.exit(2)
 if "contradicts" in state:
     print(json.dumps({"answers": {"drift": {"choice": "contradicts", "probabilities": {"contradicts": 0.85}}}, "usage": {"input_tokens": 50}}))
@@ -416,7 +489,7 @@ def test_cli_subprocess_integration():
         # 5. Missing required args
         cmd = [sys.executable, str(SOURCE), "--decision", "some decision"]
         proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
-        assert proc.returncode == 2
+        assert proc.returncode == 64, f"Expected returncode 64 on a usage error, got {proc.returncode}"
 
         # 6. Non-existent diff file
         cmd = [
@@ -431,12 +504,21 @@ def test_cli_subprocess_integration():
         assert proc.returncode == 1
         assert "Diff file not found" in proc.stderr
 
+        # 7. Jev failure surfaces its first stderr line, redacted
+        cmd = [sys.executable, str(SOURCE), "--decision", "FAIL_EXIT", "--diff", str(diff_file)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 1
+        assert "Error: jev: jev mock failure: Bearer [REDACTED]" in proc.stderr, proc.stderr
+        assert "sk-stub-secret-123456" not in proc.stderr
+
 
 def main():
     test_load_diff()
     test_missing_diff()
     test_binary_and_regular_file_checks()
     test_size_ceiling_and_secret_redaction()
+    test_redaction_count_reported()
+    test_rejects_empty_decision_and_diff()
     test_prompt_injection_defense()
     test_jev_questions()
     test_cli_drift_flags_and_json()

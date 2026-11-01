@@ -8,32 +8,18 @@ the change implements, contradicts, leaves unaddressed, or defers the decision.
 import argparse
 import html
 import json
-import math
 from pathlib import Path
-import re
 import sys
 
-from jev_patterns import DEFAULT_TIMEOUT, call, input_tokens
+from jev_patterns import DEFAULT_TIMEOUT, JevError, call, input_tokens
+from scope_sentinel import redact, redact_count
 
 CHOICES = ("implements", "contradicts", "unaddressed", "defers", "unclear")
 MAX_DIFF_BYTES = 1024 * 1024  # 1 MB
 
-SECRET = re.compile(
-    r"(?i)(authorization:[ \t]*\S+[ \t]+|bearer[ \t]+|(?:token|secret|password|passwd|api[_-]?key)\w*[=:][ \t]*)\S+"
-    r"|://[^/\s:@]+:[^/\s@]+@"
-    r"|\b(?:gh[pousr]_|github_pat_|sk-)[\w-]{10,}"
-)
 
-
-def redact(text: str) -> str:
-    """Redact secrets matching scope_sentinel pattern."""
-    return SECRET.sub(
-        lambda m: f"{m.group(1)}[REDACTED]" if m.group(1) else "[REDACTED]", text
-    )
-
-
-def load_diff_file(path_str: str) -> str:
-    """Load the contents of a diff file."""
+def load_diff_file(path_str: str) -> tuple[str, int]:
+    """Load a diff file redacted with the shared secret list, plus the number of values hidden."""
     path = Path(path_str)
     if not path.exists():
         raise FileNotFoundError(f"Diff file not found: {path}")
@@ -47,7 +33,9 @@ def load_diff_file(path_str: str) -> str:
     if b"\x00" in data[:1024]:
         raise ValueError(f"Binary diff files are not supported: {path}")
     text = data.decode("utf-8", errors="replace")
-    return redact(text)
+    if not text.strip():
+        raise ValueError(f"Diff file is empty: {path}")
+    return redact_count(text)
 
 
 def build_jev_questions() -> dict:
@@ -82,6 +70,8 @@ def evaluate_drift(
     model: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> dict:
+    if not decision.strip():
+        raise ValueError("Decision text is empty")
     response = call(
         format_state_content(decision, diff),
         build_jev_questions(),
@@ -95,13 +85,10 @@ def evaluate_drift(
         raise RuntimeError(f"Invalid drift choice {choice!r} returned by Jev")
 
     probs = answer.get("probabilities") or {}
-    raw_conf = probs.get(choice, answer.get("confidence", 0.0))
-    try:
-        confidence = 0.0 if isinstance(raw_conf, bool) else float(raw_conf)
-    except (ValueError, TypeError):
-        confidence = 0.0
-    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
-        confidence = 0.0
+    raw_conf = probs.get(choice, answer.get("confidence"))
+    if isinstance(raw_conf, bool) or not isinstance(raw_conf, (int, float)) or not 0.0 <= raw_conf <= 1.0:
+        raise RuntimeError(f"Invalid drift confidence {raw_conf!r} returned by Jev")
+    confidence = float(raw_conf)
 
     return {
         "result": choice,
@@ -111,8 +98,14 @@ def evaluate_drift(
     }
 
 
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(64, f"{self.prog}: error: {message}\n")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Decision Drift Radar")
+    parser = Parser(description="Decision Drift Radar")
     parser.add_argument(
         "--decision", required=True, help="The recorded owner decision text"
     )
@@ -136,16 +129,18 @@ def main():
     args = parser.parse_args()
 
     try:
-        diff_content = load_diff_file(args.diff)
+        diff_content, redacted = load_diff_file(args.diff)
         result = evaluate_drift(
             args.decision, diff_content, model=args.model, timeout=args.timeout
         )
+        result["redacted"] = redacted
 
         if args.json:
             print(json.dumps(result, indent=2, allow_nan=False))
         else:
             print(f"Decision: {args.decision}")
             print(f"Diff Size: {len(diff_content)} bytes")
+            print(f"Redacted: {redacted} value(s) hidden from the judge")
             print(
                 f"Verdict:  {result['result'].upper()} (confidence {result['confidence']:.2f})"
             )
@@ -168,6 +163,9 @@ def main():
             sys.exit(2)
     except KeyboardInterrupt:
         sys.exit(130)
+    except JevError as e:
+        print(f"Error: jev: {redact(e.stderr) or e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

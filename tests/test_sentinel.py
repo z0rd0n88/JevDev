@@ -152,12 +152,18 @@ def check_patterns() -> None:
     assert [c for c in safe if sentinel.is_risky(c)] == [], "safe form judged"
     secrets = {"mysql --password hunter2": "hunter2", "curl -u user:hunter2 u": "hunter2",
                'curl -d \'{"token": "abc123"}\'': "abc123", "AKIAIOSFODNN7EXAMPLE": "AKIA",
-               "xoxb-123456789012-abcdefghij": "xoxb", "glpat-abcdefghij1234567890": "glpat"}
+               "xoxb-123456789012-abcdefghij": "xoxb", "glpat-abcdefghij1234567890": "glpat",
+               'PASSWORD = "hunter2"': "hunter2", "sk_live_abcdefghijklmnopqrstu1": "sk_live",
+               "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefgh1234": "eyJ",
+               "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----": "MIIE"}
     for text, secret in secrets.items():
         assert secret not in sentinel.redact(text), text
     for text in ("git commit -m 'fix bearer token parsing'", "git checkout sk-feature-branch-name"):
         assert sentinel.redact(text) == text, "ordinary text must not be redacted"
     assert sentinel.redact("https://u:pw@host") == "https://u:[REDACTED]@host"
+    assert sentinel.redact("redis://:pw@host") == "redis://:[REDACTED]@host"
+    # a secret match never crosses a newline into the next line
+    assert sentinel.redact("Authorization: Basic\nenforce=false") == "Authorization: Basic\nenforce=false"
     assert "ts_secret1234567890abcdef" not in sentinel.redact("key ts_secret1234567890abcdef")
     assert "ts_abc-def-1234567890ab" not in sentinel.redact("key ts_abc-def-1234567890ab")
     bare = subprocess.TimeoutExpired("jev", 1, stderr=b"boom")  # TimeoutExpired.stderr is bytes, not str
