@@ -129,14 +129,28 @@ _NOT_SECRET = rf"(?:[A-Z]+(?:_[A-Z]+)+|[A-Za-z_][A-Za-z_.]*[(\[][\"']?[A-Za-z_.-
 ASSIGNED = re.compile(rf"(?i)({_SECRET_KEY})(\\*[\"'`]?\s*[=:]\s*\\*[\"'`]?)(?!(?-i:{_NOT_SECRET}))[^\\\"'`,;\s]{{12,}}")
 SECRET_KEY = re.compile(_SECRET_KEY, re.I)
 NOT_SECRET = re.compile(_NOT_SECRET)
-# `host:8080/path/@me` is a port and a path because the `@` opens a path segment; `alex:2024/pw@db` and `alex:p@ss@db` are passwords.
-USERINFO = re.compile(r"(://)[^/\s:@\"']{1,256}:(?!\d+/(?:[^@\s\"'\\]{0,256}/)?@)[^\\\s\"']{1,256}@")
+# URL credentials are found per whitespace- and quote-free run with string search: no length cap to slip past, and linear on a run of URLs.
+URL_RUN = re.compile(r"[^\\\s\"']+")
+URL_USER = re.compile(r"://[^/:@]+:")
+PORT_THEN_PATH = re.compile(r"\d+/(?:[^@]*/)?@")  # `host:8080/path/@me`: the `@` opens a path segment; `alex:2024/pw@db` is a password
+
+
+def _redact_userinfo(m: re.Match) -> str:
+    run = m.group(0)
+    user = URL_USER.search(run)
+    if not user:
+        return run
+    rest = run[user.end():]
+    at = rest.rfind("@")
+    if at < 0 or PORT_THEN_PATH.match(rest):
+        return run
+    return f"{run[:user.start()]}://[REDACTED]@{rest[at + 1:]}"
 
 
 def redact(text: str) -> str:
     text = TOKEN.sub("[REDACTED]", text)
     text = ASSIGNED.sub(r"\1\2[REDACTED]", text)
-    return USERINFO.sub(r"\1[REDACTED]@", text)
+    return URL_RUN.sub(_redact_userinfo, text)
 
 
 def redact_json(value, key: str = ""):

@@ -148,6 +148,7 @@ def test_redaction_leaves_code_and_constants_alone() -> None:
     assert ft.redact("postgres://alex:pa/ss?w0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"  # a raw slash in a password
     assert ft.redact("postgres://alex:2024/pw@db") == "postgres://[REDACTED]@db"  # digits first, but the `@` does not open a path segment
     assert ft.redact("postgres://alex:p@ss@db/x") == "postgres://[REDACTED]@db/x"  # a raw `@` in a password
+    assert ft.redact("postgres://alex:" + "p/" * 2500 + "@db/x") == "postgres://[REDACTED]@db/x"  # no length cap to slip past
 
 
 def test_redaction_exempts_only_a_whole_value_that_names_something() -> None:
@@ -161,6 +162,7 @@ def test_redaction_stays_fast_on_a_long_run_of_keywords() -> None:
     start = time.perf_counter()
     ft.redact("token" * 13000)
     ft.redact("http://a:1/" * 20000)
+    ft.redact("http://a:" + "b" * 200000)
     assert time.perf_counter() - start < 1.0
 
 
