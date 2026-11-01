@@ -6,7 +6,6 @@ returning whether the action is covered, ambiguous, or in conflict with the scop
 """
 
 import argparse
-import bisect
 import fcntl
 import json
 import os
@@ -46,14 +45,14 @@ _VALUE = r"""(?:[^\s'";,`$]|\$(?!\()|,(?![A-Za-z_][\w.]{0,64}[(= \t])){1,4096}""
 # whitespace, ;, backtick, $( or a , followed by code, so one statement cannot hide the next while ( ) and a plain , stay
 # hidden; a quoted value ends at its closing quote, and the PEM body is base64 lines.
 # ponytail: in file text `password=ab;cd` leaks ;cd, an unindented or backslash-continued next-line value leaks, and && and |
-# still hide what follows; tell them apart by language if verdicts need it. Commands go through redact_command() instead.
+# still hide what follows; tell them apart by language if verdicts need it. Commands go through command_view() instead.
 SECRETS = [re.compile(p) for p in (
     r"(?im)(^[+-]?[ \t]*['\"]?\w{0,64}(?:token|secret|password|passwd|api[_-]?key)\w{0,64}['\"]?[ \t]*(?::[ \t]{0,64}(?:[|>][+-]?[ \t]{0,64})?|=[ \t]{0,64}\([ \t]{0,64})\r?\n[+-]?[ \t]+)"
     r"(?:(['\"])[^'\"\n]{1,4096}\2|" + _VALUE + r")(?=[ \t]*\r?$)",
     r"(?i)(authorization:[ \t]*\S{1,64}[ \t]+)" + _VALUE,
     r"(?i)(bearer[ \t]+)[A-Za-z0-9._~+/=-]{16,}",
-    r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w{0,64}[ \t]*(?:=(?!=)|:=?)[ \t]*)(?:(['\"])[^'\"\n]{1,4096}\2|['\"]?" + _VALUE + ")",
-    r"""(?i)(["'](?:token|secret|password|passwd|api[_-]?key)\w{0,64}["'][ \t]*:[ \t]*["'])[^"'\n]+""",
+    r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w{0,64}[ \t]*(?:=(?!=)|:=?)[ \t]*)(?:\$?(['\"])[^'\"\n]{1,4096}\2|['\"]?" + _VALUE + ")",
+    r"""(?i)(\\?["'](?:token|secret|password|passwd|api[_-]?key)\w{0,64}\\?["'][ \t]*:[ \t]*\\?["'])[^"'\\\n]+""",
     r"(?i)(--(?:password|passwd|token|secret|api[-_]?key)[= \t]+)" + _VALUE,
     r"(\s-u[ \t]+[^\s:'\"]{1,64}:)" + _VALUE,
     r"(://[^/\s:@]*:)[^/\s@]+(?=@)",
@@ -65,10 +64,28 @@ SECRETS = [re.compile(p) for p in (
     r"()\beyJ[\w-]{10,256}\.[\w-]{10,}\.[\w-]{10,}",
     r"(-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----)(?:\r?\n[+-]? ?[A-Za-z0-9+/=]{12,}[ \t]*(?![^\r\n]))+",
 )]
-SHELL_BREAK = re.compile(r"[;&|<>)`]|\$\(")  # ( { } do not end a shell word, so a secret may hold them
-SHELL_EXPANSION = re.compile(r"`|\$\(")
-# An escape, a quoted string, or a comment, in the order a shell reads them.
-SHELL_QUOTED = re.compile(r"""\\.|'[^']*'?|"(?:\\.|[^"\\])*"?|(?:^|(?<=\s))#[^\n]*""", re.S | re.M)
+_KEY_NAME = r"[\w.-]{0,64}(?:token|secret|password|passwd|api[_-]?key)[\w-]{0,64}"
+_WORD_ASSIGN = re.compile(rf"""(?i)['"]?(?:--?)?{_KEY_NAME}\+?(?:=(?!=)|:=)""")
+_ARRAY_KEY = re.compile(rf"(?i){_KEY_NAME}\+?=")
+_BARE_KEY = re.compile(rf"(?i){_KEY_NAME}$")
+_COLON_KEY = re.compile(rf"(?i){_KEY_NAME}:$")
+_FLAG_KEY = re.compile(r"(?i)--(?:password|passwd|token|secret|api[-_]?key)$")
+_COMMENT_VALUE = re.compile(rf"(?i)({_KEY_NAME}[ \t]*(?:=(?!=)|:=?)[ \t]*).+")
+_USER_VALUE = re.compile(r"""(['"]?[^\s:'"]{1,64}:)(.+?)(['"]?)$""", re.S)
+_BEARER_VALUE = re.compile(r"[A-Za-z0-9._~+/=-]{16,}")
+_SECRET_HINT = re.compile(r"(?i)token|secret|passw|api[_-]?key|authorization|bearer|://|gh[pousr]_|github_pat|glpat|sk[-_]|ts_|akia|asia|xox|eyj|-----begin")
+_SHELL_BARE = re.compile(r"""[^\s;&|()<>\\'"$`]+""")
+_DOUBLE_QUOTED_TEXT = re.compile(r"""[^"\\$`]+""")
+_HEREDOC_TEXT = re.compile(r"""[^\\$`]+""")
+_QUOTED_PART = re.compile(r"""'[^']*'|"(?:\\.|[^"\\])*\"""", re.S)
+_ANSI_QUOTED = re.compile(r"""\$'(?:\\.|[^'\\])*'""", re.S)
+_SHELL_VARIABLE = re.compile(r"\$(?:\w+|[?!#@*$-]|\{[^{}\n]*\})")
+_SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "su"}
+_SHELL_C_FLAGS = {"-c", "-lc", "-ic", "-lic"}
+_MAX_SHELL_DEPTH = 32
+MAX_COMMAND_VIEW = 200_000
+CODE = "\ue000"
+_LITERAL_NOISE = re.compile(r"""[\ue000'"$]|\\\r?\n""")
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
@@ -88,34 +105,293 @@ def redact(text: str) -> str:
     return text
 
 
-def _hide_command_value(match: re.Match, spans: list) -> str:
-    """Hide a matched value up to the first thing the shell would act on, given the quotes actually around it.
+class _ShellView:
+    """One pass over shell text that redacts word by word, so a hidden value cannot cross an operator or a closing quote.
 
-    A value that opens with a break is left as is, because the shell assigns nothing and runs what follows.
+    A word is reduced to flat text, with each command substitution and $NAME replaced by CODE, so a value's literal text
+    can be hidden while its code stays visible. Comments and heredoc bodies are text and go through redact().
+    ponytail: a lexer, not a parser, so `case` patterns and ${x:-$(cmd)} are read loosely, and text inside a quoted word or a
+    heredoc gets redact()'s limits; tests/test_sentinel.py fuzzes it against bash, so extend that before replacing it.
     """
-    key, value = match.group(1), match.group(0)[len(match.group(1)):]
-    where = match.start() + len(key)
-    i = bisect.bisect_right(spans, where, key=lambda span: span[0]) - 1
-    quote = spans[i][2] if i >= 0 and where < spans[i][1] else ""
-    if quote == "'":
-        return f"{key}[REDACTED]"
-    stop = (SHELL_EXPANSION if quote == '"' else SHELL_BREAK).search(value)
-    if not stop:
-        return f"{key}[REDACTED]"
-    return f"{key}[REDACTED]{value[stop.start():]}" if stop.start() else match.group(0)
+
+    def __init__(self, source: str, depth: int = 0):
+        self.source, self.i, self.depth, self.unreliable = source, 0, depth, False
+
+    def script(self, stop: str = "", mask: bool = False) -> str:
+        """Render shell text up to an unquoted `stop`. With mask, every word's literal text is hidden (an array of values)."""
+        source, out, words, names, heredocs = self.source, [], [], set(), []
+        while self.i < len(source):
+            ch = source[self.i]
+            if ch == stop:
+                break
+            if ch == "\n":
+                self.i += 1
+                out.append("\n")
+                words, names = [], set()
+                while heredocs:
+                    out.append(self.heredoc(*heredocs.pop(0)))
+            elif ch in " \t\r":
+                out.append(ch)
+                self.i += 1
+            elif ch == "#" and (self.i == 0 or source[self.i - 1] in " \t\r\n;&|()"):
+                end = source.find("\n", self.i)
+                end = len(source) if end < 0 else end
+                out.append(redact(_COMMENT_VALUE.sub(r"\1[REDACTED]", source[self.i:end])))
+                self.i = end
+            elif source.startswith("<<<", self.i):
+                out.append("<<<")
+                self.i += 3
+            elif source.startswith("<<", self.i):
+                start = self.i
+                self.i += 3 if source.startswith("<<-", self.i) else 2
+                while source[self.i:self.i + 1] in (" ", "\t"):
+                    self.i += 1
+                word = self.word(stop)[0]
+                literal = word != re.sub(r"""['"\\]""", "", word)
+                heredocs.append((re.sub(r"""['"\\]""", "", word), source[start:start + 3] == "<<-", _runs_shell(words), literal))
+                out.append(source[start:self.i])
+            elif ch == "(":
+                out.append("(")
+                self.i += 1
+                words, names = [], set()
+                out.append(self.nested(")"))
+            elif ch in ";&|)":
+                out.append(ch)
+                self.i += 1
+                words, names = [], set()
+            elif ch in "<>":
+                out.append(ch)
+                self.i += 1
+            else:
+                start = self.i
+                flat, codes = self.word(stop)
+                if mask:
+                    out.append(_restore(_mask(flat), codes))
+                elif _runs_nested(flat, words, names) and (inner := self.quoted_script(source[start:self.i])) is not None:
+                    out.append(inner)
+                else:
+                    out.append(_restore(_redact_word(flat, words), codes))
+                    if source[self.i:self.i + 1] == "(" and _ARRAY_KEY.fullmatch(flat):
+                        self.i += 1
+                        out.append("(")
+                        out.append(self.nested(")", mask=True))
+                words.append(flat)
+                names.add(flat.rsplit("/", 1)[-1])
+        return "".join(out)
+
+    def nested(self, stop: str, mask: bool = False) -> str:
+        """Render a nested script and its closing `stop`; past the depth cap, leave the text for the outer pass to read."""
+        if self.depth >= _MAX_SHELL_DEPTH:
+            self.unreliable = True
+            return ""
+        self.depth += 1
+        text = self.script(stop, mask)
+        self.depth -= 1
+        if self.source[self.i:self.i + 1] == stop:
+            self.i += 1
+            return text + stop
+        self.unreliable = True
+        return text
+
+    def quoted_script(self, raw: str) -> str | None:
+        """Render each quoted part of a word as a script, for `sh -c '...'`, `eval "..."` and `ssh host "..."`."""
+        out, position = [], 0
+        for part in _QUOTED_PART.finditer(raw):
+            view = _ShellView(part.group(0)[1:-1], self.depth + 1)
+            capped = view.depth >= _MAX_SHELL_DEPTH
+            text = redact(view.source) if capped else view.script()
+            self.unreliable = self.unreliable or view.unreliable or capped
+            out += [raw[position:part.start()], part.group(0)[0], text, part.group(0)[0]]
+            position = part.end()
+        return "".join(out) + raw[position:] if out else None
+
+    def word(self, stop: str) -> tuple[str, list[str]]:
+        """Consume one shell word. Returns its text with CODE for each expansion, and the rendered expansions."""
+        source, flat, codes = self.source, [], []
+        while self.i < len(source):
+            ch = source[self.i]
+            if ch in " \t\r\n;&|()<>" or ch == stop:
+                break
+            if run := _SHELL_BARE.match(source, self.i):
+                flat.append(run.group(0))
+                self.i = run.end()
+            elif ch == "\\":
+                flat.append(source[self.i:self.i + 2])
+                self.i += 2
+            elif ch == "'":
+                end = source.find("'", self.i + 1)
+                if end < 0:
+                    self.unreliable = True
+                    end = self.i
+                flat.append(source[self.i:end + 1])
+                self.i = end + 1
+            elif ch == '"':
+                self.double_quoted(flat, codes)
+            elif ch == "$" or ch == "`":
+                self.expansion(flat, codes)
+        return "".join(flat), codes
+
+    def double_quoted(self, flat: list[str], codes: list[str]) -> None:
+        source, start, kept = self.source, self.i, (len(flat), len(codes))
+        flat.append('"')
+        self.i += 1
+        while self.i < len(source):
+            ch = source[self.i]
+            if ch == '"':
+                flat.append('"')
+                self.i += 1
+                return
+            if run := _DOUBLE_QUOTED_TEXT.match(source, self.i):
+                flat.append(run.group(0))
+                self.i = run.end()
+            elif ch == "\\":
+                flat.append(source[self.i:self.i + 2])
+                self.i += 2
+            else:
+                self.expansion(flat, codes, ansi=False)
+        # no closing quote, so a shell would refuse this: read the rest as bare words, which keeps their operators visible
+        self.unreliable = True
+        del flat[kept[0]:], codes[kept[1]:]
+        flat.append('"')
+        self.i = start + 1
+
+    def expansion(self, flat: list[str], codes: list[str], ansi: bool = True) -> None:
+        source, start = self.source, self.i
+        if source[start] == "`":
+            self.i += 1
+            code = "`" + self.nested("`")
+        elif source.startswith("$(", start):
+            self.i += 2
+            code = "$(" + self.nested(")")
+        elif ansi and source.startswith("$'", start):
+            match = _ANSI_QUOTED.match(source, start)
+            flat.append(match.group(0) if match else "$")
+            self.i = match.end() if match else start + 1
+            self.unreliable = self.unreliable or not match
+            return
+        elif match := _SHELL_VARIABLE.match(source, start):
+            code = match.group(0)
+            self.i = match.end()
+        else:
+            flat.append("$")
+            self.i += 1
+            return
+        if self.i == start + (2 if source[start] == "$" else 1) and len(code) <= 2:  # at the depth cap
+            flat.append(code)
+            return
+        flat.append(CODE)
+        codes.append(code)
+
+    def heredoc(self, delimiter: str, strip_tabs: bool, runs_shell: bool, literal: bool) -> str:
+        source, start, position = self.source, self.i, self.i
+        while True:
+            end = source.find("\n", position)
+            line = source[position:] if end < 0 else source[position:end]
+            if (line.lstrip("\t") if strip_tabs else line).rstrip("\r") == delimiter:
+                self.i = position + len(line)
+                body = source[start:position]
+                break
+            if end < 0:
+                self.i, body = len(source), source[start:]
+                self.unreliable = True
+                line = ""
+                break
+            position = end + 1
+        view = _ShellView(body, self.depth + 1)
+        text = view.script() if runs_shell else redact(body) if literal else view.heredoc_text()
+        self.unreliable = self.unreliable or view.unreliable
+        return text + line
+
+    def heredoc_text(self) -> str:
+        """An unquoted delimiter's body is text in which the shell still runs expansions, so those stay visible."""
+        source, flat, codes = self.source, [], []
+        while self.i < len(source):
+            if run := _HEREDOC_TEXT.match(source, self.i):
+                flat.append(run.group(0))
+                self.i = run.end()
+            elif source[self.i] == "\\":
+                flat.append(source[self.i:self.i + 2])
+                self.i += 2
+            else:
+                self.expansion(flat, codes, ansi=False)
+        return _restore(_redact_text("".join(flat)), codes)
+
+
+def _mask(value: str) -> str:
+    """Hide a value's literal text and keep its code. A value that is only code or quotes has nothing to hide."""
+    if not _LITERAL_NOISE.sub("", value).strip():
+        return value
+    return "[REDACTED]" + CODE * value.count(CODE)
+
+
+def _restore(text: str, codes: list[str]) -> str:
+    pieces = text.split(CODE)
+    if len(pieces) != len(codes) + 1:
+        raise ValueError("redaction lost a command substitution")
+    return "".join(piece + code for piece, code in zip(pieces, codes + [""]))
+
+
+def _redact_word(flat: str, words: list[str]) -> str:
+    """Hide the secret in one word. `words` are the earlier words of the same simple command."""
+    last = words[-1] if words else ""
+    before = words[-2] if len(words) > 1 else ""
+    if not flat.startswith("-") and (
+        _FLAG_KEY.search(last[-200:])
+        or _COLON_KEY.search(last[-200:])
+        or (last in ("=", ":") and _BARE_KEY.search(before[-200:]))
+        or before.lower() == "authorization:"
+        or (last.lower() == "bearer" and _BEARER_VALUE.fullmatch(flat.strip("'\"")))
+    ):
+        return _mask(flat)
+    if last == "-u" and (match := _USER_VALUE.match(flat)):
+        return f"{match.group(1)}{_mask(match.group(2))}{match.group(3)}"
+    if match := _WORD_ASSIGN.match(flat):
+        value = flat[match.end():]
+        opener = flat[0] if flat[0] in "'\"" else ""
+        tail = opener if opener and value.endswith(opener) else ""
+        return match.group(0) + _mask(value[:-1] if tail else value) + tail
+    return _redact_text(flat)
+
+
+def _redact_text(flat: str) -> str:
+    """redact() over text holding CODE marks: a hidden value's code stays visible."""
+    if _SECRET_HINT.search(flat):
+        for pattern in SECRETS:
+            flat = pattern.sub(lambda m: m.group(1) + _mask(m.group(0)[len(m.group(1)):]), flat)
+    return flat
+
+
+def _runs_shell(words: list[str]) -> bool:
+    return bool(words) and words[0].rsplit("/", 1)[-1] in _SHELLS
+
+
+def _runs_nested(flat: str, words: list[str], names: set[str]) -> bool:
+    """Is this quoted word code that some earlier word will run? `names` are those words without their directories."""
+    if "'" not in flat and '"' not in flat:
+        return False
+    return "eval" in names or "ssh" in names or (bool(words) and words[-1] in _SHELL_C_FLAGS and not _SHELLS.isdisjoint(names))
+
+
+def command_view(command: str) -> tuple[str, int, bool]:
+    """redact() for shell text: the view, the values hidden, and whether the text could not be read as well-formed shell.
+
+    Operators and what follows them stay visible, and a key alone on its line keeps the next line, which a shell would run.
+    ponytail: over MAX_COMMAND_VIEW or on a parse failure this falls back to redact(), which may hide code, and says so.
+    """
+    text, unreliable = None, True
+    if len(command) <= MAX_COMMAND_VIEW and CODE not in command:
+        view = _ShellView(command)
+        try:
+            text, unreliable = view.script(), view.unreliable
+        except (RecursionError, ValueError):
+            text = None
+    if text is None:
+        text = redact(command)
+    return text, text.count("[REDACTED]") - command.count("[REDACTED]"), unreliable
 
 
 def redact_command(command: str) -> str:
-    """redact() for shell text: keeps every operator and what follows, and skips the next-line pattern, which a shell would run.
-
-    ponytail: quotes are read flat, so nested "$(...)" and heredoc bodies can mislead them, and a YAML value on its own line
-    in a heredoc is not hidden; use a real shell parser if those matter.
-    """
-    for pattern in SECRETS[1:]:
-        if pattern.search(command):
-            spans = [(m.start(), m.end(), m.group(0)[0]) for m in SHELL_QUOTED.finditer(command) if m.group(0)[0] in "'\""]
-            command = pattern.sub(lambda m: _hide_command_value(m, spans), command)
-    return command
+    return command_view(command)[0]
 
 
 def error_detail(e: BaseException, prefix: bool = True) -> str:
@@ -584,7 +860,9 @@ def run_judge(log: Path, host: str) -> None:
         if target["gate"] == "write":
             judge_write_event(row, event, host, target, root, transcript, log)
         else:
-            row.update(command=clip(redact_command(target["command"])), risky=is_risky(target["command"]))
+            view, hits, unreliable = command_view(target["command"])
+            row.update(command=clip(view), risky=is_risky(target["command"]), redacted_hits=hits,
+                       scan_unreliable=unreliable, clipped=len(view) > 2000)
             scan = scan_transcript(Path(transcript or event["transcriptPath"]), host, follow_parent=True)
             row["host_model"] = host_model(event, host, scan)
             row["instruction"] = clip(redact((scan["prompts"] or [""])[-1]))
