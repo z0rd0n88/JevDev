@@ -705,6 +705,14 @@ def check_command_redaction() -> None:
                        ("token=a(reboot)", "token=[REDACTED])"), ("token=a{b}", "token=[REDACTED]"), ("token={hunter2}", "token=[REDACTED]"),
                        ("token=(hunter2)", "token=[REDACTED])"), ("--password=(hunter2)", "--password=[REDACTED])"),
                        ("(token=a)&&rm", "(token=[REDACTED])&&rm"), ("token=&reboot", "token=&reboot"),
+                       ("curl https://u:x;reboot;echo@h", "curl https://u:[REDACTED];reboot;echo@h"),
+                       ("curl https://u:x&reboot&echo@h", "curl https://u:[REDACTED]&reboot&echo@h"),
+                       ('curl -d "password=p&ss" u', 'curl -d "password=[REDACTED]" u'),
+                       ("curl -d 'password=p&ss' u", "curl -d 'password=[REDACTED]' u"),
+                       ("curl -d '{\"token\": \"a&b\"}' u", "curl -d '{\"token\": \"[REDACTED]\"}' u"),
+                       ('echo "don\'t" && token=a&reboot', 'echo "don\'t" && token=[REDACTED]&reboot'),
+                       ("echo x # don't\ntoken=a&reboot", "echo x # don't\ntoken=[REDACTED]&reboot"),
+                       ('echo \\" && token=a&reboot', 'echo \\" && token=[REDACTED]&reboot'),
                        ('curl "https://u:p&w@host"', 'curl "https://u:[REDACTED]@host"'),
                        ('curl "https://u:&pw@host"', 'curl "https://u:[REDACTED]@host"'),
                        ('curl "https://u:$(reboot)@h"', 'curl "https://u:$(reboot)@h"'),
@@ -719,7 +727,8 @@ def check_command_redaction() -> None:
     # file text keeps a secret's punctuation and a next-line value hidden
     assert sentinel.redact("PASSWORD=p(ss)word") == "PASSWORD=[REDACTED]"
     assert sentinel.redact("password:\n  hunter2\n") == "password:\n  [REDACTED]\n"
-    for text in ("token&" * 150_000, "token=a&" * 130_000, "token:" + " " * 100_000 + "x"):
+    for text in ("token&" * 150_000, "token=a&" * 130_000, "token:" + " " * 100_000 + "x", '"' * 1_000_000 + " token=a",
+                 'token=a" ' * 110_000, "' " * 500_000 + "token=a", "# token=a\n" * 100_000):
         start = time.perf_counter()
         sentinel.redact_command(text)
         assert time.perf_counter() - start < 1, "command redaction must stay linear"

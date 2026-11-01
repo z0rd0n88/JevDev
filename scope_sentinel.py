@@ -6,6 +6,7 @@ returning whether the action is covered, ambiguous, or in conflict with the scop
 """
 
 import argparse
+import bisect
 import fcntl
 import json
 import os
@@ -66,6 +67,8 @@ SECRETS = [re.compile(p) for p in (
 )]
 SHELL_BREAK = re.compile(r"[;&|<>)`]|\$\(")  # ( { } do not end a shell word, so a secret may hold them
 SHELL_EXPANSION = re.compile(r"`|\$\(")
+# An escape, a quoted string, or a comment, in the order a shell reads them.
+SHELL_QUOTED = re.compile(r"""\\.|'[^']*'?|"(?:\\.|[^"\\])*"?|(?:^|(?<=\s))#[^\n]*""", re.S | re.M)
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
@@ -85,17 +88,18 @@ def redact(text: str) -> str:
     return text
 
 
-def _hide_command_value(match: re.Match) -> str:
-    """Hide a matched value up to the first thing the shell would act on; single quotes make all of it literal.
+def _hide_command_value(match: re.Match, spans: list) -> str:
+    """Hide a matched value up to the first thing the shell would act on, given the quotes actually around it.
 
     A value that opens with a break is left as is, because the shell assigns nothing and runs what follows.
-    ponytail: a URL counts as quoted, and any other value in enclosing double quotes shows its tail after a break.
     """
     key, value = match.group(1), match.group(0)[len(match.group(1)):]
-    if key.endswith("'") or value.startswith("'"):
+    where = match.start() + len(key)
+    i = bisect.bisect_right(spans, where, key=lambda span: span[0]) - 1
+    quote = spans[i][2] if i >= 0 and where < spans[i][1] else ""
+    if quote == "'":
         return f"{key}[REDACTED]"
-    quoted = key.endswith('"') or value.startswith('"') or "://" in key
-    stop = (SHELL_EXPANSION if quoted else SHELL_BREAK).search(value)
+    stop = (SHELL_EXPANSION if quote == '"' else SHELL_BREAK).search(value)
     if not stop:
         return f"{key}[REDACTED]"
     return f"{key}[REDACTED]{value[stop.start():]}" if stop.start() else match.group(0)
@@ -104,10 +108,13 @@ def _hide_command_value(match: re.Match) -> str:
 def redact_command(command: str) -> str:
     """redact() for shell text: keeps every operator and what follows, and skips the next-line pattern, which a shell would run.
 
-    ponytail: a YAML value on its own line in a heredoc is not hidden here; parse heredocs if those carry secrets.
+    ponytail: quotes are read flat, so nested "$(...)" and heredoc bodies can mislead them, and a YAML value on its own line
+    in a heredoc is not hidden; use a real shell parser if those matter.
     """
     for pattern in SECRETS[1:]:
-        command = pattern.sub(_hide_command_value, command)
+        if pattern.search(command):
+            spans = [(m.start(), m.end(), m.group(0)[0]) for m in SHELL_QUOTED.finditer(command) if m.group(0)[0] in "'\""]
+            command = pattern.sub(lambda m: _hide_command_value(m, spans), command)
     return command
 
 
