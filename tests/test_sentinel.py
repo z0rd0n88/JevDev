@@ -152,14 +152,37 @@ def check_patterns() -> None:
     assert [c for c in safe if sentinel.is_risky(c)] == [], "safe form judged"
     secrets = {"mysql --password hunter2": "hunter2", "curl -u user:hunter2 u": "hunter2",
                'curl -d \'{"token": "abc123"}\'': "abc123", "AKIAIOSFODNN7EXAMPLE": "AKIA",
-               "xoxb-123456789012-abcdefghij": "xoxb", "glpat-abcdefghij1234567890": "glpat"}
+               "xoxb-123456789012-abcdefghij": "xoxb", "glpat-abcdefghij1234567890": "glpat",
+               'PASSWORD = "hunter2"': "hunter2", "sk_live_abcdefghijklmnopqrstu1": "sk_live",
+               "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefgh1234": "eyJ",
+               "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----": "MIIE"}
     for text, secret in secrets.items():
         assert secret not in sentinel.redact(text), text
     for text in ("git commit -m 'fix bearer token parsing'", "git checkout sk-feature-branch-name"):
         assert sentinel.redact(text) == text, "ordinary text must not be redacted"
     assert sentinel.redact("https://u:pw@host") == "https://u:[REDACTED]@host"
+    assert sentinel.redact("redis://:pw@host") == "redis://:[REDACTED]@host"
+    # a secret match never crosses a newline into the next line
+    assert sentinel.redact("Authorization: Basic\nenforce=false") == "Authorization: Basic\nenforce=false"
+    # a PEM header in a comment, or a key without its END line, leaves the following code line alone
+    comment = "# see -----BEGIN RSA PRIVATE KEY----- in docs\ndef load():"
+    assert sentinel.redact(comment) == comment
+    assert sentinel.redact("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\nx=1").endswith("[REDACTED]\nx=1")
     assert "ts_secret1234567890abcdef" not in sentinel.redact("key ts_secret1234567890abcdef")
+    # a comparison is not an assignment, but a := assignment still is
+    assert sentinel.redact("if token == 'x': pass") == "if token == 'x': pass"
+    assert sentinel.redact('token := os.Getenv("T")') == 'token := [REDACTED]("T")'
     assert "ts_abc-def-1234567890ab" not in sentinel.redact("key ts_abc-def-1234567890ab")
+    # a value ends at statement punctuation, a quoted one at its closing quote, and a long secret is still whole
+    assert sentinel.redact("secret=0;rm(x)") == "secret=[REDACTED];rm(x)"
+    assert sentinel.redact("password = 'p;a(ss)'") == "password = [REDACTED]"
+    assert "x1x1x1" not in sentinel.redact("token=eyJ" + "a" * 500 + "." + "b" * 500 + "." + "x1" * 100)
+    assert "+rm -rf x" in sentinel.redact('"token": "abc\n+rm -rf x\n+y="')
+    # repeated keywords without their delimiter must not backtrack quadratically
+    for text in ("token" * 200_000, "sk-" * 100_000, "authorization:" * 50_000, "eyJ-" * 100_000):
+        start = time.perf_counter()
+        sentinel.redact_count("+" + text)
+        assert time.perf_counter() - start < 1, "redaction must stay linear on repeated keywords"
     bare = subprocess.TimeoutExpired("jev", 1, stderr=b"boom")  # TimeoutExpired.stderr is bytes, not str
     assert sentinel.error_detail(bare) == f"TimeoutExpired: {bare}", sentinel.error_detail(bare)
     start = time.perf_counter()
@@ -283,7 +306,7 @@ def new_repo(tmp: Path, agents: str = "") -> Path:
 
 
 def check_bash_gate() -> None:
-    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v4 row, fail-open."""
+    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v5 row, fail-open."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "jev").write_text(REC_STUB)
@@ -299,7 +322,7 @@ def check_bash_gate() -> None:
         # AC-1.1: irreversible 0.90 -> would_block, nothing on stdout, fast
         assert run_hook(tmp, event("rm -rf build")) < 2
         row = rows(log, 1)[0]
-        assert row["sentinel_version"] == "shadow-v4" and row["gate"] == "bash" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v5" and row["gate"] == "bash" and "error" not in row, row
         assert row["risky"] is True and row["effect"] == "irreversible", row
         assert row["effect_confidence"] == 0.9 and row["destructive_intent"] == 0.2, row
         assert row["would_block"] is True and row["block_reason"].startswith("irreversible (0.90)"), row
@@ -449,7 +472,7 @@ def check_write_gate() -> None:
         questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
         assert list(questions) == ["kind", "contains_secret"], questions
         assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
-        assert row["sentinel_version"] == "shadow-v4" and row["gate"] == "write" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v5" and row["gate"] == "write" and "error" not in row, row
         assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
         assert "content" not in row and "abc123" not in json.dumps(row), row
