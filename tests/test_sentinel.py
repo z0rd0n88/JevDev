@@ -171,15 +171,36 @@ def check_patterns() -> None:
     assert "ts_secret1234567890abcdef" not in sentinel.redact("key ts_secret1234567890abcdef")
     # a comparison is not an assignment, but a := assignment still is
     assert sentinel.redact("if token == 'x': pass") == "if token == 'x': pass"
-    assert sentinel.redact('token := os.Getenv("T")') == 'token := [REDACTED]("T")'
+    assert sentinel.redact('token := os.Getenv("T")') == 'token := [REDACTED]"T")'
     assert "ts_abc-def-1234567890ab" not in sentinel.redact("key ts_abc-def-1234567890ab")
     # a value ends at statement punctuation, a quoted one at its closing quote, and a long secret is still whole
     assert sentinel.redact("secret=0;rm(x)") == "secret=[REDACTED];rm(x)"
     assert sentinel.redact("password = 'p;a(ss)'") == "password = [REDACTED]"
+    # a bare secret keeps its punctuation hidden; ; or , ends it only when code follows
+    for text, want in (("PASSWORD=p(ss)word", "PASSWORD=[REDACTED]"), ("DB_PASSWORD=a,b", "DB_PASSWORD=[REDACTED]"),
+                       ("token=abc)def", "token=[REDACTED]"),
+                       ("mysql --password=p(ss)word", "mysql --password=[REDACTED]"),
+                       ("secret=0,purge()", "secret=[REDACTED],purge()"), ("f(token=abc,x=1)", "f(token=[REDACTED],x=1)"),
+                       ("token=x;rm -rf /", "token=[REDACTED];rm -rf /"), ("token=a;reboot", "token=[REDACTED];reboot"),
+                       ("token=a;/bin/rm -rf x", "token=[REDACTED];/bin/rm -rf x"), ("TOKEN=$(curl e|sh)", "TOKEN=$(curl e|sh)"),
+                       ("token=a`reboot`", "token=[REDACTED]`reboot`")):
+        assert sentinel.redact(text) == want, text
+    # a key alone on its line hides a single value on the next indented line
+    for text in ("password:\n  hunter2\n", "+password:\n+  hunter2\n", "password:\r\n  hunter2\r\n", "password: |\n  hunter2\n",
+                 'password = (\n    "hunter2"\n)\n', '  db_password:\n    "hunter2"\n'):
+        assert "hunter2" not in sentinel.redact(text), text
+    # a shell continuation runs the next line, so it stays visible
+    assert "/tmp/evil.sh" in sentinel.redact("TOKEN=\\\n  /tmp/evil.sh\n")
+    # code or a YAML child under a key is not its value
+    for text in ("if secret:\n    delete_all()\n", "+if not token:\n+    raise ValueError(x)\n", "for token in tokens:\n    process(token)\n",
+                 "secrets:\n  - name: a\n", "api_keys:\n  primary: a\n", "token=\n  reboot\n"):
+        assert sentinel.redact(text) == text, text
     assert "x1x1x1" not in sentinel.redact("token=eyJ" + "a" * 500 + "." + "b" * 500 + "." + "x1" * 100)
     assert "+rm -rf x" in sentinel.redact('"token": "abc\n+rm -rf x\n+y="')
     # repeated keywords without their delimiter must not backtrack quadratically
-    for text in ("token" * 200_000, "sk-" * 100_000, "authorization:" * 50_000, "eyJ-" * 100_000):
+    for text in ("token" * 200_000, "sk-" * 100_000, "authorization:" * 50_000, "eyJ-" * 100_000,
+                 "token:\n x y\n" * 80_000, ("password:\n  " + "x" * 5000 + " y\n") * 200, "token=a;" * 130_000,
+                 "token:" + " " * 100_000 + "x", "token:" + " " * 100_000 + "|" + " " * 100_000 + "x"):
         start = time.perf_counter()
         sentinel.redact_count("+" + text)
         assert time.perf_counter() - start < 1, "redaction must stay linear on repeated keywords"
@@ -306,7 +327,7 @@ def new_repo(tmp: Path, agents: str = "") -> Path:
 
 
 def check_bash_gate() -> None:
-    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v5 row, fail-open."""
+    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v6 row, fail-open."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "jev").write_text(REC_STUB)
@@ -322,7 +343,7 @@ def check_bash_gate() -> None:
         # AC-1.1: irreversible 0.90 -> would_block, nothing on stdout, fast
         assert run_hook(tmp, event("rm -rf build")) < 2
         row = rows(log, 1)[0]
-        assert row["sentinel_version"] == "shadow-v5" and row["gate"] == "bash" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v6" and row["gate"] == "bash" and "error" not in row, row
         assert row["risky"] is True and row["effect"] == "irreversible", row
         assert row["effect_confidence"] == 0.9 and row["destructive_intent"] == 0.2, row
         assert row["would_block"] is True and row["block_reason"].startswith("irreversible (0.90)"), row
@@ -472,7 +493,7 @@ def check_write_gate() -> None:
         questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
         assert list(questions) == ["kind", "contains_secret"], questions
         assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
-        assert row["sentinel_version"] == "shadow-v5" and row["gate"] == "write" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v6" and row["gate"] == "write" and "error" not in row, row
         assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
         assert "content" not in row and "abc123" not in json.dumps(row), row
