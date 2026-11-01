@@ -132,19 +132,20 @@ NOT_SECRET = re.compile(_NOT_SECRET)
 # URL credentials are found per whitespace- and quote-free run with string search: no length cap to slip past, and linear on a run of URLs.
 URL_RUN = re.compile(r"[^\\\s\"']+")
 URL_USER = re.compile(r"://[^/:@]+:")
-PORT_THEN_PATH = re.compile(r"\d+/(?:[^@]*/)?@")  # `host:8080/path/@me`: the `@` opens a path segment; `alex:2024/pw@db` is a password
+# `host:8080/path/@me`: the `@` opens a path segment of this URL; `alex:2024/pw@db` is a password.
+PORT_THEN_PATH = re.compile(r"\d+/(?:(?:(?!://)[^@])*/)?@")
 
 
 def _redact_userinfo(m: re.Match) -> str:
-    run = m.group(0)
-    user = URL_USER.search(run)
-    if not user:
-        return run
-    rest = run[user.end():]
-    at = rest.rfind("@")
-    if at < 0 or PORT_THEN_PATH.match(rest):
-        return run
-    return f"{run[:user.start()]}://[REDACTED]@{rest[at + 1:]}"
+    run, start = m.group(0), 0
+    while user := URL_USER.search(run, start):
+        port = PORT_THEN_PATH.match(run, user.end())
+        if port:
+            start = port.end()  # exempt only this URL; a later one in the run still counts
+            continue
+        at = run.rfind("@", user.end())
+        return run if at < 0 else f"{run[:user.start()]}://[REDACTED]@{run[at + 1:]}"
+    return run
 
 
 def redact(text: str) -> str:

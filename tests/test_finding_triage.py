@@ -149,6 +149,8 @@ def test_redaction_leaves_code_and_constants_alone() -> None:
     assert ft.redact("postgres://alex:2024/pw@db") == "postgres://[REDACTED]@db"  # digits first, but the `@` does not open a path segment
     assert ft.redact("postgres://alex:p@ss@db/x") == "postgres://[REDACTED]@db/x"  # a raw `@` in a password
     assert ft.redact("postgres://alex:" + "p/" * 2500 + "@db/x") == "postgres://[REDACTED]@db/x"  # no length cap to slip past
+    assert ft.redact("http://localhost:8080/api/@me,postgres://alex:pw@db") == "http://localhost:8080/api/@me,postgres://[REDACTED]@db"  # an exempt URL first
+    assert "alex:pw" not in ft.redact("http://host:8080/a,postgres://alex:pw/@db")  # the exemption stays inside its own URL
 
 
 def test_redaction_exempts_only_a_whole_value_that_names_something() -> None:
@@ -163,6 +165,7 @@ def test_redaction_stays_fast_on_a_long_run_of_keywords() -> None:
     ft.redact("token" * 13000)
     ft.redact("http://a:1/" * 20000)
     ft.redact("http://a:" + "b" * 200000)
+    ft.redact("http://a:1/@" * 20000)
     assert time.perf_counter() - start < 1.0
 
 
