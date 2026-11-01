@@ -8,7 +8,6 @@ and uses Jev to flag prompts that are not self-contained or where multiple skill
 import argparse
 import collections
 import json
-import math
 from pathlib import Path
 import sys
 
