@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 
 from jev_patterns import DEFAULT_TIMEOUT, JevError, call, input_tokens
-from scope_sentinel import redact, redact_count
+from redaction import redact, redact_count
 
 CHOICES = ("implements", "contradicts", "unaddressed", "defers", "unclear")
 MAX_DIFF_BYTES = 1024 * 1024  # 1 MB

@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from jev_patterns import call
+from redaction import blank_private_keys
+from redaction import redact_strict as redact
 
 # ponytail: provisional thresholds, all in one place; tune from calibrate_findings.py output.
 DUPLICATE_AT = 0.85  # duplicate_of_prior_round at or above -> "duplicate"
@@ -91,7 +93,7 @@ BULLET = re.compile(rf"^- \*\*{SEV}\*\*(?: \(reviewer said {SEV}\))?\s*(?:[—�
 # `### HIGH **MUST FIX**: title` / `### MEDIUM: title`  (saved dw-review reports)
 HEADING = re.compile(rf"^#{{2,4}} {SEV}(?: \*\*MUST FIX\*\*)?: (.*)$")
 # `## High Findings` bucket, then `### NUM-1 — title` or `### R3-01 — title [HIGH]`  (Multi-Agent Review reports)
-BUCKET = re.compile(rf"^#{{2,3}} (Critical|High|Medium|Low) Findings\b", re.I)
+BUCKET = re.compile(r"^#{2,3} (Critical|High|Medium|Low) Findings\b", re.I)
 IDHEAD = re.compile(rf"^#{{3,4}} ([A-Z]+\d*-?\d+) [—–-] (.*?)(?: \[{SEV}\])?\s*$")
 # `| L1 | finding | fix |`  (vista-dw-review table) and `| F3 | HIGH | title | ... |`
 TABLE = re.compile(r"^\| *([A-Z]+-?\d+) *\| *(.*?) *\|(.*)$")
@@ -107,62 +109,6 @@ ATTR = re.compile(r"^\s*- \*{0,2}(Where|Location|Failure path|Description|Fix|Su
 ATTR_KEY = {"where": "where", "location": "where", "failure": "failure", "description": "failure", "fix": "fix", "suggested": "fix", "evidence": "evidence", "skeptic": "skeptic"}
 WHERE = re.compile(r"([\w./-]+\.\w{1,6}):(\d+)(?:[-–—](\d+))?")  # reports use ASCII and en/em dashes for ranges
 PRIOR_REF = re.compile(r"\bFindings? (\d+(?:(?:,| and) \d+)*)")
-# Redaction fails closed: this text goes to an outside service, so a redacted `tokenizer` costs nothing and a missed secret does.
-# Known key shapes first (prefixed tokens, AWS, Google, JWT, PEM blocks, a truncated one to the end of the text); `sk`, `hf` and `npm`
-# also start ordinary names (`sk-learn`, `hf_hub_download`, `npm_package_version`), so those need the key's own shape.
-_PEM = r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"
-PEM_BLOCK = re.compile(_PEM, re.S)
-TOKEN = re.compile(
-    r"(?:(?<![A-Za-z0-9])|(?<=\\[nrt]))(?:ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|glpat|rpa)[-_][A-Za-z0-9_-]{8,}"
-    r"|(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(?:sk[-_](?=[A-Za-z_-]{0,40}\d)[A-Za-z0-9_-]{12,}|(?:hf|npm)_[A-Za-z0-9]{30,})"
-    r"|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}"
-    r"|Bearer [A-Za-z0-9._-]{12,}"
-    r"|eyJ[A-Za-z0-9_-]{10,2048}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?"
-    rf"|{_PEM}",
-    re.S,
-)
-# A keyword anywhere in an identifier, then `=`, `:`, `:=`, `=>`, a typed declaration, or a quoted `to "..."` / `("...")`.
-# A value runs to whitespace, a quote, a backtick, or a `\"` / `\\` from serialized JSON; only those keep JSON parseable.
-_SECRET_WORD = r"(?:api[_-]?key|secret|token|password|passwd|pwd|passphrase|private[_-]?key|mnemonic|credential|[_-]pass(?![a-z]))"
-_OPERATOR = r"\\*[\"'`]?(?:\s*:\s*[A-Za-z_][\w.<>?, ]{0,60}\s*=|\s*:=|\s*=>|\s*[=:]|\s+to\s+(?=\\*[\"'])|\((?=\\*[\"']))\s*\\*[\"'`]?"
-_VALUE_CHAR = r"(?:[^\\\"'`\s]|\\(?![\\\"]))"
-# Only a whole all-caps constant is exempt (`token: WITHDRAWAL_STORE_UNAVAILABLE` is an error code, not a secret).
-# ponytail: a digit-free underscored all-caps secret passes as a constant; none seen in the corpus.
-_CONSTANT = r"[A-Z]+(?:_[A-Z]+)+[.,;)\]}]*(?:\\(?=[\\\"])|[\"'`\s]|$)"
-ASSIGNED = re.compile(rf"(?i)({_SECRET_WORD}[A-Za-z0-9_-]{{0,80}})({_OPERATOR})(?!(?-i:{_CONSTANT})){_VALUE_CHAR}{{12,}}")
-SECRET_WORD = re.compile(_SECRET_WORD, re.I)
-CONSTANT = re.compile(_CONSTANT)
-# URL credentials, per run of text with string search: no length cap to slip past, and linear on a run of URLs. Anything from the
-# first `://user:` to the last `@` in the run goes, so a port and path with an `@` in it is redacted too.
-URL_RUN = re.compile(r"(?:[^\\\s\"']|\\(?![\\\"]))+")
-URL_USER = re.compile(r"://(?:[^/:]*:|[^/:@]{16,}(?=@))")
-
-
-def _redact_userinfo(m: re.Match) -> str:
-    run = m.group(0)
-    user = URL_USER.search(run)
-    at = run.rfind("@", user.end()) if user else -1
-    return run if at < 0 else f"{run[:user.start()]}://[REDACTED]@{run[at + 1:]}"
-
-
-def redact(text: str) -> str:
-    text = TOKEN.sub("[REDACTED]", text)
-    text = ASSIGNED.sub(r"\1\2[REDACTED]", text)
-    return URL_RUN.sub(_redact_userinfo, text)
-
-
-def redact_json(value, key: str = ""):
-    """A decoded JSON value: strings by content, and whole under a key that names a secret, since no `key=` is left to match."""
-    if isinstance(value, str):
-        if value and SECRET_WORD.search(key) and not CONSTANT.fullmatch(value):
-            return "[REDACTED]"
-        return redact(value)
-    if isinstance(value, list):
-        return [redact_json(v, key) for v in value]
-    if isinstance(value, dict):
-        return {redact(k): redact_json(v, k if SECRET_WORD.search(k) else key) for k, v in value.items()}
-    return value
-
 
 def section_verdict(heading: str) -> str | None:
     h = heading.lower()
@@ -293,8 +239,7 @@ def hunk(repo: Path, sha: str, path: str, start: int, end: int, context: int = H
     text = git(repo, "show", f"{sha}:{path}")
     if not text:
         return ""
-    # blocks go first, on the whole file: a window inside a key has no BEGIN or END for redact() to find
-    lines = PEM_BLOCK.sub(lambda m: "\n".join("[REDACTED]" for _ in m.group(0).split("\n")), text).splitlines()
+    lines = blank_private_keys(text).splitlines()
     lo, hi = max(1, start - context), min(len(lines), end + context)
     return "\n".join(f"{n}: {lines[n - 1]}" for n in range(lo, hi + 1))
 
@@ -376,7 +321,7 @@ def grade_round(findings: list[dict], prior: list[dict], *, repo=None, sha=None,
     graded, calls, usd, tokens = [], 0, 0.0, 0
     for f in findings:
         state = finding_state(f, prior, repo, sha, set(pr_commits), at)
-        r = call(state, FINDING_QUESTIONS, job=job, model=model)
+        r = call(state, FINDING_QUESTIONS, job=job, model=model, redacted=True)
         calls, usd, tokens = calls + 1, usd + _usd(r), tokens + _tokens(r)
         graded.append({**f, **label(r["answers"], state["blame"] is not None), "blame": state["blame"], "state_error": state["state_error"], "state_chars": len(str(state))})
     round_state = {
@@ -385,12 +330,12 @@ def grade_round(findings: list[dict], prior: list[dict], *, repo=None, sha=None,
     }
     same = None
     if prior:
-        r = call(round_state, ROUND_QUESTIONS, job=job, model=model)
+        r = call(round_state, ROUND_QUESTIONS, job=job, model=model, redacted=True)
         calls, usd, tokens = calls + 1, usd + _usd(r), tokens + _tokens(r)
         same = r["answers"]["round_materially_same_as_previous"]["noul"]
     keystone = None
     if len(graded) > 1:
-        r = call(round_state, keystone_question(graded), job=job, model=model)
+        r = call(round_state, keystone_question(graded), job=job, model=model, redacted=True)
         calls, usd, tokens = calls + 1, usd + _usd(r), tokens + _tokens(r)
         keystone = r["answers"]["keystone"]["choice"]
     return {

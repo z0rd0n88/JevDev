@@ -15,6 +15,8 @@ from pathlib import Path
 import subprocess
 import time
 
+from redaction import redact_state
+
 JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_TIMEOUT = 40.0
@@ -78,9 +80,16 @@ def call(
     job: str,
     model: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    redacted: bool = False,
 ) -> dict:
-    """One Jev call: the parsed response with every question id answered, plus "elapsed" seconds."""
+    """One Jev call: the parsed response with every question id answered, plus "elapsed" seconds.
+
+    The state is redacted here so no caller can forget. redacted=True is for a caller holding text that redact() would
+    damage (a shell command view) or that is already under redact_strict(); tests/test_redaction.py lists who may.
+    """
     env = isolated_env()
+    if not redacted:
+        state = redact_state(state)
     stdin = state if isinstance(state, str) else json.dumps(state)
     start = time.perf_counter()
     try:

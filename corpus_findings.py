@@ -21,7 +21,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from finding_triage import parse_fixer_report, parse_report, redact, redact_json
+from finding_triage import parse_fixer_report, parse_report
+from redaction import redact_json
+from redaction import redact_strict as redact
 
 ROOT = Path(__file__).resolve().parent
 LOCAL = ROOT / ".local"

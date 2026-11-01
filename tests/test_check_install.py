@@ -1,7 +1,6 @@
 """Phase 7 checks: install-check table cells and exit codes on tmp copies of the configs."""
 
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,6 +36,7 @@ def make_root(tmp):
         "ask_jev_files.py",
         "scope_sentinel.py",
         "jev_patterns.py",
+        "redaction.py",
     ]:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / rel, root / rel)

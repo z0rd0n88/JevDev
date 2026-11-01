@@ -17,8 +17,9 @@ import sys
 import time
 
 from jev_patterns import call, estimated_usd, input_tokens, model_name
+from redaction import SECRET_WORDS, SECRETS, redact, redact_count
 
-SENTINEL_VERSION = "shadow-v7"
+SENTINEL_VERSION = "shadow-v8"
 MAX_JUDGES = 4  # concurrent detached Jev calls; extra commands log a "skipped" row
 _ARG = r"""(?>"[^"]*"|'[^']*'|\S+)"""
 # At most 8 global options, matched possessively, keep scanning linear on long or quote-heavy commands.
@@ -38,47 +39,20 @@ RISKY = re.compile(
 DRY_RUN = re.compile(r"\s--dry-run\b")
 SCRATCHPAD = re.compile(rf"^/tmp/claude-{os.getuid()}/[^/]+/([0-9a-f-]{{36}})/")
 SEGMENT = re.compile(r"&&|\|\||[;|\n]")
-_VALUE = r"""(?:[^\s'";,`$]|\$(?!\()|,(?![A-Za-z_][\w.]{0,64}[(= \t])){1,4096}"""
-# Each pattern keeps group 1 (possibly empty) and replaces the rest of the match. Keyword-to-value whitespace is
-# [ \t], never \s, so a match never crosses a newline, except a PEM body and a key alone on its line (pattern 1).
-# ponytail: every name containing token/secret/password/key loses its value (max_tokens=1024 too); redact_count reports it.
-# Every run before a required delimiter is capped ({0,64}, {1,64}) so repeated keywords stay linear; a bare value ends at
-# whitespace, ;, backtick, $( or a , followed by code, so one statement cannot hide the next while ( ) and a plain , stay
-# hidden; a quoted value ends at its closing quote, and the PEM body is base64 lines.
-# ponytail: in file text `password=ab;cd` leaks ;cd, an unindented or backslash-continued next-line value leaks, and && and |
-# still hide what follows; tell them apart by language if verdicts need it. Commands go through command_view() instead.
-SECRETS = [re.compile(p) for p in (
-    r"(?im)(^[+-]?[ \t]*['\"]?\w{0,64}(?:token|secret|password|passwd|api[_-]?key)\w{0,64}['\"]?[ \t]*(?::[ \t]{0,64}(?:[|>][+-]?[ \t]{0,64})?|=[ \t]{0,64}\([ \t]{0,64})\r?\n[+-]?[ \t]+)"
-    r"(?:(['\"])[^'\"\n]{1,4096}\2|" + _VALUE + r")(?=[ \t]*\r?$)",
-    r"(?i)(authorization:[ \t]*\S{1,64}[ \t]+)" + _VALUE,
-    r"(?i)(bearer[ \t]+)[A-Za-z0-9._~+/=-]{16,}",
-    r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w{0,64}[ \t]*(?:=(?!=)|:=?)[ \t]*)(?:\$?(['\"])[^'\"\n]{1,4096}\2|['\"]?" + _VALUE + ")",
-    r"""(?i)(\\?["'](?:token|secret|password|passwd|api[_-]?key)\w{0,64}\\?["'][ \t]*:[ \t]*\\?["'])(?:\\[^"'\n]|[^"'\\\n])+""",
-    r"(?i)(--(?:password|passwd|token|secret|api[-_]?key)[= \t]+)" + _VALUE,
-    r"(\s-u[ \t]+[^\s:'\"]{1,64}:)" + _VALUE,
-    r"(://[^/\s:@]*:)[^/\s@]+(?=@)",
-    r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
-    r"()\bsk[-_](?=[\w-]{0,64}\d)[\w-]{20,}",
-    r"()\bts_[\w-]{16,}",
-    r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
-    r"()\bxox[abposr]-[\w-]{10,}",
-    r"()\beyJ[\w-]{10,256}\.[\w-]{10,}\.[\w-]{10,}",
-    r"(-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----)(?:\r?\n[+-]? ?[A-Za-z0-9+/=]{12,}[ \t]*(?![^\r\n]))+",
-)]
-_KEY_NAME = r"[\w.\[\]-]{0,64}(?:token|secret|password|passwd|api[_-]?key)[\w\[\]-]{0,64}"
+_KEY_NAME = rf"[\w.\[\]-]{{0,64}}(?:{SECRET_WORDS})[\w\[\]-]{{0,64}}"
 _WORD_ASSIGN = re.compile(rf"""(?i)['"]?(?:--?)?{_KEY_NAME}\+?(?:=(?!=)|:=)""")
 _QUOTED_VALUE = re.compile(rf"""(?i)({_KEY_NAME}=(?!=))[^"']+""")
 _ARRAY_KEY = re.compile(rf"(?i){_KEY_NAME}\+?=")
 _BARE_KEY = re.compile(rf"(?i){_KEY_NAME}")
 _COLON_KEY = re.compile(rf"""(?i)[^=]{{0,64}}{_KEY_NAME}['"]?:""")
 _SPLIT_VALUE = re.compile(r"(:=|=(?!=)|:(?!=))(.+)", re.S)
-_FLAG_KEY = re.compile(r"(?i)--[\w-]{0,64}(?:password|passwd|token|secret|api[-_]?key)")
+_FLAG_KEY = re.compile(rf"(?i)--[\w-]{{0,64}}(?:{SECRET_WORDS})")
 _FLAG_SHAPE = re.compile(r"--?[A-Za-z][a-z-]*")
 _COMMENT_VALUE = re.compile(rf"(?i)({_KEY_NAME}[ \t]*(?:=(?!=)|:=?)[ \t]*).+")
 _USER_VALUE = re.compile(r"""(['"]?[^\s:'"]{1,64}:)(.+?)(['"]?)$""", re.S)
 _GLUED_USER = re.compile(r"(-u[^\s:=]{1,64}:)(.+)$", re.S)
 _BEARER_VALUE = re.compile(r"[A-Za-z0-9._~+/=-]{16,}")
-_SECRET_HINT = re.compile(r"(?i)token|secret|passw|api[_-]?key|authorization|bearer|://|-u[ \t]|gh[pousr]_|github_pat|glpat|sk[-_]|ts_|akia|asia|xox|eyj|-----begin")
+_SECRET_HINT = re.compile(r"(?i)token|secret|passw|api[_-]?key|private[_-]?key|authorization|bearer|://|-u[ \t]|gh[pousr]_|github_pat|glpat|sk[-_]|ts_|akia|asia|xox|eyj|-----begin")
 _SHELL_BARE = re.compile(r"""[^ \t\n;&|()<>\\'"$`]+""")
 _DOUBLE_QUOTED_TEXT = re.compile(r"""[^"\\$`]+""")
 _PARAMETER_TEXT = re.compile(r"""[^}'"\\$`]+""")
@@ -109,12 +83,6 @@ TAG = re.compile(r"</?(?:command-[\w-]+|pasted_content|bash-input)(?:\s[^>]*)?>"
 COMMAND = re.compile(r"\s*<command-(name|message)>")
 COMMAND_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.S)
 COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
-
-
-def redact(text: str) -> str:
-    for pattern in SECRETS:
-        text = pattern.sub(lambda m: f"{m.group(1)}[REDACTED]", text)
-    return text
 
 
 class _Unreadable(Exception):
@@ -706,15 +674,6 @@ def inside_repo(path: str, cwd: str, root: Path):
     return rel.as_posix() if rel.parts else None
 
 
-def redact_count(text: str) -> tuple[str, int]:
-    """redact() plus the number of substitutions across all patterns."""
-    total = 0
-    for pattern in SECRETS:
-        text, n = pattern.subn(lambda m: f"{m.group(1)}[REDACTED]", text)
-        total += n
-    return text, total
-
-
 def judge_write(rel_path: str, content: str) -> dict:
     """Judge one write; content must already be redacted and clipped by the caller."""
     response = call({"path": rel_path, "content": content}, WRITE_QUESTIONS, job="scope_sentinel")
@@ -736,7 +695,7 @@ def judge_write(rel_path: str, content: str) -> dict:
 def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> dict:
     state = {"instruction": clip(redact(instruction)), "constraints": clip(redact(constraints)) or "None",
              "command": clip(redact_command(command)), "cwd": cwd}
-    response = call(state, {"scope": SCOPE_QUESTION, **BASH_QUESTIONS}, job="scope_sentinel")
+    response = call(state, {"scope": SCOPE_QUESTION, **BASH_QUESTIONS}, job="scope_sentinel", redacted=True)
     answers = response["answers"]
     answer = answers["scope"]
     would_block, block_reason = gate_bash(answers)

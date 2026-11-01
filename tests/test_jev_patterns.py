@@ -143,6 +143,14 @@ def check_call() -> None:
     assert rec()["stdin"] == "PROMPT: x", rec()
     assert rec()["argv"][:2] == ["-m", "m2"], rec()["argv"]
 
+    # the state is redacted here, so a caller that forgets cannot leak
+    call("password=hunter2", QUESTIONS, job="t")
+    assert rec()["stdin"] == "password=[REDACTED]", rec()
+    call({"body": "ghp_abcdefghijklmnop", "token": "a b", "n": 1}, QUESTIONS, job="t")
+    assert json.loads(rec()["stdin"]) == {"body": "[REDACTED]", "token": "[REDACTED]", "n": 1}, rec()
+    call("token=x&&mark", QUESTIONS, job="t", redacted=True)
+    assert rec()["stdin"] == "token=x&&mark", rec()
+
 
 def check_errors() -> None:
     """AC-1.2: every failure path is a JevError with a safe message."""
@@ -230,10 +238,11 @@ def check_structure() -> None:
     assert not [line for line in sentinel if '"-j"' in line], (
         "sentinel must not build a jev argv"
     )
-    imports = re.findall(
-        r"^(?:from|import)\s+(\w+)", (ROOT / "jev_patterns.py").read_text(), re.M
-    )
-    assert imports and set(imports) <= sys.stdlib_module_names, imports
+    for name, allowed in (("jev_patterns.py", {"redaction"}), ("redaction.py", set())):
+        imports = re.findall(
+            r"^(?:from|import)\s+(\w+)", (ROOT / name).read_text(), re.M
+        )
+        assert imports and set(imports) <= sys.stdlib_module_names | allowed, imports
 
 
 if __name__ == "__main__":
