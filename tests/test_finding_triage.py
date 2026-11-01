@@ -176,9 +176,9 @@ def test_redaction_of_url_credentials() -> None:
 
 
 def test_redaction_leaves_ordinary_names_and_constants_alone() -> None:
-    for plain in ("npm_package_version is set", "hf_hub_download(repo)", "sk-learn-extras==1.0", "ask_jev_files.py", "token: `WITHDRAWAL_STORE_UNAVAILABLE`", "the token: WITHDRAWAL_STORE_UNAVAILABLE.", "(token: WITHDRAWAL_STORE_UNAVAILABLE)"):
+    for plain in ("npm_package_version is set", "hf_hub_download(repo)", "sk-learn-extras==1.0", "ask_jev_files.py", "token: `WITHDRAWAL_STORE_UNAVAILABLE`", "the token: WITHDRAWAL_STORE_UNAVAILABLE.", "(token: WITHDRAWAL_STORE_UNAVAILABLE)", 'x=\\"token\\": \\"WITHDRAWAL_STORE_UNAVAILABLE\\"'):
         assert ft.redact(plain) == plain, (plain, ft.redact(plain))
-    for raw in ("password=abcdefgh(ijklmnop1234", "password=hunter[2hunter2hunter2", "token=ABC_DEF/xyz123456789", "token=ABC_DEF.real1234567", "token=ABC_DEF,real1234567", "secret=abcdefgh.ijklmnop/qrst", "password=abc(hunter2hunter2)", "token=abcdefgh[xyz1234567]"):
+    for raw in ("password=abcdefgh(ijklmnop1234", "password=hunter[2hunter2hunter2", "token=ABC_DEF/xyz123456789", "token=ABC_DEF.real1234567", "token=ABC_DEF,real1234567", "password=ABC_DEF\\secrettail123", "secret=abcdefgh.ijklmnop/qrst", "password=abc(hunter2hunter2)", "token=abcdefgh[xyz1234567]"):
         assert ft.redact(raw).endswith("=[REDACTED]"), (raw, ft.redact(raw))
     assert ft.redact_json({"password": "ABC_DEF correct horse", "token": "getenv(x) real1234"}) == {"password": "[REDACTED]", "token": "[REDACTED]"}
     assert ft.redact_json({"ghp_abcdefghijklmnop": 1}) == {"[REDACTED]": 1}  # a key can hold a token too

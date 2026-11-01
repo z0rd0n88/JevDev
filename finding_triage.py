@@ -128,7 +128,7 @@ _OPERATOR = r"\\*[\"'`]?(?:\s*:\s*[A-Za-z_][\w.<>?, ]{0,60}\s*=|\s*:=|\s*=>|\s*[
 _VALUE_CHAR = r"(?:[^\\\"'`\s]|\\(?![\\\"]))"
 # Only a whole all-caps constant is exempt (`token: WITHDRAWAL_STORE_UNAVAILABLE` is an error code, not a secret).
 # ponytail: a digit-free underscored all-caps secret passes as a constant; none seen in the corpus.
-_CONSTANT = r"[A-Z]+(?:_[A-Z]+)+[.,;)\]}]*(?:[\\\"'`\s]|$)"
+_CONSTANT = r"[A-Z]+(?:_[A-Z]+)+[.,;)\]}]*(?:\\(?=[\\\"])|[\"'`\s]|$)"
 ASSIGNED = re.compile(rf"(?i)({_SECRET_WORD}[A-Za-z0-9_-]{{0,80}})({_OPERATOR})(?!(?-i:{_CONSTANT})){_VALUE_CHAR}{{12,}}")
 SECRET_WORD = re.compile(_SECRET_WORD, re.I)
 CONSTANT = re.compile(_CONSTANT)
