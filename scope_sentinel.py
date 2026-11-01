@@ -64,7 +64,7 @@ SECRETS = [re.compile(p) for p in (
     r"()\beyJ[\w-]{10,256}\.[\w-]{10,}\.[\w-]{10,}",
     r"(-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----)(?:\r?\n[+-]? ?[A-Za-z0-9+/=]{12,}[ \t]*(?![^\r\n]))+",
 )]
-SHELL_BREAK = re.compile(r"[;&|<>(){}`]|\$\(")
+SHELL_BREAK = re.compile(r"[;&|<>)`]|\$\(")  # ( { } do not end a shell word, so a secret may hold them
 SHELL_EXPANSION = re.compile(r"`|\$\(")
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
@@ -86,11 +86,16 @@ def redact(text: str) -> str:
 
 
 def _hide_command_value(match: re.Match) -> str:
-    """Hide a matched value up to the first thing the shell would act on; single quotes make all of it literal."""
+    """Hide a matched value up to the first thing the shell would act on; single quotes make all of it literal.
+
+    A value that opens with a break is left as is, because the shell assigns nothing and runs what follows.
+    ponytail: a URL counts as quoted, and any other value in enclosing double quotes shows its tail after a break.
+    """
     key, value = match.group(1), match.group(0)[len(match.group(1)):]
     if key.endswith("'") or value.startswith("'"):
         return f"{key}[REDACTED]"
-    stop = (SHELL_EXPANSION if key.endswith('"') or value.startswith('"') else SHELL_BREAK).search(value)
+    quoted = key.endswith('"') or value.startswith('"') or "://" in key
+    stop = (SHELL_EXPANSION if quoted else SHELL_BREAK).search(value)
     if not stop:
         return f"{key}[REDACTED]"
     return f"{key}[REDACTED]{value[stop.start():]}" if stop.start() else match.group(0)
