@@ -120,7 +120,12 @@ def check_install_twice():
             and "~/.claude/skills/hyper-jev" in out
             and "~/.claude/skills/ask-jev" in out
         ), out
-        claude = json.loads(out[out.index("{") : out.rindex("}") + 1])["hooks"]
+        snippet = json.loads(out[out.index("{") : out.rindex("}") + 1])
+        assert snippet["permissions"]["deny"] == [
+            f"Edit(/{JEVDEV}/pruner/**)",
+            f"Edit(/{JEVDEV}/with_jev_key.sh)",
+        ], snippet["permissions"]
+        claude = snippet["hooks"]
         assert [g.get("matcher") for g in claude["PreToolUse"]] == [
             "Bash",
             "Write|Edit|NotebookEdit",

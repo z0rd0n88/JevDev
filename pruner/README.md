@@ -13,12 +13,12 @@ Runtime copy of [`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-prun
 | Hardcoded the OpenRouter URL and `jev-latest`; removed the `baseUrl`, `apiKey`, and `model` options | `src/jev.ts`, `.claude-plugin/plugin.json` | HIGH-4 |
 | Key comes from `with_jev_key.sh` in an empty environment with `HOME` from the passwd file, and must start with `sk-or-` | `hooks/fast-jev-output.ts` | HIGH-4, H-1 |
 | A secret in the command or output skips scoring and archiving | `hooks/fast-jev-output.ts` | HIGH-1 |
-| Detector uses `scope_sentinel.py`'s patterns, plus a bare PEM header, a token as a URL's user name, wallet keys, more key names, and more token prefixes | `src/secrets.ts` | HIGH-2, S-1 |
-| Removed conversation history; leading injected tag blocks are stripped and the task string is redacted before clipping | `src/output.ts`, `hooks/fast-jev-output.ts` | HIGH-3 |
+| Detector uses `scope_sentinel.py`'s patterns, plus a bare PEM header, a token as a URL's user name, wallet keys, more key names and token prefixes, and a quoted flag value | `src/secrets.ts` | HIGH-2, S-1 |
+| Removed conversation history; leading injected tag blocks are stripped, a message with a secret in its first 4,000 characters is dropped, and the rest are clipped to 500 | `src/output.ts`, `hooks/fast-jev-output.ts` | HIGH-3 |
 | Replaced `\s*` after `^` with `[ \t]*`; rewrote the four quadratic retention patterns; added a 1,000,000-character cap and a 60 s scoring budget | `src/retention.ts`, `hooks/fast-jev-output.ts` | MEDIUM-1, M-1 |
 | Protected `fatal:`, `command not found`, `No such file or directory`, and `denied`, `refused` or `timed out` at a line's end | `src/retention.ts` | M-4 |
 | Archive moved out of the project to `pruner/` under the passwd home's `.local/state/jevdev/`; refuses a symlinked state dir; rejects unsafe tool ids | `hooks/fast-jev-output.ts` | MEDIUM-3 |
-| Diagnostics on and written to the debug log; failures log their HTTP status; the first failure in a session also prints one transcript line | `hooks/fast-jev-output.ts` | MEDIUM-2, M-4 |
+| Diagnostics on and written to the debug log; failures log their HTTP status; the first failure of each kind (no key, no archive folder, hook error) in a session also prints one transcript line | `hooks/fast-jev-output.ts` | MEDIUM-2, M-4 |
 | Removed `userConfig`, so a project's `pluginConfigs` cannot change the defaults | `.claude-plugin/plugin.json` | L-3 |
 | No scoring request goes out once the 60 s budget has passed | `hooks/fast-jev-output.ts` | L-1 |
 | Kept `stderr` when pruning persisted output: there it holds host notices that are in no file | `hooks/fast-jev-output.ts` | L-3 of the first review |
@@ -26,4 +26,4 @@ Runtime copy of [`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-prun
 
 ## What the detector misses
 
-`src/secrets.ts` is a denylist, so an unlisted shape is sent. Known misses: a bare mnemonic, a 32-byte base58 key (same shape as a public key), a Solana key as a JSON byte array, 64 hex characters without `0x`, a Discord bot token with no key name, `('API_KEY', 'x')`, `"token" => "x"`, and commands such as `declare -p`, `export -p`, `compgen -v`, `cat /proc/self/environ`, `ps eww`, `aws configure list`, and `gh auth status`. A `0x` + 64 hex value or an 87-88 character base58 value always skips pruning, including transaction hashes and signatures.
+`src/secrets.ts` is a denylist, so an unlisted shape is sent. Known misses: a bare mnemonic, a 32-byte base58 key (same shape as a public key), a Solana key as a JSON byte array, 64 hex characters without `0x`, a Discord bot token with no key name, `('API_KEY', 'x')`, `"token" => "x"`, a bare `AUTH=`, a space-separated `token abc`, `<token>x</token>`, `token%3Dx`, and commands such as `compgen -e`, `cat /proc/self/environ`, `ps eww`, `aws configure list`, and `gh auth status`. A `0x` + 64 hex value or an 87-88 character base58 value always skips pruning, including transaction hashes and signatures.

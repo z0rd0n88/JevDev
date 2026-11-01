@@ -144,11 +144,12 @@ def claude_snippet(jevdev):
     }
     links = [f"ln -s {jevdev}/.agents/skills/{n} ~/.claude/skills/{n}" for n in SKILLS]
     env = {"CLAUDE_CODE_PLUGIN_DIRS": f"{jevdev}/pruner"}
+    deny = [f"Edit(/{jevdev}/pruner/**)", f"Edit(/{jevdev}/with_jev_key.sh)"]  # "//" + path is absolute
     return "\n".join(
         [
             "Claude part, not applied (~/.claude is the ClaudeConfig repo): open a PR with no Claude session "
-            "running and merge this env and these hooks into ~/.claude/settings.json:",
-            json.dumps({"env": env, "hooks": hooks}, indent=2),
+            "running and merge this env, these deny rules and these hooks into ~/.claude/settings.json:",
+            json.dumps({"env": env, "permissions": {"deny": deny}, "hooks": hooks}, indent=2),
             "then run:",
             *links,
         ]

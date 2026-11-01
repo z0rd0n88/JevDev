@@ -1,5 +1,6 @@
 // The review's required changes, proven through the engine's own `$`: nothing here reaches a network or a real key.
 import { describe, expect, mock, test } from 'claude-code/testing';
+import { goalFromMessages } from '../hooks/fast-jev-output.js';
 
 const KEY = 'sk-or-v1-testkey';
 const noisy = Array.from({ length: 200 }, (_, i) => `${'cache '.repeat(55)}compiled module ${i} successfully`).join('\n');
@@ -34,7 +35,8 @@ function world(
   });
   on('session.messages', () => ({
     value: [
-      { role: 'user', text: 'Build it. OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123', toolUses: [] },
+      { role: 'user', text: 'Build it.', toolUses: [] },
+      { role: 'user', text: 'Use OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123', toolUses: [] },
       { role: 'user', text: '<system-reminder>PRIVATE-REMINDER</system-reminder>\nAlso keep the logs.', toolUses: [] },
       { role: 'user', text: '<task-notification>PRIVATE-NOTIFICATION</task-notification>', toolUses: [] },
       { role: 'assistant', text: 'PRIVATE-ASSISTANT-TEXT', toolUses: [] },
@@ -118,6 +120,23 @@ describe('notices', () => {
   });
 });
 
+describe('notices by reason', () => {
+  test('an early hook_error does not hide a later missing_key', async ($, on) => {
+    const w = world(on, noisy, {
+      key: 'nope', extra: { persistedOutputPath: '/tmp/out.txt', persistedOutputSize: noisy.length },
+    });
+    let reads = 0;
+    on('fs.read', () => {
+      if (reads++ === 0) throw new Error('over the read limit');
+      return { value: noisy };
+    });
+    await $.tool.call({ tool: 'Bash', command: 'npm test' });
+    await $.tool.call({ tool: 'Bash', command: 'npm test' });
+    const notices = w.logs.filter(l => l.to !== 'debug' && l.text.startsWith('Bash output left untrimmed'));
+    expect(notices.map(l => l.text.match(/\((\w+),/)![1])).toEqual(['hook_error', 'missing_key']);
+  });
+});
+
 describe('what leaves the machine', () => {
   test('a secret in the output sends nothing and saves nothing', async ($, on) => {
     const output = `${noisy}\nGITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789`;
@@ -144,12 +163,44 @@ describe('what leaves the machine', () => {
       expect(init.body!.includes('PRIVATE-')).toBe(false);
       expect(state.task).toContain('Build it.');
       expect(state.task).toContain('Also keep the logs.');
+      expect(state.task.includes('OPENAI_API_KEY')).toBe(false);
       expect(init.body!.includes('sk-abcdefghijklmnop')).toBe(false);
     }
   });
 });
 
+describe('goalFromMessages', () => {
+  const user = (text: string) => ({ role: 'user' as const, text, toolUses: [] });
+
+  test('drops a message that holds a secret and keeps the three newest others', () => {
+    const goal = goalFromMessages([
+      user('older'),
+      user('Build it.'),
+      user('mnemonic: abandon ability able about above absent'),
+      user('Also keep the logs.'),
+      user('password=correct horse battery staple'),
+    ]);
+    expect(goal).toBe('older\nBuild it.\nAlso keep the logs.');
+  });
+
+  test('drops a secret that would straddle the 500-character clip', () => {
+    expect(goalFromMessages([user(`${'a '.repeat(240)}0x${'ab12'.repeat(16)}`)])).toBe('');
+  });
+
+  test('a huge message with a PEM-shaped run does not throw', () => {
+    const huge = `-----BEGIN PRIVATE KEY-----${'\nAAAAAAAAAAAAAAAA'.repeat(500_000)}`;
+    expect(goalFromMessages([user('Build it.'), user(huge)])).toBe('Build it.');
+  });
+});
+
 describe('limits', () => {
+  test('stderr past the cap sends nothing', async ($, on) => {
+    const w = world(on, noisy, { extra: { stderr: 'e\n'.repeat(500_001) } });
+    const answer = await $.tool.call({ tool: 'Bash', command: 'npm test' });
+    expect(w.fetches.length).toBe(0);
+    expect((answer.result as { stdout: string }).stdout).toBe(noisy);
+  });
+
   test('no request is sent once the deadline has passed', async ($, on) => {
     const w = world(on, noisy, { lateBy: 61_000 });
     const answer = await $.tool.call({ tool: 'Bash', command: 'npm test' });

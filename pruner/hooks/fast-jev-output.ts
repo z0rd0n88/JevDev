@@ -106,18 +106,17 @@ export function jevAsker(
 // The blocks of scope_sentinel.py's TAG_BLOCK. Anchored, so one attempt and linear.
 const INJECTED = /^(?:\s*<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>[\s\S]*?<\/\1>)+\s*/;
 
+// Walks back from the newest message until three are kept. A message with a secret in its first 4,000 characters is
+// dropped whole: redact() leaves the words after the first space of `mnemonic: a b c`. Only the first 500 are sent.
 export function goalFromMessages(messages: readonly SessionMessage[]): string {
-  return messages
-    .filter(
-      (message) =>
-        message.role === 'user' &&
-        (!message.toolResults || message.toolResults.length === 0),
-    )
-    .map((message) => message.text.replace(INJECTED, ''))
-    .filter((text) => text.trim().length > 0)
-    .slice(-3)
-    .map((text) => redact(text).slice(0, 500))
-    .join('\n');
+  const goals: string[] = [];
+  for (let i = messages.length - 1; i >= 0 && goals.length < 3; i--) {
+    const message = messages[i]!;
+    if (message.role !== 'user' || message.toolResults?.length) continue;
+    const text = message.text.replace(INJECTED, '').slice(0, 4_000);
+    if (text.trim() && redact(text) === text) goals.unshift(text.slice(0, 500));
+  }
+  return goals.join('\n');
 }
 
 /**
@@ -155,7 +154,7 @@ async function archiveDir($: Parameters<BashHook>[0], home: string): Promise<str
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
   const archives = new Set<string>();
-  let noticed = false;
+  const noticed = new Set<string>();
 
   on('tool.call', { tool: 'Bash' }, async ($, event, next) => {
     const answer = await next(event);
@@ -183,8 +182,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
       stage = 'read_output';
       const output = persisted ? await $.fs.read(persisted) : record.stdout;
       sourceChars = output.length;
+      const combined = persisted ? output : output + (record.stderr ? `\n${record.stderr}` : '');
       decision = 'too_large';
-      if (output.length > MAX_OUTPUT_CHARS) return answer;
+      if (combined.length > MAX_OUTPUT_CHARS || event.command.length > MAX_OUTPUT_CHARS) return answer;
       if (configured.diagnostics) sourceEstimatedTokens = estimateTokens(output);
       decision = 'below_threshold';
       if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
@@ -193,7 +193,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
       informationCategory = classifyInformation(output);
       decision = 'document';
       if (classifyOutput(event.command, output) === 'document') return answer;
-      const combined = persisted ? output : output + (record.stderr ? `\n${record.stderr}` : '');
       decision = 'secret';
       if (looksSecret(event.command, combined)) return answer;
       stage = 'credentials';
@@ -289,9 +288,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
       $.ui.log(`bash output trim skipped (stage=${stage}${status ? ` status=${status}` : ''})`, { to: 'debug' });
       return answer;
     } finally {
-      if (!noticed && ['missing_key', 'no_archive_dir', 'hook_error'].includes(decision)) {
-        noticed = true;
-        $.ui.log(`Bash output left untrimmed (${decision}, stage=${stage}). The model got the full output. Repeats go to the debug log only.`);
+      if (['missing_key', 'no_archive_dir', 'hook_error'].includes(decision) && !noticed.has(decision)) {
+        noticed.add(decision);
+        $.ui.log(`Bash output left untrimmed (${decision}, stage=${stage}). The model got the full output. Repeats of this reason go to the debug log only.`);
       }
       if (configured.diagnostics) {
         try {
