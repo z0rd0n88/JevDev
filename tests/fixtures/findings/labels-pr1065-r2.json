@@ -1,7 +1,7 @@
 {
   "pr": 1065,
   "round": 2,
-  "note": "Hand labels for the dw-review round that followed the Multi-Agent Review of PR 1065. duplicate = same defect at the same place as a round-one finding (what the Jev question asks). follow_on = a new defect about a round-one subject, typically a missing test for its fix. prior = the round-one id, from the dw-review record's own 'Which of the 19 findings are closed' table (its 'Finding N' numbers are that table's ordinals, not ids). Rows F22-F25 are the skeptic's refuted items.",
+  "note": "Hand labels for the dw-review round that followed the Multi-Agent Review of PR 1065. duplicate = same defect as a round-one finding, at the same or additional sites (what the Jev question asks). follow_on = a new defect about a round-one subject: a defect the fix created, or a missing test for the fix. prior = the round-one id the annotator mapped it to, using the dw-review record's own 'Which of the 19 findings are closed' table where the title cites one (its 'Finding N' numbers are that table's ordinals, not ids). Rows F22-F25 are the skeptic's refuted items. Written by one annotator after seeing the first run's scores; rechecked against the wider definition with no change.",
   "rows": {
     "F1": {"duplicate": false, "follow_on": true, "prior": "FAIL-1", "reason": "new defect created by the FAIL-1 fix: reject() now needs the audit insert"},
     "F2": {"duplicate": false, "follow_on": true, "prior": "SCHEMA-1", "reason": "latent defect in the SCHEMA-1 fix (regrole folding)"},

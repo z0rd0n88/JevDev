@@ -34,10 +34,10 @@ FINDING_QUESTIONS = {
     },
     "duplicate_of_prior_round": {
         "type": "noul",
-        "instructions": "Does `finding` restate one of the `prior_round` findings (same location and same defect, however reworded), rather than report a new defect?",
+        "instructions": "Does `finding` restate one of the `prior_round` findings (the same defect, at the same or additional sites, however reworded), rather than report a new defect?",
         "criteria": {
-            "true": "Same defect at the same place as a prior-round finding, possibly rephrased or with a new severity",
-            "false": "A defect no prior-round finding describes, or a different defect at the same place",
+            "true": "Same defect as a prior-round finding, at the same or additional sites with the same cause, possibly rephrased or with a new severity",
+            "false": "A defect no prior-round finding describes: a different defect at the same place, a defect the prior fix created, or a missing test for the prior fix",
         },
     },
     "severity": {
@@ -108,24 +108,45 @@ ATTR_KEY = {"where": "where", "location": "where", "failure": "failure", "descri
 WHERE = re.compile(r"([\w./-]+\.\w{1,6}):(\d+)(?:[-–—](\d+))?")  # reports use ASCII and en/em dashes for ranges
 PRIOR_REF = re.compile(r"\bFindings? (\d+(?:(?:,| and) \d+)*)")
 # Known key shapes (prefixed tokens, AWS, Google, JWT, PEM blocks) and generic `key=value` / `user:pass@` forms.
-# Every value class stops at quotes, commas, semicolons and whitespace so redacting a JSON document keeps it parseable.
+# Every value class stops at quotes, backslashes, commas, semicolons and whitespace so redacting serialized JSON keeps it parseable.
+# `sk`, `hf` and `npm` also start ordinary names (`sk-learn`, `hf_hub_download`, `npm_package_version`), so those need the key's own shape.
 TOKEN = re.compile(
-    r"(?:(?:(?<![A-Za-z0-9])|(?<=\\[nrt]))(?:sk|ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|hf|glpat|npm|rpa)[-_][A-Za-z0-9_-]{8,}"
+    r"(?:(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))(?:(?:ghp|gho|ghu|ghs|github_pat|xox[a-z]|vck|glpat|rpa)[-_][A-Za-z0-9_-]{8,}"
+    r"|sk[-_](?=[A-Za-z_-]*\d)[A-Za-z0-9_-]{20,}|(?:hf|npm)_[A-Za-z0-9]{30,})"
     r"|AKIA[A-Z0-9]{12,}|AIza[0-9A-Za-z_-]{20,}"
     r"|Bearer [A-Za-z0-9._-]{12,}"
     r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]*)?"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----)",
     re.S,
 )
-# Only an all-caps constant is exempt (`token: WITHDRAWAL_STORE_UNAVAILABLE` is an error code, not a secret).
-ASSIGNED = re.compile(r"(?i)\b([A-Za-z0-9_]*?(?:api[_-]?key|secret|token|password|passwd)[A-Za-z0-9_]*)(\s*[=:]\s*[\"']?)((?-i:(?![A-Z0-9_]+(?:[\"',;\s]|$)))[^\"',;\s]{12,})")
-USERINFO = re.compile(r"(://)[^/\s:@\"']+:[^@\s\"']+@")
+# A keyword as a whole identifier part: `tokenizer` and `secretary` are out, `accessToken` and `DISCORD_BOT_TOKEN` are in.
+_SECRET_KEY = r"[A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|password|passwd)s?(?:(?:[_-]|(?-i:[A-Z]))[A-Za-z0-9_-]{0,40})?"
+# Values that name something instead of holding it: `A_CONSTANT`, a call or index (`getenv(`, `headers[`), a dotted reference.
+# ponytail: a digit-free underscored all-caps secret passes as a constant; none seen in the corpus.
+_NOT_SECRET = r"[A-Z]+(?:_[A-Z]+)+\.?(?:[^A-Za-z0-9_.-]|$)|[A-Za-z_][A-Za-z_.]*[(\[]|[a-z]+(?:\.[A-Za-z]+)+(?:[^A-Za-z0-9_.-]|$)"
+ASSIGNED = re.compile(rf"(?i)({_SECRET_KEY})(\\*[\"'`]?\s*[=:]\s*\\*[\"'`]?)(?!(?-i:{_NOT_SECRET}))[^\\\"'`,;\s]{{12,}}")
+SECRET_KEY = re.compile(_SECRET_KEY, re.I)
+NOT_SECRET = re.compile(_NOT_SECRET)
+USERINFO = re.compile(r"(://)[^/\s:@\"']+:[^/\\@\s\"'?#]+@")
 
 
 def redact(text: str) -> str:
     text = TOKEN.sub("[REDACTED]", text)
     text = ASSIGNED.sub(r"\1\2[REDACTED]", text)
     return USERINFO.sub(r"\1[REDACTED]@", text)
+
+
+def redact_json(value, key: str = ""):
+    """A decoded JSON value: strings by content, and whole when their key names a secret, since no `key=` is left to match."""
+    if isinstance(value, str):
+        if value and SECRET_KEY.fullmatch(key) and not NOT_SECRET.match(value):
+            return "[REDACTED]"
+        return redact(value)
+    if isinstance(value, list):
+        return [redact_json(v, key) for v in value]
+    if isinstance(value, dict):
+        return {k: redact_json(v, k) for k, v in value.items()}
+    return value
 
 
 def section_verdict(heading: str) -> str | None:
@@ -302,7 +323,7 @@ def finding_state(f: dict, prior: list[dict], repo: Path | None, sha: str | None
     if path is None:
         state["state_error"] = f"{cited} is absent or ambiguous at {sha[:8]}"
         return state
-    state["hunk"] = hunk(repo, sha, path, start, end)
+    state["hunk"] = redact(hunk(repo, sha, path, start, end))  # checkout text goes to Jev
     b = blame(repo, sha, path, start, end, pr_commits, at)
     if not state["hunk"] or not b["lines"]:
         state["state_error"] = f"{path}:{start}-{end} unreadable at {sha[:8]}"

@@ -21,7 +21,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from finding_triage import parse_fixer_report, parse_report, redact
+from finding_triage import parse_fixer_report, parse_report, redact, redact_json
 
 ROOT = Path(__file__).resolve().parent
 LOCAL = ROOT / ".local"
@@ -48,13 +48,24 @@ CACHE = {"reused": 0, "fetched": 0}
 
 
 def cached(path: Path, produce: Callable[[], str]) -> str:
-    """Raw text under .local/raw, redacted before it touches disk, owner-readable only. Reused until --refresh."""
+    """Raw text under .local/raw, redacted before it touches disk, owner-readable only. Reused until --refresh.
+
+    A .json file is decoded before redacting, so redaction cannot break its syntax; one that no longer parses is a miss.
+    """
+    is_json = path.suffix == ".json"
+    if is_json and path.exists():
+        try:
+            json.loads(path.read_text())
+        except ValueError:
+            print(f"cache miss: {path} is not valid JSON, refetching", file=sys.stderr)
+            path.unlink()
     if path.exists():
         CACHE["reused"] += 1
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.parent.chmod(0o700)
-        path.write_text(redact(produce()))
+        text = produce()
+        path.write_text(json.dumps(redact_json(json.loads(text))) if is_json else redact(text))
         path.chmod(0o600)
         CACHE["fetched"] += 1
     return path.read_text()

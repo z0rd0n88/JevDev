@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -19,6 +20,8 @@ os.environ["JEV_BIN"] = str(TMP / "jev")
 os.environ["TYPESAFE_API_KEY"] = "k"
 sys.path.insert(0, str(ROOT))
 
+import calibrate_findings as cal  # noqa: E402
+import corpus_findings as cf  # noqa: E402
 import finding_triage as ft  # noqa: E402
 
 # The stub answers per finding id from answers.json; round questions get the "round" entry.
@@ -113,6 +116,102 @@ def test_redacts_tokens() -> None:
         assert ft.redact(plain) == plain, ft.redact(plain)
 
 
+def test_redaction_reaches_every_json_form_and_keeps_it_parseable() -> None:
+    s = "abcdef1234567890ghij"
+    docs = (f'"TOKEN={s}"', f'password={s}"', {"password": s}, {"body": f'TOKEN="{s}"'}, {"body": f'{{"api_key": "{s}"}}'}, {"body": f"key=x TOKEN=\\\"{s}\\\""})
+    for doc in docs:
+        as_text = ft.redact(json.dumps(doc))
+        assert s not in as_text, doc
+        json.loads(as_text)  # the text path must not eat a closing quote
+        assert s not in json.dumps(ft.redact_json(doc)), doc
+    # once decoded a value has no `key=` beside it, so its own key decides, spaces and short values included
+    assert ft.redact_json({"password": "correct horse", "l": [{"secret": "x y"}], "n": 1, "token": "A_CONSTANT", "body": "ok"}) == {"password": "[REDACTED]", "l": [{"secret": "[REDACTED]"}], "n": 1, "token": "A_CONSTANT", "body": "ok"}
+
+
+def test_redaction_catches_digit_bearing_caps_and_vendor_shapes() -> None:
+    for raw in ("API_KEY=A1B2C3D4E5F6A1B2C3D4", "secret=483920184739201", "SECRET=JBSWY3DPEHPK3PXP", "accessToken=abcdefghijklmnop", "secretKey: abcdefghijklmnop", '"api_key": "abcdefghijklmnop"', "auth_tokens=abcdefghijklmnop"):
+        assert "[REDACTED]" in ft.redact(raw) and not ft.redact(raw).endswith(("mnop", 'mnop"')) and "A1B2" not in ft.redact(raw) and "4839" not in ft.redact(raw) and "JBSW" not in ft.redact(raw), (raw, ft.redact(raw))
+    for raw in ("sk-ant-api03-abcDEF123456789xyzabc", "sk_live_abcDEF123456789xyzabc", "hf_abcdefghijklmnopqrstuvwxyz123456", "npm_abcdefghijklmnopqrstuvwxyz1234567890", "ghp_abcdefghijklmnop"):
+        assert ft.redact(raw) == "[REDACTED]", (raw, ft.redact(raw))
+
+
+def test_redaction_leaves_code_and_constants_alone() -> None:
+    for plain in (
+        "npm_package_version is set", "hf_hub_download(repo)", "sk-learn-extras==1.0",
+        "tokenizer = AutoTokenizer.from_pretrained(path)", "secretary: somebodyelse1234",
+        "token: `WITHDRAWAL_STORE_UNAVAILABLE`", "the token: WITHDRAWAL_STORE_UNAVAILABLE.",
+        'val token = request.headers["Authorization"]', "secret = System.getenv(name)", "token = config.authHeaderName",
+        "http://localhost:8080/api/@me",
+    ):
+        assert ft.redact(plain) == plain, (plain, ft.redact(plain))
+    assert ft.redact("postgres://alex:s3cretpassw0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"
+
+
+def test_redaction_stays_fast_on_a_long_run_of_keywords() -> None:
+    start = time.perf_counter()
+    ft.redact("token" * 13000)
+    assert time.perf_counter() - start < 1.0
+
+
+def test_json_cache_decodes_before_redacting_and_refetches_a_corrupt_file() -> None:
+    s = "abcdef1234567890ghij"
+    path = TMP / "cache" / "x-pr-1-issue.json"
+    path.parent.mkdir()
+    body = [{"body": f'see TOKEN="{s}" and password={s}"', "password": s}]
+    assert s not in cf.cached(path, lambda: json.dumps(body))
+    assert json.loads(path.read_text())[0]["password"] == "[REDACTED]"
+    assert path.stat().st_mode & 0o777 == 0o600
+    # reused while it parses, refetched once it does not
+    assert json.loads(cf.cached(path, lambda: 1 / 0))[0]["password"] == "[REDACTED]"
+    path.write_text('[{"body": "cut off')
+    assert json.loads(cf.cached(path, lambda: "[]")) == []
+
+
+def _round_rows(pr: int) -> list[dict]:
+    return [{**finding("F1", "LOW", "x"), "pr": pr, "round": 1, "merged_at": "2026-10-30T00:00:00Z", "reviewed_sha": "abc", "pr_commits": [], "prior_round": []}]
+
+
+def test_failed_grade_leaves_the_previous_calibration_file_intact() -> None:
+    out = TMP / "cal" / "calibration.jsonl"
+    out.parent.mkdir()
+    out.write_text("previous complete run\n")
+    seen = []
+
+    def fake(fs, prior, **kw):
+        seen.append(fs[0]["pr"])
+        if len(seen) == 2:
+            raise RuntimeError("jev down")
+        return {"findings": [dict(f) for f in fs], "same_as_previous_p": None, "converged": False, "keystone": None, "calls": 1, "estimated_usd": 0.0, "input_tokens": 1}
+
+    real, ft.grade_round = ft.grade_round, fake
+    try:
+        try:
+            cal.grade(_round_rows(1) + _round_rows(2), TMP, None, out)
+            raise AssertionError("grade should have raised")
+        except RuntimeError:
+            pass
+        assert out.read_text() == "previous complete run\n"
+        assert [json.loads(line)["pr"] for line in out.with_suffix(".tmp").read_text().splitlines()] == [1]  # the paid answers survive
+        seen.clear()
+        cal.grade(_round_rows(1), TMP, None, out)
+        assert [json.loads(line)["pr"] for line in out.read_text().splitlines()] == [1] and not out.with_suffix(".tmp").exists()
+    finally:
+        ft.grade_round = real
+
+
+def test_pr_subset_does_not_replace_the_full_calibration_file() -> None:
+    assert cal.live_out(cal.DEFAULT_OUT, []) == Path(cal.DEFAULT_OUT)
+    assert cal.live_out(cal.DEFAULT_OUT, [1110, 1065]) == Path(cal.DEFAULT_OUT).with_name("calibration-pr1110-1065.jsonl")
+    assert cal.live_out("/x/mine.jsonl", [1110]) == Path("/x/mine.jsonl")
+
+
+def test_duplicate_question_covers_additional_sites_and_excludes_follow_ons() -> None:
+    q = ft.FINDING_QUESTIONS["duplicate_of_prior_round"]
+    assert "additional sites" in q["instructions"] and "additional sites" in q["criteria"]["true"]
+    assert "missing test" in q["criteria"]["false"]
+    assert "additional sites" in json.loads((FIX / "labels-pr1065-r2.json").read_text())["note"]
+
+
 def test_resolves_bare_paths_and_reads_blame_from_a_repo() -> None:
     import subprocess
 
@@ -122,6 +221,7 @@ def test_resolves_bare_paths_and_reads_blame_from_a_repo() -> None:
     (repo / "a/Same.kt").write_text("one\ntwo\nthree\n")
     (repo / "b/Same.kt").write_text("x\n")
     (repo / "Only.kt").write_text("l1\nl2\nl3\nl4\n")
+    (repo / "Key.kt").write_text('val password = "abcdefghijklmnop"\n')
     env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x", "PATH": os.environ["PATH"], "HOME": str(TMP)}
     for args in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "one"]):
         subprocess.run(["git", "-C", str(repo), *args], check=True, env=env, capture_output=True)
@@ -144,6 +244,8 @@ def test_resolves_bare_paths_and_reads_blame_from_a_repo() -> None:
     state = ft.finding_state(good, [], repo, sha, {sha}, now)
     assert state["state_error"] is None and state["blame"]["lines"] == 2 and state["hunk"].startswith("1: l1"), state
     assert ft.finding_state(finding("F4", "LOW", "x"), [], repo, sha, {sha}, now)["state_error"] == "no location cited"
+    keyed = {**finding("F5", "LOW", "x"), "locations": [("Key.kt", 1, 1)]}
+    assert "abcdefghijklmnop" not in ft.finding_state(keyed, [], repo, sha, {sha}, now)["hunk"]
 
 
 def test_grades_five_findings_two_duplicates_one_pre_existing() -> None:

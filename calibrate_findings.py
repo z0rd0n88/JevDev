@@ -5,10 +5,10 @@
     python3 calibrate_findings.py --from-graded                       # re-cut the report, no Jev calls
 
 Truth:
-  duplicate   = hand label from tests/fixtures/findings/labels-pr<N>-r<K>.json when the row has one (same defect at
-                the same place as a prior-round finding, the Jev question's own definition); else the proxy: title
-                matches a prior-round title at ratio >= 0.6. follow_on (new defect about a prior subject) is a
-                separate label and is never counted as duplicate.
+  duplicate   = hand label from tests/fixtures/findings/labels-pr<N>-r<K>.json when the row has one (same defect as a
+                prior-round finding, at the same or additional sites, the Jev question's own definition); else the
+                proxy: title matches a prior-round title at ratio >= 0.6. follow_on (new defect about a prior subject)
+                is a separate label and is never counted as duplicate.
   introduced  = blame: at least half the cited lines were written inside the PR. Rows with no readable blame are
                 excluded and counted. The skeptic's "pre-existing pattern" notes are reported on their own line.
 Every number is printed as counted; nothing is rounded away.
@@ -20,6 +20,7 @@ import argparse
 import difflib
 import glob
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -30,6 +31,7 @@ import finding_triage as ft
 
 ROOT = Path(__file__).resolve().parent
 LABELS_GLOB = str(ROOT / "tests/fixtures/findings/labels-pr*-r*.json")
+DEFAULT_OUT = str(ROOT / ".local/calibration.jsonl")
 PRE_EXISTING_WORDS = re.compile(r"already exists on main|pre-?existing|same shape already|not new|predates|repeat of an existing|existing pattern", re.I)
 INTRODUCED_AT = 1 - ft.PRE_EXISTING_AT  # a finding is called introduced unless Jev is this sure it is not
 
@@ -72,6 +74,13 @@ def prf(pairs: list[tuple[bool, bool]]) -> str:
     return f"n={len(pairs)} tp={tp} fp={fp} fn={fn} tn={tn} precision={prec} recall={rec}"
 
 
+def live_out(out: str, prs: list[int]) -> Path:
+    """A --pr run on the default path writes beside it, so the full file --from-graded reads is never replaced by a subset."""
+    if prs and out == DEFAULT_OUT:
+        return Path(out).with_name(f"calibration-pr{'-'.join(map(str, prs))}.jsonl")
+    return Path(out)
+
+
 def grade(rows: list[dict], checkout: Path, model: str | None, out: Path) -> tuple[list[dict], int, float, int]:
     rounds: dict[tuple[int, int], list[dict]] = defaultdict(list)
     for r in rows:
@@ -79,7 +88,8 @@ def grade(rows: list[dict], checkout: Path, model: str | None, out: Path) -> tup
     graded_rows: list[dict] = []
     calls, usd, tokens = 0, 0.0, 0
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w") as fh:
+    tmp = out.with_suffix(".tmp")  # replaces `out` only once every round is graded; a failed run leaves its paid answers here
+    with tmp.open("w") as fh:
         for (pr, k), fs in sorted(rounds.items()):
             at = datetime.fromisoformat(fs[0]["merged_at"].replace("Z", "+00:00"))
             res = ft.grade_round(fs, fs[0]["prior_round"], repo=checkout, sha=fs[0]["reviewed_sha"], pr_commits=set(fs[0]["pr_commits"]), at=at, model=model)
@@ -87,8 +97,10 @@ def grade(rows: list[dict], checkout: Path, model: str | None, out: Path) -> tup
             for g in res["findings"]:
                 g["round_same_p"], g["round_converged"], g["round_keystone"] = res["same_as_previous_p"], res["converged"], res["keystone"]
                 graded_rows.append(g)
-                fh.write(json.dumps(g) + "\n")  # per round, so a failed later call keeps the paid answers
+                fh.write(json.dumps(g) + "\n")
+            fh.flush()
             print(f"PR {pr} round {k}: {len(fs)} findings, same_as_previous={res['same_as_previous_p']}, converged={res['converged']}, keystone={res['keystone']}, calls={res['calls']}, est ${res['estimated_usd']:.4f}", file=sys.stderr)
+    os.replace(tmp, out)
     return graded_rows, calls, usd, tokens
 
 
@@ -175,7 +187,7 @@ def main() -> int:
     ap.add_argument("--checkout", default=str(Path.home() / "VistaMobileBE"))
     ap.add_argument("--pr", type=int, action="append", default=[])
     ap.add_argument("--model")
-    ap.add_argument("--out", default=str(ROOT / ".local/calibration.jsonl"))
+    ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--from-graded", action="store_true", help="re-cut the report from --out without calling Jev")
     a = ap.parse_args()
     labels = load_labels()
@@ -188,8 +200,9 @@ def main() -> int:
     rows = [json.loads(line) for line in Path(a.corpus).read_text().splitlines()]
     if a.pr:
         rows = [r for r in rows if r["pr"] in a.pr]
-    graded_rows, calls, usd, tokens = grade(rows, Path(a.checkout), a.model, Path(a.out))
-    report(graded_rows, labels, calls, usd, tokens, f"Live run; graded rows written to {a.out}.")
+    out = live_out(a.out, a.pr)
+    graded_rows, calls, usd, tokens = grade(rows, Path(a.checkout), a.model, out)
+    report(graded_rows, labels, calls, usd, tokens, f"Live run; graded rows written to {out}.")
     return 0
 
 
