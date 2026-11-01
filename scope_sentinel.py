@@ -37,16 +37,17 @@ RISKY = re.compile(
 DRY_RUN = re.compile(r"\s--dry-run\b")
 SCRATCHPAD = re.compile(rf"^/tmp/claude-{os.getuid()}/[^/]+/([0-9a-f-]{{36}})/")
 SEGMENT = re.compile(r"&&|\|\||[;|\n]")
-_VALUE = r"""(?:[^\s'";,]|[;,](?![A-Za-z_][\w.]{0,64}[(= \t])){1,4096}"""
+_VALUE = r"""(?:[^\s'";,`$]|\$(?!\()|,(?![A-Za-z_][\w.]{0,64}[(= \t])){1,4096}"""
 # Each pattern keeps group 1 (possibly empty) and replaces the rest of the match. Keyword-to-value whitespace is
 # [ \t], never \s, so a match never crosses a newline, except a PEM body and a key alone on its line (pattern 1).
 # ponytail: every name containing token/secret/password/key loses its value (max_tokens=1024 too); redact_count reports it.
 # Every run before a required delimiter is capped ({0,64}, {1,64}) so repeated keywords stay linear; a bare value ends at
-# whitespace, or at ; or , followed by code, so one statement cannot hide the next while a secret keeps its punctuation
+# whitespace, ;, backtick, $( or a , followed by code, so one statement cannot hide the next while ( ) and a plain , stay
 # hidden; a quoted value ends at its closing quote, and the PEM body is base64 lines.
-# ponytail: heuristic: `password = ab;cd rest` leaks ;cd, an unindented next-line value leaks, && and | are not code here.
+# ponytail: `password=ab;cd` leaks ;cd, an unindented or backslash-continued next-line value leaks, && and | still hide
+# what follows, and `password:` + newline + an indented bare command hides that command; commands could skip pattern 1.
 SECRETS = [re.compile(p) for p in (
-    r"(?im)(^[+-]?[ \t]*['\"]?\w{0,64}(?:token|secret|password|passwd|api[_-]?key)\w{0,64}['\"]?[ \t]*[:=][ \t]*(?:[|>][+-]?|\(|\\)?[ \t]*\r?\n[+-]?[ \t]+)"
+    r"(?im)(^[+-]?[ \t]*['\"]?\w{0,64}(?:token|secret|password|passwd|api[_-]?key)\w{0,64}['\"]?[ \t]*(?::[ \t]{0,64}(?:[|>][+-]?[ \t]{0,64})?|=[ \t]{0,64}\([ \t]{0,64})\r?\n[+-]?[ \t]+)"
     r"(?:(['\"])[^'\"\n]{1,4096}\2|" + _VALUE + r")(?=[ \t]*\r?$)",
     r"(?i)(authorization:[ \t]*\S{1,64}[ \t]+)" + _VALUE,
     r"(?i)(bearer[ \t]+)[A-Za-z0-9._~+/=-]{16,}",

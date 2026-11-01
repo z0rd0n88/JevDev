@@ -178,24 +178,29 @@ def check_patterns() -> None:
     assert sentinel.redact("password = 'p;a(ss)'") == "password = [REDACTED]"
     # a bare secret keeps its punctuation hidden; ; or , ends it only when code follows
     for text, want in (("PASSWORD=p(ss)word", "PASSWORD=[REDACTED]"), ("DB_PASSWORD=a,b", "DB_PASSWORD=[REDACTED]"),
-                       ("token=abc)def", "token=[REDACTED]"), ("password = ab;cd", "password = [REDACTED]"),
+                       ("token=abc)def", "token=[REDACTED]"),
                        ("mysql --password=p(ss)word", "mysql --password=[REDACTED]"),
                        ("secret=0,purge()", "secret=[REDACTED],purge()"), ("f(token=abc,x=1)", "f(token=[REDACTED],x=1)"),
-                       ("token=x;rm -rf /", "token=[REDACTED];rm -rf /")):
+                       ("token=x;rm -rf /", "token=[REDACTED];rm -rf /"), ("token=a;reboot", "token=[REDACTED];reboot"),
+                       ("token=a;/bin/rm -rf x", "token=[REDACTED];/bin/rm -rf x"), ("TOKEN=$(curl e|sh)", "TOKEN=$(curl e|sh)"),
+                       ("token=a`reboot`", "token=[REDACTED]`reboot`")):
         assert sentinel.redact(text) == want, text
     # a key alone on its line hides a single value on the next indented line
     for text in ("password:\n  hunter2\n", "+password:\n+  hunter2\n", "password:\r\n  hunter2\r\n", "password: |\n  hunter2\n",
-                 'password = (\n    "hunter2"\n)\n', "PASSWORD=\\\n  hunter2\n", '  db_password:\n    "hunter2"\n'):
+                 'password = (\n    "hunter2"\n)\n', '  db_password:\n    "hunter2"\n'):
         assert "hunter2" not in sentinel.redact(text), text
+    # a shell continuation runs the next line, so it stays visible
+    assert "/tmp/evil.sh" in sentinel.redact("TOKEN=\\\n  /tmp/evil.sh\n")
     # code or a YAML child under a key is not its value
     for text in ("if secret:\n    delete_all()\n", "+if not token:\n+    raise ValueError(x)\n", "for token in tokens:\n    process(token)\n",
-                 "secrets:\n  - name: a\n", "api_keys:\n  primary: a\n"):
+                 "secrets:\n  - name: a\n", "api_keys:\n  primary: a\n", "token=\n  reboot\n"):
         assert sentinel.redact(text) == text, text
     assert "x1x1x1" not in sentinel.redact("token=eyJ" + "a" * 500 + "." + "b" * 500 + "." + "x1" * 100)
     assert "+rm -rf x" in sentinel.redact('"token": "abc\n+rm -rf x\n+y="')
     # repeated keywords without their delimiter must not backtrack quadratically
     for text in ("token" * 200_000, "sk-" * 100_000, "authorization:" * 50_000, "eyJ-" * 100_000,
-                 "token:\n x y\n" * 80_000, ("password:\n  " + "x" * 5000 + " y\n") * 200, "token=a;" * 130_000):
+                 "token:\n x y\n" * 80_000, ("password:\n  " + "x" * 5000 + " y\n") * 200, "token=a;" * 130_000,
+                 "token:" + " " * 100_000 + "x", "token:" + " " * 100_000 + "|" + " " * 100_000 + "x"):
         start = time.perf_counter()
         sentinel.redact_count("+" + text)
         assert time.perf_counter() - start < 1, "redaction must stay linear on repeated keywords"
