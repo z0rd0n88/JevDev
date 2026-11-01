@@ -121,13 +121,16 @@ TOKEN = re.compile(
 )
 # A keyword as a whole identifier part: `tokenizer` and `secretary` are out, `accessToken` and `DISCORD_BOT_TOKEN` are in.
 _SECRET_KEY = r"[A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|password|passwd)s?(?:(?:[_-]|(?-i:[A-Z]))[A-Za-z0-9_-]{0,40})?"
-# Values that name something instead of holding it: `A_CONSTANT`, a call or index (`getenv(`, `headers[`), a dotted reference.
+# Values that name something instead of holding it, with nothing else up to where the value ends: `A_CONSTANT`, a closed call or
+# index (`getenv(name)`, `headers["x"]`), a dotted reference.
 # ponytail: a digit-free underscored all-caps secret passes as a constant; none seen in the corpus.
-_NOT_SECRET = r"[A-Z]+(?:_[A-Z]+)+\.?(?:[^A-Za-z0-9_.-]|$)|[A-Za-z_][A-Za-z_.]*[(\[]|[a-z]+(?:\.[A-Za-z]+)+(?:[^A-Za-z0-9_.-]|$)"
+_END = r"\.?[)\]}]*(?:[\\\"'`,;\s]|$)"
+_NOT_SECRET = rf"(?:[A-Z]+(?:_[A-Z]+)+|[A-Za-z_][A-Za-z_.]*[(\[][^\s)\]]*[)\]]|[a-z]+(?:\.[A-Za-z]+)+){_END}"
 ASSIGNED = re.compile(rf"(?i)({_SECRET_KEY})(\\*[\"'`]?\s*[=:]\s*\\*[\"'`]?)(?!(?-i:{_NOT_SECRET}))[^\\\"'`,;\s]{{12,}}")
 SECRET_KEY = re.compile(_SECRET_KEY, re.I)
 NOT_SECRET = re.compile(_NOT_SECRET)
-USERINFO = re.compile(r"(://)[^/\s:@\"']+:[^/\\@\s\"'?#]+@")
+# `host:8080/path/@me` is a port and a path; a raw `/` in a real password still counts.
+USERINFO = re.compile(r"(://)[^/\s:@\"']+:(?!\d+(?:[/?#]|$))[^\\@\s\"']+@")
 
 
 def redact(text: str) -> str:
@@ -139,13 +142,13 @@ def redact(text: str) -> str:
 def redact_json(value, key: str = ""):
     """A decoded JSON value: strings by content, and whole when their key names a secret, since no `key=` is left to match."""
     if isinstance(value, str):
-        if value and SECRET_KEY.fullmatch(key) and not NOT_SECRET.match(value):
+        if value and SECRET_KEY.fullmatch(key) and not NOT_SECRET.fullmatch(value):
             return "[REDACTED]"
         return redact(value)
     if isinstance(value, list):
         return [redact_json(v, key) for v in value]
     if isinstance(value, dict):
-        return {k: redact_json(v, k) for k, v in value.items()}
+        return {redact(k): redact_json(v, k) for k, v in value.items()}
     return value
 
 

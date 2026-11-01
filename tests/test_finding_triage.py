@@ -145,6 +145,14 @@ def test_redaction_leaves_code_and_constants_alone() -> None:
     ):
         assert ft.redact(plain) == plain, (plain, ft.redact(plain))
     assert ft.redact("postgres://alex:s3cretpassw0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"
+    assert ft.redact("postgres://alex:pa/ss?w0rd@db.local/x") == "postgres://[REDACTED]@db.local/x"  # a raw slash in a password
+
+
+def test_redaction_exempts_only_a_whole_value_that_names_something() -> None:
+    for raw in ("password=abcdefgh(ijklmnop1234", "password=hunter[2hunter2hunter2", "token=ABC_DEF/xyz123456789", "token=ABC_DEF.real1234567", "secret=abcdefgh.ijklmnop/qrst"):
+        assert ft.redact(raw).endswith("=[REDACTED]"), (raw, ft.redact(raw))
+    assert ft.redact_json({"password": "ABC_DEF correct horse", "token": "getenv(x) real1234"}) == {"password": "[REDACTED]", "token": "[REDACTED]"}
+    assert ft.redact_json({"ghp_abcdefghijklmnop": 1}) == {"[REDACTED]": 1}  # a key can hold a token too
 
 
 def test_redaction_stays_fast_on_a_long_run_of_keywords() -> None:
