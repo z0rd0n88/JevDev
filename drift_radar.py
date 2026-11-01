@@ -85,6 +85,10 @@ def evaluate_drift(
         raise RuntimeError(f"Invalid drift choice {choice!r} returned by Jev")
 
     probs = answer.get("probabilities") or {}
+    if not isinstance(probs, dict):
+        raise RuntimeError("Invalid drift probabilities returned by Jev")
+    if probs and probs.get(choice) != max(probs.values()):
+        raise RuntimeError(f"Invalid drift choice {choice!r} is not the most probable answer returned by Jev")
     raw_conf = probs.get(choice, answer.get("confidence"))
     if isinstance(raw_conf, bool) or not isinstance(raw_conf, (int, float)) or not 0.0 <= raw_conf <= 1.0:
         raise RuntimeError(f"Invalid drift confidence {raw_conf!r} returned by Jev")
@@ -123,7 +127,18 @@ def main():
     parser.add_argument(
         "--fail-on-drift",
         action="store_true",
-        help="Exit with status code 2 if drift is detected (contradicts, unaddressed, or defers)",
+        help="Exit with status code 2 if drift is detected (contradicts, unaddressed, or defers), 3 on unclear",
+    )
+    parser.add_argument(
+        "--allow-unclear",
+        action="store_true",
+        help="With --fail-on-drift, exit 0 instead of 3 on unclear",
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.0,
+        help="With --fail-on-drift, exit 2 when confidence is below this (default 0.0, off)",
     )
 
     args = parser.parse_args()
@@ -134,6 +149,18 @@ def main():
             args.decision, diff_content, model=args.model, timeout=args.timeout
         )
         result["redacted"] = redacted
+        drift = result["result"] in ("contradicts", "unaddressed", "defers")
+        low = result["confidence"] < args.min_confidence
+        if drift:
+            result["warning"] = "Review required! Drift detected."
+        elif result["result"] == "unclear":
+            result["warning"] = "Review required! Ambiguous or insufficient diff context."
+        elif low:
+            result["warning"] = (
+                f"Review required! Confidence {result['confidence']:.2f} is below --min-confidence {args.min_confidence:g}."
+            )
+        else:
+            result["warning"] = None
 
         if args.json:
             print(json.dumps(result, indent=2, allow_nan=False))
@@ -147,20 +174,16 @@ def main():
             print(
                 f"Time:     {result['elapsed']:.2f}s | Tokens: {result['input_tokens']}"
             )
+        if result["warning"]:
+            print(f"WARNING: {result['warning']}", file=sys.stderr)
 
-            if result["result"] in ("contradicts", "unaddressed", "defers"):
-                print("\nWARNING: Review required! Drift detected.")
-            elif result["result"] == "unclear":
-                print(
-                    "\nWARNING: Review required! Ambiguous or insufficient diff context."
-                )
-
-        if args.fail_on_drift and result["result"] in (
-            "contradicts",
-            "unaddressed",
-            "defers",
-        ):
-            sys.exit(2)
+        if args.fail_on_drift:
+            if drift:
+                sys.exit(2)
+            if result["result"] == "unclear" and not args.allow_unclear:
+                sys.exit(3)
+            if low:
+                sys.exit(2)
     except KeyboardInterrupt:
         sys.exit(130)
     except JevError as e:

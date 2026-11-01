@@ -37,25 +37,27 @@ RISKY = re.compile(
 DRY_RUN = re.compile(r"\s--dry-run\b")
 SCRATCHPAD = re.compile(rf"^/tmp/claude-{os.getuid()}/[^/]+/([0-9a-f-]{{36}})/")
 SEGMENT = re.compile(r"&&|\|\||[;|\n]")
-_VALUE = r"""[^\s'"]+"""
+_VALUE = r"""[^\s'";,()]{1,4096}"""
 # Each pattern keeps group 1 (possibly empty) and replaces the rest of the match. Keyword-to-value whitespace is
 # [ \t], never \s, so a match never crosses a newline; the PEM body is the one multi-line match.
 # ponytail: every name containing token/secret/password/key loses its value (max_tokens=1024 too); redact_count reports it.
+# Every run before a required delimiter is capped ({0,64}, {1,64}) so repeated keywords stay linear; a bare value ends at
+# whitespace or ;,() so one statement cannot hide the next, a quoted one at its closing quote, and the PEM body is base64 lines.
 SECRETS = [re.compile(p) for p in (
-    r"(?i)(authorization:[ \t]*\S+[ \t]+)" + _VALUE,
+    r"(?i)(authorization:[ \t]*\S{1,64}[ \t]+)" + _VALUE,
     r"(?i)(bearer[ \t]+)[A-Za-z0-9._~+/=-]{16,}",
-    r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w*[ \t]*[=:][ \t]*['\"]?)" + _VALUE,
-    r"""(?i)(["'](?:token|secret|password|passwd|api[_-]?key)\w*["'][ \t]*:[ \t]*["'])[^"']+""",
+    r"(?i)((?:token|secret|password|passwd|api[_-]?key)\w{0,64}[ \t]*(?:=(?!=)|:=?)[ \t]*)(?:(['\"])[^'\"\n]{1,4096}\2|['\"]?" + _VALUE + ")",
+    r"""(?i)(["'](?:token|secret|password|passwd|api[_-]?key)\w{0,64}["'][ \t]*:[ \t]*["'])[^"'\n]+""",
     r"(?i)(--(?:password|passwd|token|secret|api[-_]?key)[= \t]+)" + _VALUE,
-    r"(\s-u[ \t]+[^\s:'\"]+:)" + _VALUE,
+    r"(\s-u[ \t]+[^\s:'\"]{1,64}:)" + _VALUE,
     r"(://[^/\s:@]*:)[^/\s@]+(?=@)",
     r"()\b(?:gh[pousr]_|github_pat_|glpat-)[\w-]{10,}",
-    r"()\bsk[-_](?=[\w-]*\d)[\w-]{20,}",
+    r"()\bsk[-_](?=[\w-]{0,64}\d)[\w-]{20,}",
     r"()\bts_[\w-]{16,}",
     r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
     r"()\bxox[abposr]-[\w-]{10,}",
-    r"()\beyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}",
-    r"(-----BEGIN [A-Z ]*PRIVATE KEY-----)(?:\s*[+-]?[A-Za-z0-9+/=]{2,})+",
+    r"()\beyJ[\w-]{10,256}\.[\w-]{10,}\.[\w-]{10,}",
+    r"(-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----)(?:\r?\n[+-]? ?[A-Za-z0-9+/=]{12,}[ \t]*(?![^\r\n]))+",
 )]
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).

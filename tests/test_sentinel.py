@@ -164,8 +164,25 @@ def check_patterns() -> None:
     assert sentinel.redact("redis://:pw@host") == "redis://:[REDACTED]@host"
     # a secret match never crosses a newline into the next line
     assert sentinel.redact("Authorization: Basic\nenforce=false") == "Authorization: Basic\nenforce=false"
+    # a PEM header in a comment, or a key without its END line, leaves the following code line alone
+    comment = "# see -----BEGIN RSA PRIVATE KEY----- in docs\ndef load():"
+    assert sentinel.redact(comment) == comment
+    assert sentinel.redact("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw\nx=1").endswith("[REDACTED]\nx=1")
     assert "ts_secret1234567890abcdef" not in sentinel.redact("key ts_secret1234567890abcdef")
+    # a comparison is not an assignment, but a := assignment still is
+    assert sentinel.redact("if token == 'x': pass") == "if token == 'x': pass"
+    assert sentinel.redact('token := os.Getenv("T")') == 'token := [REDACTED]("T")'
     assert "ts_abc-def-1234567890ab" not in sentinel.redact("key ts_abc-def-1234567890ab")
+    # a value ends at statement punctuation, a quoted one at its closing quote, and a long secret is still whole
+    assert sentinel.redact("secret=0;rm(x)") == "secret=[REDACTED];rm(x)"
+    assert sentinel.redact("password = 'p;a(ss)'") == "password = [REDACTED]"
+    assert "x1x1x1" not in sentinel.redact("token=eyJ" + "a" * 500 + "." + "b" * 500 + "." + "x1" * 100)
+    assert "+rm -rf x" in sentinel.redact('"token": "abc\n+rm -rf x\n+y="')
+    # repeated keywords without their delimiter must not backtrack quadratically
+    for text in ("token" * 200_000, "sk-" * 100_000, "authorization:" * 50_000, "eyJ-" * 100_000):
+        start = time.perf_counter()
+        sentinel.redact_count("+" + text)
+        assert time.perf_counter() - start < 1, "redaction must stay linear on repeated keywords"
     bare = subprocess.TimeoutExpired("jev", 1, stderr=b"boom")  # TimeoutExpired.stderr is bytes, not str
     assert sentinel.error_detail(bare) == f"TimeoutExpired: {bare}", sentinel.error_detail(bare)
     start = time.perf_counter()

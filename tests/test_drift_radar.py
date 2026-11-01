@@ -117,7 +117,9 @@ def test_redaction_count_reported():
     module = load_module()
     with tempfile.TemporaryDirectory() as d:
         diff_file = Path(d) / "blind.diff"
-        diff_file.write_text("+secret=0;shutil.rmtree(user.data_dir)\n+max_tokens=1024\n")
+        diff_file.write_text("+secret=0;shutil.rmtree(user.data_dir);db.purge(user.id)\n+max_tokens=1024\n")
+        content, redacted = module.load_diff_file(str(diff_file))
+        assert redacted == 2 and "shutil.rmtree(user.data_dir);db.purge(user.id)" in content, content
         orig_evaluate, orig_argv = module.evaluate_drift, sys.argv
         try:
             module.evaluate_drift = lambda decision, diff, **kwargs: {
@@ -332,7 +334,7 @@ def test_rejects_unknown_choice_and_bad_confidence():
             assert res["confidence"] == 0.0
 
         # F5: a missing, non-numeric, non-finite, out-of-range, or boolean confidence raises, never 0.0.
-        bad_answers = [{"choice": "implements"}, {"choice": "implements", "probabilities": {"contradicts": 0.99}}]
+        bad_answers = [{"choice": "implements"}]
         for bad in ("high", "NaN", "inf", 95, -0.1, True, None):
             bad_answers.append({"choice": "implements", "probabilities": {"implements": bad}})
         for answer in bad_answers:
@@ -342,6 +344,35 @@ def test_rejects_unknown_choice_and_bad_confidence():
                     assert False, f"Should have rejected the confidence in {answer!r}"
                 except RuntimeError as e:
                     assert "confidence" in str(e), (answer, e)
+
+
+def test_rejects_non_argmax_choice():
+    """H3: a choice that is not the most probable entry of probabilities, or a non-dict probabilities, exits 1."""
+    module = load_module()
+
+    def respond(answer):
+        class MockProcess:
+            returncode = 0
+            stdout = json.dumps({"answers": {"drift": answer}})
+            stderr = ""
+
+        return mock.patch("subprocess.run", return_value=MockProcess())
+
+    with mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}):
+        for answer in (
+            {"choice": "implements", "probabilities": {"implements": 0.01, "contradicts": 0.99}},
+            {"choice": "implements", "probabilities": {"contradicts": 0.99}, "confidence": 0.99},
+            {"choice": "implements", "probabilities": "notadict"},
+        ):
+            with respond(answer):
+                try:
+                    module.evaluate_drift("decision", "diff")
+                    assert False, f"Should have rejected {answer!r}"
+                except RuntimeError as e:
+                    assert "Invalid drift" in str(e), (answer, e)
+        # A tie at the top is still the most probable answer; the choice's own probability wins over confidence.
+        with respond({"choice": "implements", "probabilities": {"implements": 0.5, "contradicts": 0.5}, "confidence": 0.1}):
+            assert module.evaluate_drift("decision", "diff")["confidence"] == 0.5
 
 
 STUB_JEV = """#!/usr/bin/env python3
@@ -356,6 +387,8 @@ elif "unaddressed" in state:
     print(json.dumps({"answers": {"drift": {"choice": "unaddressed", "probabilities": {"unaddressed": 0.75}}}, "usage": {"input_tokens": 45}}))
 elif "defers" in state:
     print(json.dumps({"answers": {"drift": {"choice": "defers", "probabilities": {"defers": 0.90}}}, "usage": {"input_tokens": 55}}))
+elif "unclear" in state:
+    print(json.dumps({"answers": {"drift": {"choice": "unclear", "probabilities": {"unclear": 0.99}}}, "usage": {"input_tokens": 40}}))
 else:
     print(json.dumps({"answers": {"drift": {"choice": "implements", "probabilities": {"implements": 0.95}}}, "usage": {"input_tokens": 42}}))
 """
@@ -441,7 +474,7 @@ def test_cli_subprocess_integration():
         proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
         assert proc.returncode == 0, proc.stderr
         assert "Verdict:  IMPLEMENTS (confidence 0.95)" in proc.stdout
-        assert "WARNING: Review required!" not in proc.stdout
+        assert "WARNING: Review required!" not in proc.stdout + proc.stderr
 
         # 2. Contradicts verdict with warning
         cmd = [
@@ -455,7 +488,8 @@ def test_cli_subprocess_integration():
         proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
         assert proc.returncode == 0, proc.stderr
         assert "Verdict:  CONTRADICTS (confidence 0.85)" in proc.stdout
-        assert "WARNING: Review required! Drift detected." in proc.stdout
+        assert "WARNING: Review required! Drift detected." in proc.stderr, proc.stderr
+        assert "WARNING" not in proc.stdout
 
         # 3. Fail on drift flag with contradicts verdict
         cmd = [
@@ -511,6 +545,68 @@ def test_cli_subprocess_integration():
         assert "Error: jev: jev mock failure: Bearer [REDACTED]" in proc.stderr, proc.stderr
         assert "sk-stub-secret-123456" not in proc.stderr
 
+        # 8. unclear exits 3 under --fail-on-drift, 0 with --allow-unclear; the warning is on stderr and in --json
+        cmd = [sys.executable, str(SOURCE), "--decision", "unclear requirement", "--diff", str(diff_file), "--fail-on-drift", "--json"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 3, f"Expected returncode 3 on unclear, got {proc.returncode}"
+        assert "WARNING: Review required! Ambiguous" in proc.stderr, proc.stderr
+        assert "Ambiguous" in json.loads(proc.stdout)["warning"]
+        proc = subprocess.run(cmd + ["--allow-unclear"], capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, proc.stderr
+
+        # 9. --min-confidence: 0.95 implements fails under 0.99, passes under the 0.0 default
+        cmd = [sys.executable, str(SOURCE), "--decision", "fulfill requirement", "--diff", str(diff_file), "--fail-on-drift", "--min-confidence", "0.99"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        assert proc.returncode == 2, f"Expected returncode 2 below --min-confidence, got {proc.returncode}"
+        assert "Confidence 0.95 is below --min-confidence 0.99" in proc.stderr, proc.stderr
+        proc = subprocess.run(cmd[:-2], capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, proc.stderr
+
+
+def test_cli_fail_on_drift_gates():
+    """H3: unclear exits 3 unless --allow-unclear, --min-confidence exits 2, warnings go to stderr and --json."""
+    module = load_module()
+    import io
+
+    with tempfile.TemporaryDirectory() as d:
+        diff_file = Path(d) / "sample.diff"
+        diff_file.write_text("--- a/f\n+++ b/f\n+line\n")
+
+        def run(verdict, confidence, *flags):
+            module.evaluate_drift = lambda decision, diff, **kwargs: {
+                "result": verdict, "confidence": confidence, "elapsed": 0.1, "input_tokens": 5,
+            }
+            out, err = io.StringIO(), io.StringIO()
+            sys.argv = ["drift_radar.py", "--decision", "d", "--diff", str(diff_file), *flags]
+            try:
+                with mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
+                    module.main()
+                code = 0
+            except SystemExit as e:
+                code = e.code
+            return code, out.getvalue(), err.getvalue()
+
+        orig_evaluate, orig_argv = module.evaluate_drift, sys.argv
+        try:
+            code, out, err = run("unclear", 0.99, "--fail-on-drift", "--json")
+            assert code == 3, code
+            assert "Ambiguous" in json.loads(out)["warning"], out
+            assert "WARNING: Review required! Ambiguous" in err, err
+            code, out, err = run("unclear", 0.99, "--fail-on-drift", "--allow-unclear")
+            assert code == 0, code
+            assert "WARNING" not in out and "WARNING: Review required! Ambiguous" in err, (out, err)
+            code, out, err = run("implements", 0.01, "--fail-on-drift", "--min-confidence", "0.5")
+            assert code == 2, code
+            assert "Confidence 0.01 is below --min-confidence 0.5" in err, err
+            code, out, err = run("implements", 0.01, "--fail-on-drift")
+            assert code == 0 and err == "", (code, err)
+            code, out, err = run("implements", 0.95, "--json")
+            assert code == 0 and json.loads(out)["warning"] is None, out
+            code, out, err = run("defers", 0.9)
+            assert code == 0 and "WARNING" not in out and "Drift detected" in err, (out, err)
+        finally:
+            module.evaluate_drift, sys.argv = orig_evaluate, orig_argv
+
 
 def main():
     test_load_diff()
@@ -525,9 +621,11 @@ def main():
     test_confidence_and_json_traversal()
     test_error_sanitization_and_timeout()
     test_rejects_unknown_choice_and_bad_confidence()
+    test_rejects_non_argmax_choice()
     test_evaluate_drift_offline_stub()
     test_evaluate_drift_missing_key()
     test_cli_subprocess_integration()
+    test_cli_fail_on_drift_gates()
     print("All tests passed.")
 
 
