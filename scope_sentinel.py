@@ -17,7 +17,7 @@ import time
 
 from jev_patterns import call, estimated_usd, input_tokens, model_name
 
-SENTINEL_VERSION = "shadow-v4"
+SENTINEL_VERSION = "shadow-v5"
 MAX_JUDGES = 4  # concurrent detached Jev calls; extra commands log a "skipped" row
 _ARG = r"""(?>"[^"]*"|'[^']*'|\S+)"""
 # At most 8 global options, matched possessively, keep scanning linear on long or quote-heavy commands.

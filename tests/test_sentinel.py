@@ -306,7 +306,7 @@ def new_repo(tmp: Path, agents: str = "") -> Path:
 
 
 def check_bash_gate() -> None:
-    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v4 row, fail-open."""
+    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v5 row, fail-open."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "jev").write_text(REC_STUB)
@@ -322,7 +322,7 @@ def check_bash_gate() -> None:
         # AC-1.1: irreversible 0.90 -> would_block, nothing on stdout, fast
         assert run_hook(tmp, event("rm -rf build")) < 2
         row = rows(log, 1)[0]
-        assert row["sentinel_version"] == "shadow-v4" and row["gate"] == "bash" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v5" and row["gate"] == "bash" and "error" not in row, row
         assert row["risky"] is True and row["effect"] == "irreversible", row
         assert row["effect_confidence"] == 0.9 and row["destructive_intent"] == 0.2, row
         assert row["would_block"] is True and row["block_reason"].startswith("irreversible (0.90)"), row
@@ -472,7 +472,7 @@ def check_write_gate() -> None:
         questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
         assert list(questions) == ["kind", "contains_secret"], questions
         assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
-        assert row["sentinel_version"] == "shadow-v4" and row["gate"] == "write" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v5" and row["gate"] == "write" and "error" not in row, row
         assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
         assert "content" not in row and "abc123" not in json.dumps(row), row
