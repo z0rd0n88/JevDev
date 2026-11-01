@@ -17,7 +17,7 @@ import time
 
 from jev_patterns import call, estimated_usd, input_tokens, model_name
 
-SENTINEL_VERSION = "shadow-v6"
+SENTINEL_VERSION = "shadow-v7"
 MAX_JUDGES = 4  # concurrent detached Jev calls; extra commands log a "skipped" row
 _ARG = r"""(?>"[^"]*"|'[^']*'|\S+)"""
 # At most 8 global options, matched possessively, keep scanning linear on long or quote-heavy commands.
@@ -44,8 +44,8 @@ _VALUE = r"""(?:[^\s'";,`$]|\$(?!\()|,(?![A-Za-z_][\w.]{0,64}[(= \t])){1,4096}""
 # Every run before a required delimiter is capped ({0,64}, {1,64}) so repeated keywords stay linear; a bare value ends at
 # whitespace, ;, backtick, $( or a , followed by code, so one statement cannot hide the next while ( ) and a plain , stay
 # hidden; a quoted value ends at its closing quote, and the PEM body is base64 lines.
-# ponytail: `password=ab;cd` leaks ;cd, an unindented or backslash-continued next-line value leaks, && and | still hide
-# what follows, and `password:` + newline + an indented bare command hides that command; commands could skip pattern 1.
+# ponytail: in file text `password=ab;cd` leaks ;cd, an unindented or backslash-continued next-line value leaks, and && and |
+# still hide what follows; tell them apart by language if verdicts need it. Commands go through redact_command() instead.
 SECRETS = [re.compile(p) for p in (
     r"(?im)(^[+-]?[ \t]*['\"]?\w{0,64}(?:token|secret|password|passwd|api[_-]?key)\w{0,64}['\"]?[ \t]*(?::[ \t]{0,64}(?:[|>][+-]?[ \t]{0,64})?|=[ \t]{0,64}\([ \t]{0,64})\r?\n[+-]?[ \t]+)"
     r"(?:(['\"])[^'\"\n]{1,4096}\2|" + _VALUE + r")(?=[ \t]*\r?$)",
@@ -64,6 +64,8 @@ SECRETS = [re.compile(p) for p in (
     r"()\beyJ[\w-]{10,256}\.[\w-]{10,}\.[\w-]{10,}",
     r"(-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----)(?:\r?\n[+-]? ?[A-Za-z0-9+/=]{12,}[ \t]*(?![^\r\n]))+",
 )]
+SHELL_BREAK = re.compile(r"[;&|<>(){}`]|\$\(")
+SHELL_EXPANSION = re.compile(r"`|\$\(")
 TAG_BLOCK = re.compile(r"<(system-reminder|task-notification|bash-std\w+|local-command-[\w-]+)>.*?</\1>", re.S)
 # Codex desktop prepends ambient UI state to typed messages; question replies are kept (they can grant scope).
 CODEX_AMBIENT = re.compile(r"<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>", re.S)
@@ -81,6 +83,27 @@ def redact(text: str) -> str:
     for pattern in SECRETS:
         text = pattern.sub(lambda m: f"{m.group(1)}[REDACTED]", text)
     return text
+
+
+def _hide_command_value(match: re.Match) -> str:
+    """Hide a matched value up to the first thing the shell would act on; single quotes make all of it literal."""
+    key, value = match.group(1), match.group(0)[len(match.group(1)):]
+    if key.endswith("'") or value.startswith("'"):
+        return f"{key}[REDACTED]"
+    stop = (SHELL_EXPANSION if key.endswith('"') or value.startswith('"') else SHELL_BREAK).search(value)
+    if not stop:
+        return f"{key}[REDACTED]"
+    return f"{key}[REDACTED]{value[stop.start():]}" if stop.start() else match.group(0)
+
+
+def redact_command(command: str) -> str:
+    """redact() for shell text: keeps every operator and what follows, and skips the next-line pattern, which a shell would run.
+
+    ponytail: a YAML value on its own line in a heredoc is not hidden here; parse heredocs if those carry secrets.
+    """
+    for pattern in SECRETS[1:]:
+        command = pattern.sub(_hide_command_value, command)
+    return command
 
 
 def error_detail(e: BaseException, prefix: bool = True) -> str:
@@ -275,7 +298,7 @@ def judge_write(rel_path: str, content: str) -> dict:
 
 def judge_bash(instruction: str, constraints: str, command: str, cwd: str) -> dict:
     state = {"instruction": clip(redact(instruction)), "constraints": clip(redact(constraints)) or "None",
-             "command": clip(redact(command)), "cwd": cwd}
+             "command": clip(redact_command(command)), "cwd": cwd}
     response = call(state, {"scope": SCOPE_QUESTION, **BASH_QUESTIONS}, job="scope_sentinel")
     answers = response["answers"]
     answer = answers["scope"]
@@ -549,7 +572,7 @@ def run_judge(log: Path, host: str) -> None:
         if target["gate"] == "write":
             judge_write_event(row, event, host, target, root, transcript, log)
         else:
-            row.update(command=clip(redact(target["command"])), risky=is_risky(target["command"]))
+            row.update(command=clip(redact_command(target["command"])), risky=is_risky(target["command"]))
             scan = scan_transcript(Path(transcript or event["transcriptPath"]), host, follow_parent=True)
             row["host_model"] = host_model(event, host, scan)
             row["instruction"] = clip(redact((scan["prompts"] or [""])[-1]))

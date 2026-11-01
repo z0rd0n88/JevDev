@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from unittest import mock
 
 SOURCE = Path(__file__).parents[1] / "scope_sentinel.py"
 sys.path.insert(0, str(SOURCE.parent))
@@ -327,7 +328,7 @@ def new_repo(tmp: Path, agents: str = "") -> Path:
 
 
 def check_bash_gate() -> None:
-    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v6 row, fail-open."""
+    """AC-1.1 to AC-1.4: judge-all, JSON state, three questions, shadow-v7 row, fail-open."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         (tmp / "jev").write_text(REC_STUB)
@@ -343,7 +344,7 @@ def check_bash_gate() -> None:
         # AC-1.1: irreversible 0.90 -> would_block, nothing on stdout, fast
         assert run_hook(tmp, event("rm -rf build")) < 2
         row = rows(log, 1)[0]
-        assert row["sentinel_version"] == "shadow-v6" and row["gate"] == "bash" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v7" and row["gate"] == "bash" and "error" not in row, row
         assert row["risky"] is True and row["effect"] == "irreversible", row
         assert row["effect_confidence"] == 0.9 and row["destructive_intent"] == 0.2, row
         assert row["would_block"] is True and row["block_reason"].startswith("irreversible (0.90)"), row
@@ -493,7 +494,7 @@ def check_write_gate() -> None:
         questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
         assert list(questions) == ["kind", "contains_secret"], questions
         assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
-        assert row["sentinel_version"] == "shadow-v6" and row["gate"] == "write" and "error" not in row, row
+        assert row["sentinel_version"] == "shadow-v7" and row["gate"] == "write" and "error" not in row, row
         assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row
         assert "content" not in row and "abc123" not in json.dumps(row), row
@@ -694,8 +695,71 @@ def check_write_configs() -> None:
                 assert hook["timeout"] == 10, hook
 
 
+def check_command_redaction() -> None:
+    """A shell command hides a value but never what the shell would run after it."""
+    sentinel = load_sentinel()
+    for text, want in (("token=x&&rm -rf /", "token=[REDACTED]&&rm -rf /"), ("token=0||purge", "token=[REDACTED]||purge"),
+                       ("token=0|purge", "token=[REDACTED]|purge"), ("PASSWORD=x|tee f", "PASSWORD=[REDACTED]|tee f"),
+                       ("token=a>/etc/passwd", "token=[REDACTED]>/etc/passwd"), ("token=a</etc/passwd", "token=[REDACTED]</etc/passwd"),
+                       ("token=a&", "token=[REDACTED]&"), ("token=a;reboot", "token=[REDACTED];reboot"),
+                       ("token=a(reboot)", "token=[REDACTED](reboot)"), ("token=a{b}", "token=[REDACTED]{b}"),
+                       ('token="$(reboot now)"', 'token=[REDACTED]$(reboot now)"'), ('token="a`reboot`"', 'token=[REDACTED]`reboot`"'),
+                       ("TOKEN=$(curl e|sh)", "TOKEN=$(curl e|sh)"), ("TOKEN=\\\n  /tmp/evil.sh\n", "TOKEN=[REDACTED]\n  /tmp/evil.sh\n"),
+                       ("password:\n  reboot\n", "password:\n  reboot\n"), ("password: |\n  reboot\n", "password: |\n  reboot\n"),
+                       ("token=a,b", "token=[REDACTED]"), ("token='a;b&&c'", "token=[REDACTED]"), ('token="a;b&&c"', "token=[REDACTED]"),
+                       ("mysql --password hunter2 -e x", "mysql --password [REDACTED] -e x"),
+                       ("git push https://u:pw@host/r", "git push https://u:[REDACTED]@host/r"),
+                       ("echo ghp_abcdefghijklmnop", "echo [REDACTED]")):
+        assert sentinel.redact_command(text) == want, (text, sentinel.redact_command(text))
+    # file text keeps a secret's punctuation and a next-line value hidden
+    assert sentinel.redact("PASSWORD=p(ss)word") == "PASSWORD=[REDACTED]"
+    assert sentinel.redact("password:\n  hunter2\n") == "password:\n  [REDACTED]\n"
+    for text in ("token&" * 150_000, "token=a&" * 130_000, "token:" + " " * 100_000 + "x"):
+        start = time.perf_counter()
+        sentinel.redact_command(text)
+        assert time.perf_counter() - start < 1, "command redaction must stay linear"
+
+    command = "export token=x&&rm -rf /data"
+    want = "export token=[REDACTED]&&rm -rf /data"
+    seen = []
+
+    def stop(state, *args, **kwargs):
+        seen.append(state)
+        raise RuntimeError("stop")
+
+    with mock.patch.object(sentinel, "call", stop):
+        try:
+            sentinel.judge_bash("clean up", "", command, "/repo")
+        except RuntimeError:
+            pass
+    assert seen[0]["command"] == want, seen
+
+    import ask_jev_files
+    answers = {"effect": {"choice": "reversible", "confidence": 0.9}, "destructive_intent": {"noul": 0.1}}
+    with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"JEV_LOG_DIR": d}):
+        with mock.patch.object(ask_jev_files, "call", return_value={"answers": answers, "model": "m"}) as call:
+            ask_jev_files.gate_command(command, Path(d), Path(d), "m")
+        assert call.call_args.args[0]["command"] == want, call.call_args
+        row = json.loads((Path(d) / "sentinel.jsonl").read_text().splitlines()[-1])
+        assert row["command"] == want, row
+
+    # the hook's logged row uses the same view
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        (tmp / "jev").write_text(REC_STUB)
+        (tmp / "jev").chmod(0o755)
+        repo = new_repo(tmp, "")
+        prompt = transcript(tmp, [{"type": "user", "message": {"content": "clean up"}},
+                                  {"type": "assistant", "isSidechain": False, "message": {"model": "claude-test-1"}}])
+        run_hook(tmp, {"session_id": "s1", "transcript_path": prompt, "tool_name": "Bash",
+                       "tool_input": {"command": command}, "cwd": str(repo / "sub")})
+        row = rows(tmp / ".local" / "sentinel.jsonl", 1)[0]
+        assert row["command"] == want, row
+
+
 def main() -> None:
     check_patterns()
+    check_command_redaction()
     check_key_only()
     check_helpers()
     check_bash_gate()

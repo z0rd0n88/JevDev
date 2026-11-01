@@ -30,6 +30,7 @@ from scope_sentinel import (
     gate_bash,
     is_risky,
     redact,
+    redact_command,
     repo_root,
 )
 
@@ -289,7 +290,7 @@ def parse_own_state(text: str) -> dict:
 def gate_command(command: str, cwd: Path, root: Path, model: str):
     """Judge command live and log the decision. Returns (blocked, reason); raises RuntimeError or KeyError."""
     response = call(
-        {"command": redact(command)[:2000], "cwd": str(root)},
+        {"command": redact_command(command)[:2000], "cwd": str(root)},
         BASH_QUESTIONS,
         job="ask_jev_gate",
         model=model,
@@ -314,7 +315,7 @@ def gate_command(command: str, cwd: Path, root: Path, model: str):
             "gate": "bash",
             "cwd": str(cwd),
             "repo": str(root),
-            "command": redact(command)[:2000],
+            "command": redact_command(command)[:2000],
             "risky": is_risky(command),
             "effect": answers["effect"]["choice"],
             "effect_confidence": answers["effect"]["confidence"],
