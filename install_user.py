@@ -143,11 +143,12 @@ def claude_snippet(jevdev):
         "Stop": [group(advisor, 45)],
     }
     links = [f"ln -s {jevdev}/.agents/skills/{n} ~/.claude/skills/{n}" for n in SKILLS]
+    env = {"CLAUDE_CODE_PLUGIN_DIRS": f"{jevdev}/pruner"}
     return "\n".join(
         [
             "Claude part, not applied (~/.claude is the ClaudeConfig repo): open a PR with no Claude session "
-            "running and merge these hooks into ~/.claude/settings.json:",
-            json.dumps({"hooks": hooks}, indent=2),
+            "running and merge this env and these hooks into ~/.claude/settings.json:",
+            json.dumps({"env": env, "hooks": hooks}, indent=2),
             "then run:",
             *links,
         ]
@@ -157,7 +158,8 @@ def claude_snippet(jevdev):
 def removal_snippet():
     return (
         "Claude part, not applied: in a ClaudeConfig PR with no Claude session running, delete the hook entries "
-        "whose command contains scope_sentinel.py or compact_advisor.py from ~/.claude/settings.json, then run:\n"
+        "whose command contains scope_sentinel.py or compact_advisor.py and env.CLAUDE_CODE_PLUGIN_DIRS's pruner "
+        "entry from ~/.claude/settings.json, then run:\n"
         "rm " + " ".join(f"~/.claude/skills/{n}" for n in SKILLS)
     )
 

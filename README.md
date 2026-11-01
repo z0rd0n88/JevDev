@@ -171,6 +171,24 @@ Intent and Model Routing, option A (agent router): `skill_router.suggest` routes
 
 New callers import `jev_patterns.call` and keep their thresholds in code, never in the prompt.
 
+## Bash output pruner
+
+`pruner/` is a Claude Code mod that trims Bash output over 10,000 estimated tokens before the model reads it. Jev scores 20-line chunks through OpenRouter, and low-scoring chunks become `[N lines omitted]` markers. Failed commands, binary output, and documents such as diffs and JSON pass through whole. It is a pinned copy of [`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-pruner); [`pruner/README.md`](pruner/README.md) records the commit and every change from upstream.
+
+- **What leaves the machine:** the command, the output chunks, and the last three typed prompts, redacted and clipped to 500 characters each. Conversation history is not sent.
+- **Skipped without a call:** a command or output that matches the secret patterns, output past 4,000,000 characters, a missing `OPENROUTER_API_KEY`, or a key without the `sk-or-` prefix. Each returns the original result. So does a failed or late scoring call (60 s budget).
+- **The full output:** saved to `~/.local/state/jevdev/pruner/`, outside every repo, and named in the footer. Files there are not deleted automatically.
+- **Key:** read through `with_jev_key.sh`, never from Claude's environment, where a project's `env` could substitute another account.
+- **Logs:** each decision goes to the debug log as counts only, with no command or output text. Read it with `claude --debug`.
+- **Hosts:** Claude only. Codex would need `sandbox_workspace_write.network_access=true`, which opens the network to every sandboxed command.
+
+Tests need no npm install and make no network calls:
+
+```bash
+claude plugin validate pruner
+claude plugin test pruner
+```
+
 ## Install check
 
 `python3 check_install.py` prints a feature × host table showing whether each feature is wired at project scope. It only reads configs; it never edits them or trusts a Codex hook. `--root PATH` and `--home PATH` override the repo and home directories; `--scope user` reads the user-scope files instead (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/config/hooks.json`, the three user skill dirs).
@@ -178,7 +196,8 @@ New callers import `jev_patterns.call` and keep their thresholds in code, never 
 | Cell | Meaning |
 |---|---|
 | `ok` | wired (and, for Codex hooks, trusted) |
-| `n/a (unavailable)` | the host has no such feature (agy compaction advisor) |
+| `n/a (unavailable)` | the host has no such feature (agy compaction advisor, the pruner outside Claude) |
+| `n/a (user scope only)` | the pruner loads from `~/.claude/settings.json` alone; read it with `--scope user` |
 | `missing` | config absent, malformed, or lacking the entry; exit code 1 |
 | `untrusted` | Codex has no `hooks.state` trust entry for the hook in `~/.codex/config.toml`; trust it in `codex` via `/hooks`. Alone it keeps exit code 0 |
 
@@ -187,7 +206,7 @@ New callers import `jev_patterns.call` and keep their thresholds in code, never 
 Runs the gates, advisor, and skills in every repo on this machine from the primary checkout, logging to `~/.local/state/jevdev/`. Repos whose project config already carries `scope_sentinel.py` are skipped by `--user`, so no double rows.
 
 1. `python3 install_user.py` (idempotent; `--home` and `--jevdev` override the defaults). It merges `~/.codex/hooks.json`, writes the `jevdev` hook in `~/.gemini/config/hooks.json`, links the four skills, links `jev` and `jev-selfcheck` into `~/.local/bin` (`bin/jev` lands with JevDev#52, so run the installer after that merge), and prints the Claude snippet. A real file or directory at a skill or `~/.local/bin` path is refused (exit 2); nothing changes. `~/.local/bin/jev` and `jev-selfcheck` must not be regular files when it runs, so move an existing copy aside first.
-2. Claude: open a ClaudeConfig PR with the printed snippet (`~/.claude/settings.json` hooks plus two `ln -s` lines). Merge and pull it while no Claude session runs; running sessions rewrite that file.
+2. Claude: open a ClaudeConfig PR with the printed snippet (`~/.claude/settings.json` hooks, the `CLAUDE_CODE_PLUGIN_DIRS` entry that loads `pruner/`, plus two `ln -s` lines). Merge and pull it while no Claude session runs; running sessions rewrite that file.
 3. Codex: open `codex` anywhere and trust the new hooks in `/hooks`.
 4. After every merge here: `git -C ~/JevDev pull` (the hooks run that checkout; keep it on `main`).
 5. Check: `python3 check_install.py --scope user` and `jev-selfcheck` (offline; fake curl, no network). Live smoke: `bash smoke.sh <claude|agy> bash --user` (runs from `/home/alex/BotHaus`).
