@@ -17,13 +17,15 @@ import re
 
 SECRET_WORDS = r"token|secret|password|passwd|api[_-]?key|private[_-]?key"
 _VALUE = r"""(?:[^\s'";,`$]|\$(?!\()|,(?![A-Za-z_][\w.]{0,64}[(= \t])){1,4096}"""
-_LINE_BREAK = r"(?:\r?\n|\\r?\\n)"
+_LINE_BREAK = r"(?:\r?\n|\\(?:r\\)?n)"  # a real line break, or one still escaped inside JSON
+_KEY_LINE = _LINE_BREAK + r"[ \t]{0,64}(?:[+-][ \t]{0,64})?"  # one line start inside a private key, diff marker allowed
 # Each pattern keeps group 1 (possibly empty) and replaces the rest of the match. Keyword-to-value whitespace is
 # [ \t], never \s, so a match never crosses a newline, except a PEM body and a key alone on its line (pattern 1).
 # ponytail: every name containing token/secret/password/key loses its value (max_tokens=1024 too); redact_count reports it.
 # Every run before a required delimiter is capped ({0,64}, {1,64}) so repeated keywords stay linear; a bare value ends at
 # whitespace, ;, backtick, $( or a , followed by code, so one statement cannot hide the next while ( ) and a plain , stay
-# hidden; a quoted value ends at its closing quote, and the PEM body is base64 or `Name: value` lines.
+# hidden; a quoted value ends at its closing quote, and a private key is standard armor headers, one blank line, then base64
+# lines, needing at least one and ending at the first other line, so text after a bare BEGIN stays visible.
 # ponytail: in file text `password=ab;cd` leaks ;cd, an unindented or backslash-continued next-line value leaks, and && and |
 # still hide what follows; tell them apart by language if verdicts need it. Commands go through command_view() instead.
 SECRETS = [re.compile(p) for p in (
@@ -45,7 +47,10 @@ SECRETS = [re.compile(p) for p in (
     r"()\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
     r"()\bxox[abposr]-[\w-]{10,}",
     r"()\beyJ[\w-]{10,256}\.[\w-]{10,}\.[\w-]{10,}",
-    r"(-----BEGIN [A-Z ]{0,32}PRIVATE KEY(?: BLOCK)?-----)(?:" + _LINE_BREAK + r"[ \t]*[+-]?[ \t]*(?:[A-Za-z0-9+/=]{12,}|[\w-]{1,64}:[^\r\n\\]{0,256}|)[ \t]*(?=" + _LINE_BREAK + r"|\Z))+",
+    r"(-----BEGIN [A-Z ]{0,32}PRIVATE KEY(?: BLOCK)?-----)"
+    r"(?:" + _KEY_LINE + r"(?:Version|Comment|Hash|Charset|MessageID|Proc-Type|DEK-Info):[^\r\n\\]{0,256})*"
+    r"(?:" + _KEY_LINE + r"(?=" + _LINE_BREAK + r"))?"
+    r"(?:" + _KEY_LINE + r"[A-Za-z0-9+/=]{12,}[ \t]{0,64}(?=" + _LINE_BREAK + r"|[\"']|\Z))+",
 )]
 
 # --- redact_strict(): known shapes first, a truncated private key to the end of the text. `sk`, `hf` and `npm` also start
