@@ -97,7 +97,12 @@ describe('information retention rules', () => {
     expect(result.output).toContain(line);
   });
 
-  it.each([0.11, 0.49, 0.99])('keeps uncertain or needed content at score %s despite budget pressure', async probability => {
+  it.each([0.11, 0.15, 0.2])('drops progress scored %s, at or under the calibrated floor', async probability => {
+    const result = await trimOutput({ command: 'npm run build', output: noise, goal: 'Build it.' }, { ask: score(probability) });
+    expect(result.trimmed).toBe(true);
+  });
+
+  it.each([0.21, 0.49, 0.99])('keeps uncertain or needed content at score %s despite budget pressure', async probability => {
     const output = `${noise}\nrelease identifier = stable-deployment`;
     const onDecision = vi.fn();
     const result = await trimOutput(

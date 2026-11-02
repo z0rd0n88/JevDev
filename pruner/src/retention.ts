@@ -34,7 +34,10 @@ const RESULT_PATTERN = /^[ \t]*(?:(?:Test Suites|Tests|Snapshots|Coverage|Result
 const PYTEST_RESULT_PATTERN = /^=+ (?=.*=[ \t\r]*$)(?=.*\b\d+ (?:passed|failed|skipped|deselected|xfailed|xpassed|errors?|warnings?)\b)/im;
 const TEST_PROGRESS_PATTERN = /^(?=\S+::\S)\S+\s+PASSED(?:\s+\[\s*\d+%\])?\s*$/i;
 const PROGRESS_PATTERN = /^\s*(?:\[[^\]\n]+\]\s*)?(?:INFO\s+)?(?:progress\b|cache(?:d)?\b|download(?:ing)?\b|compil(?:ing|ed)\b)/i;
-const MAX_DISPOSABLE_KEEP_PROBABILITY = 0.1;
+// Calibrated 2026-11-02 for OpenRouter's typesafe/jev-1.14: 24 needed chunks from JevDev, BotHaus and VistaMobileBE
+// output scored 0.73 or more, and 56 of 107 noise chunks scored 0.2 or less. Upstream's 0.1 suited its own model;
+// with stock Jev, plain progress scores 0.11-0.13, so nothing was ever dropped.
+const MAX_DISPOSABLE_KEEP_PROBABILITY = 0.2;
 
 export function isProtectedLine(text: string): boolean {
   return DIAGNOSTIC_PATTERN.test(text) || RESULT_PATTERN.test(text) || PYTEST_RESULT_PATTERN.test(text);

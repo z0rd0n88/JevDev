@@ -53,7 +53,7 @@ describe('scoring feasibility', () => {
     const asker: JevAsker = {
       async ask(_state, questions) {
         if (Object.keys(questions).some(id => id.startsWith('g'))) refinements += 1;
-        return answer(questions, 0.11);
+        return answer(questions, 0.21);
       },
     };
     const value = input(progress());

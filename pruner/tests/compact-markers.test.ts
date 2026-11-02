@@ -16,7 +16,7 @@ const asker: JevAsker = {
     const { chunks } = state as { chunks: { id: string; text: string }[] };
     return {
       answers: Object.fromEntries(chunks.filter(chunk => chunk.id in questions).map(chunk => [
-        chunk.id, { noul: chunk.text.includes('uncertain detail') ? 0.11 : 0.01 },
+        chunk.id, { noul: chunk.text.includes('uncertain detail') ? 0.21 : 0.01 },
       ])),
     };
   },
