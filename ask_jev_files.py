@@ -22,6 +22,7 @@ import sys
 import time
 
 from jev_patterns import JevError, NO_KEY, call, has_key, model_name
+from redaction import redact, redact_state
 from scope_sentinel import (
     BASH_QUESTIONS,
     BLOCK_NOTICE,
@@ -31,7 +32,6 @@ from scope_sentinel import (
     command_view,
     gate_bash,
     is_risky,
-    redact,
     repo_root,
 )
 
@@ -173,16 +173,6 @@ def emit(obj: dict, code: int = 0) -> int:
     return code
 
 
-def redact_deep(value):
-    if isinstance(value, str):
-        return redact(value)
-    if isinstance(value, list):
-        return [redact_deep(v) for v in value]
-    if isinstance(value, dict):
-        return {k: redact_deep(v) for k, v in value.items()}
-    return value
-
-
 def tokens(part) -> int:
     return math.ceil(len(json.dumps(part)) / 4)
 
@@ -307,6 +297,7 @@ def gate_command(command: str, cwd: Path, root: Path, model: str):
             BASH_QUESTIONS,
             job="ask_jev_gate",
             model=model,
+            redacted=True,
         )
         answers = response["answers"]
         blocked, reason = gate_bash(answers)
@@ -357,7 +348,7 @@ def cmd_ask(args) -> int:
     cwd = Path(os.getcwd())
     root = repo_root(str(cwd))
     model = model_name(args.model)
-    own = redact_deep(parse_own_state(args.state)) if args.state is not None else {}
+    own = redact_state(parse_own_state(args.state)) if args.state is not None else {}
     files, rels = {}, []
     if args.paths:
         rels, _ = prune(expand(args.paths, cwd, True), root)
@@ -401,7 +392,7 @@ def cmd_ask(args) -> int:
             )
         except subprocess.TimeoutExpired:
             return emit({"error": "command timed out after 60 s"}, 2)
-        output = redact_deep(
+        output = redact_state(
             {
                 "command": "",
                 "exit_code": done.returncode,
@@ -432,7 +423,7 @@ def cmd_ask(args) -> int:
         **({"output": output} if output is not None else {}),
     }
     try:
-        response = call(state, questions, job="ask_jev", model=model)
+        response = call(state, questions, job="ask_jev", model=model, redacted=True)
     except JevError as e:
         return emit({"error": f"jev: {redact(e.stderr) or e}"}, 2)
     return emit(

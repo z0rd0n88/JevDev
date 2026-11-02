@@ -1,0 +1,3 @@
+[lint]
+# Tests and check_install.py name small lambdas on purpose; rewriting 17 of them as defs adds nothing.
+ignore = ["E731"]

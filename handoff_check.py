@@ -9,21 +9,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 import json
 from pathlib import Path
-import re
 import sys
 
+from redaction import redact
 from jev_patterns import DEFAULT_TIMEOUT, call, input_tokens, isolated_env as get_isolated_env  # noqa: F401  re-export
 
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB limit
 MAX_LEDGER_ITEMS = 50
 MAX_HANDOFF_CHARS = 25_000
-
-SECRET = re.compile(
-    r"(?i)(authorization:\s*\S+\s+|bearer\s+|(?:token|secret|password|passwd|api[_-]?key)\w*[=:]\s*)\S+"
-    r"|://[^/\s:@]+:[^/\s@]+@"
-    r"|\b(?:gh[pousr]_|github_pat_|sk-)[\w-]{10,}"
-)
-
 
 class HandoffVerdict(StrEnum):
     INTACT = "intact"
@@ -50,11 +43,6 @@ class HandoffReport:
     results: list[ItemEvaluation]
     elapsed: float
     input_tokens: int
-
-
-def redact(text: str) -> str:
-    """Scrub sensitive credentials and tokens from text."""
-    return SECRET.sub(lambda m: f"{m.group(1)}[REDACTED]" if m.group(1) else "[REDACTED]", text)
 
 
 def parse_ledger(content: str) -> list[LedgerItem]:

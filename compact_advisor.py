@@ -11,13 +11,13 @@ import sys
 import time
 
 from jev_patterns import call, estimated_usd, input_tokens, model_name
+from redaction import redact
 from scope_sentinel import (
     append_row,
     error_detail,
     host_model,
     log_dir,
     project_hooked,
-    redact,
     repo_root,
     scan_transcript,
 )

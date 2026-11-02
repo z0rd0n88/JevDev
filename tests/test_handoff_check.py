@@ -3,14 +3,12 @@
 import json
 import os
 from pathlib import Path
+import importlib.util
 import subprocess
 import sys
 import tempfile
-import time
 
 SOURCE = Path(__file__).parents[1] / "handoff_check.py"
-
-import importlib.util
 
 def load_module():
     spec = importlib.util.spec_from_file_location("handoff_check", SOURCE)
@@ -67,7 +65,7 @@ def test_load_file_and_limits():
 
 def test_redaction():
     module = load_module()
-    raw = "Deploy with GH_TOKEN=ghp_secrettoken123456789 and Bearer sk-abc123xyz"
+    raw = "Deploy with GH_TOKEN=ghp_secrettoken123456789 and Bearer sk-abcdefghij0123456789xyz"
     scrubbed = module.redact(raw)
     assert "ghp_" not in scrubbed
     assert "sk-" not in scrubbed

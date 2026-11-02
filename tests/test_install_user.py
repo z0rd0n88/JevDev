@@ -205,7 +205,7 @@ def check_remove():
         )
         assert json.loads((home / ".codex/hooks.json").read_text()) == OTHER
         assert json.loads(agy_other.read_text()) == {"mine": {"Stop": []}}
-        assert [l for l in SKILL_LINKS if (home / l).is_symlink()] == []
+        assert [link for link in SKILL_LINKS if (home / link).is_symlink()] == []
         assert foreign.is_symlink(), "a symlink the installer does not own must stay"
         again = run(home, "--remove")
         assert again.returncode == 0 and "nothing to change" in again.stdout, (
