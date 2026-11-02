@@ -141,6 +141,10 @@ describe('hostile output', () => {
     `at ${'('.repeat(200_000)}`,
     `a::b${':'.repeat(200_000)}`,
     `= 1 passed ${'='.repeat(200_000)}x`,
+    '*** ['.repeat(80_000),
+    `${'1'.repeat(200_000)} failure`,
+    '9 9 9 '.repeat(40_000),
+    'Failed t'.repeat(25_000),
   ];
   for (const [index, text] of HOSTILE.entries()) {
     test(`classifies and redacts in linear time #${index}`, () => {

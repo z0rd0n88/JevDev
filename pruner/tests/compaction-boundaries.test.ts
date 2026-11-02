@@ -15,7 +15,7 @@ describe('refined chunk boundaries', () => {
           answers: Object.fromEntries(chunks.filter(chunk => chunk.id in questions).map(chunk => [
             chunk.id,
             { noul: /ERROR|Exit status/.test(chunk.text) ? 0.99
-              : ['c2', 'c3'].includes(chunk.id) ? 0.12 : 0.01 },
+              : ['c2', 'c3'].includes(chunk.id) ? 0.21 : 0.01 },
           ])),
         };
       },

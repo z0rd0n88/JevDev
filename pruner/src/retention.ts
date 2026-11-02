@@ -26,6 +26,10 @@ const DIAGNOSTIC_PATTERN = new RegExp(
     '^[ \\t]*at[ \\t]+\\S[^\\s(]*\\(.*:\\d+',
     '\\b(severity )?vulnerabilit(y|ies)\\b',
     '\\bCrashLoopBackOff\\b|\\bOOMKilled\\b',
+    '^[ \\t]*FAIL\\b|^not ok \\d|\\b(?:Failures|Errors): [1-9]|\\b[1-9]\\d* (?:failures?|errors?)\\b',
+    '\\*\\*\\* \\[[^\\][\\n]{0,256}\\] Error \\d|\\bnpm ERR!|\\berror\\[E\\d+\\]|\\bFailed (?:to|with)\\b',
+    '\\bSegmentation fault\\b|^Killed\\b|\\bout of memory\\b|\\bNo space left on device\\b',
+    '^CONFLICT \\(|\\[rejected\\]',
     '\\bHTTP/[0-9.]+ [45]\\d\\d\\b|\\bstatus[=: ]\\s*[45]\\d\\d\\b',
   ].join('|'),
   'm',
@@ -34,7 +38,11 @@ const RESULT_PATTERN = /^[ \t]*(?:(?:Test Suites|Tests|Snapshots|Coverage|Result
 const PYTEST_RESULT_PATTERN = /^=+ (?=.*=[ \t\r]*$)(?=.*\b\d+ (?:passed|failed|skipped|deselected|xfailed|xpassed|errors?|warnings?)\b)/im;
 const TEST_PROGRESS_PATTERN = /^(?=\S+::\S)\S+\s+PASSED(?:\s+\[\s*\d+%\])?\s*$/i;
 const PROGRESS_PATTERN = /^\s*(?:\[[^\]\n]+\]\s*)?(?:INFO\s+)?(?:progress\b|cache(?:d)?\b|download(?:ing)?\b|compil(?:ing|ed)\b)/i;
-const MAX_DISPOSABLE_KEEP_PROBABILITY = 0.1;
+// Calibrated 2026-11-02 for OpenRouter's typesafe/jev-1.14 with production-shaped requests. Unprotected needed chunks
+// scored 0.69 or more in 24 lookups over JevDev, BotHaus and VistaMobileBE output and 0.42 or more in 20 build and test
+// logs; at 0.2, 56 of 107 and 166 of 224 noise chunks drop. Upstream's 0.1 suited its own model: stock Jev scores
+// most noise just above it, so nothing was dropped. Data and scripts: JevDev .local/pruner-calibration/.
+const MAX_DISPOSABLE_KEEP_PROBABILITY = 0.2;
 
 export function isProtectedLine(text: string): boolean {
   return DIAGNOSTIC_PATTERN.test(text) || RESULT_PATTERN.test(text) || PYTEST_RESULT_PATTERN.test(text);

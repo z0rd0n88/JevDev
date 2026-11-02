@@ -21,6 +21,8 @@ Runtime copy of [`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-prun
 | Diagnostics on and written to the debug log; failures log their HTTP status; the first failure of each kind (no key, no archive folder, hook error) in a session also prints one transcript line | `hooks/fast-jev-output.ts` | MEDIUM-2, M-4 |
 | Removed `userConfig`, so a project's `pluginConfigs` cannot change the defaults | `.claude-plugin/plugin.json` | L-3 |
 | No scoring request goes out once the 60 s budget has passed | `hooks/fast-jev-output.ts` | L-1 |
+| Raised the drop floor from 0.1 to 0.2, calibrated on OpenRouter Jev: stock Jev scores most noise just above 0.1, so upstream's floor dropped almost nothing; needed chunks scored 0.42 or more | `src/retention.ts` | calibration 2026-11-02 |
+| Protected test failures (`FAIL`, `not ok`, nonzero failure counts), `make` errors, `npm ERR!`, Rust `error[E...]`, `Failed to`, crashes and resource exhaustion, merge conflicts and rejected pushes | `src/retention.ts` | floor review M1 |
 | Kept `stderr` when pruning persisted output: there it holds host notices that are in no file | `hooks/fast-jev-output.ts` | L-3 of the first review |
 | Tests run on `claude plugin test` through `tests/kit.ts` instead of vitest; removed the tests for history | `tests/` | npm audit |
 

@@ -29,6 +29,21 @@ describe('information retention rules', () => {
     ['diagnostic', 'fatal: not a git repository'],
     ['diagnostic', 'bash: foo: command not found'],
     ['diagnostic', 'cat: x: No such file or directory'],
+    ['diagnostic', 'FAIL src/foo.test.ts'],
+    ['diagnostic', 'Tests run: 12, Failures: 1, Errors: 0'],
+    ['diagnostic', '12 tests, 1 failure'],
+    ['diagnostic', 'make: *** [Makefile:12: build] Error 2'],
+    ['diagnostic', 'npm ERR! code ELIFECYCLE'],
+    ['diagnostic', 'error[E0382]: borrow of moved value'],
+    ['diagnostic', 'not ok 3 - parses input'],
+    ['diagnostic', 'Segmentation fault (core dumped)'],
+    ['diagnostic', 'Killed'],
+    ['diagnostic', 'runtime: out of memory'],
+    ['diagnostic', 'write /tmp/x: No space left on device'],
+    ['diagnostic', 'CONFLICT (content): Merge conflict in a.py'],
+    ['diagnostic', ' ! [rejected]        main -> main (fetch first)'],
+    ['diagnostic', 'curl: (7) Failed to connect to localhost port 8080'],
+    ['unknown', 'Tests run: 12, Failures: 0, Errors: 0, Skipped: 0'],
     ['result', 'Tests: 17 passed, 0 failed'],
     ['result', 'Artifact: dist/app.js'],
     ['progress', 'INFO cache hit\nDownloading package 1/200'],
@@ -97,7 +112,17 @@ describe('information retention rules', () => {
     expect(result.output).toContain(line);
   });
 
-  it.each([0.11, 0.49, 0.99])('keeps uncertain or needed content at score %s despite budget pressure', async probability => {
+  it.each([0.11, 0.15, 0.2])('drops progress scored %s, at or under the calibrated floor', async probability => {
+    const lines = noise.split('\n');
+    lines[200] = 'ERROR: disk quota exceeded';
+    const output = lines.join('\n');
+    const result = await trimOutput({ command: 'npm run build', output, goal: 'Build it.' }, { ask: score(probability) });
+    expect(result.trimmed).toBe(true);
+    expect(result.output).toContain('ERROR: disk quota exceeded');
+    expect(result.output.includes(lines[100]!)).toBe(false);
+  });
+
+  it.each([0.21, 0.49, 0.99])('keeps uncertain or needed content at score %s despite budget pressure', async probability => {
     const output = `${noise}\nrelease identifier = stable-deployment`;
     const onDecision = vi.fn();
     const result = await trimOutput(

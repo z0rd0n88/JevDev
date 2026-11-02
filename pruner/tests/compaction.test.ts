@@ -50,7 +50,7 @@ describe('compaction within native previews', () => {
           if (refining && mode === 'failed') throw new Error('unavailable');
           return {
             answers: refining && mode === 'missing' ? {} : Object.fromEntries(
-              Object.keys(questions).map(id => [id, { noul: refining ? 0.11 : 0.99 }]),
+              Object.keys(questions).map(id => [id, { noul: refining ? 0.21 : 0.99 }]),
             ),
           };
         },
