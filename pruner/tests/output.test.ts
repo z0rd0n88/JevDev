@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from './kit.ts';
-import { trimOutput } from '../src/output.js';
+import { MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
 import { estimateTokens, type JevAsker } from '../src/jev.js';
 
 function askerFor(score: (id: string) => number, calls: { count: number }): JevAsker {
@@ -69,7 +69,8 @@ describe('character-based chunks', () => {
 
   it('does not bypass the token floor', async () => {
     const calls = { count: 0 };
-    const short = output.slice(0, 30_000);
+    const short = output.slice(0, 8_000);
+    expect(estimateTokens(short)).toBeLessThan(MIN_OUTPUT_TOKENS);
     const result = await trimOutput(
       { command: 'make', goal: 'check', output: short },
       askerFor(() => 0, calls),
