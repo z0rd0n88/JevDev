@@ -104,8 +104,24 @@ describe('rendered output budgets', () => {
     expect(onDecision).toHaveBeenCalledWith('budget_unfit');
   });
 
+  it('keeps only high-scored chunks when the needed chunks overflow the budget', async () => {
+    const lines = Array.from({ length: 2_000 }, (_, index) => `INFO item ${index} ${'x'.repeat(15)}`);
+    const result = await trimOutput(
+      { command: 'build', goal: 'g', output: lines.join('\n'), fullOutputPath: '/logs/full.txt' },
+      { async ask(_state, questions) {
+        return answersFor(questions, id => id.startsWith('g') || Number(id.slice(1)) % 2 ? 0.99 : 0.01);
+      } },
+      { maxChars: 8_000 },
+    );
+    expect(result.trimmed).toBe(true);
+    expect(result.output.length).toBeLessThanOrEqual(8_000);
+    // Odd chunks scored 0.01; only the last of them, a must-keep chunk, may appear.
+    for (const [index, line] of lines.entries()) {
+      if (Math.floor(index / 20) % 2 === 1 && index < 1_980) expect(result.output).not.toContain(`${line}\n`);
+    }
+  });
+
   it.each([
-    [8_000, false],
     [40_000, true],
   ] as const)('preserves needed chunks and accounts for omission markers with budget %i', async (maxChars, trimmed) => {
     const output = Array.from({ length: 2_000 }, (_, index) =>
@@ -175,14 +191,16 @@ describe('rendered output budgets', () => {
     expect(result.trimmed).toBe(false);
   });
 
-  it('does not discard unscored content to meet the output budget', async () => {
-    const output = Array.from({ length: 4_000 }, (_, index) => `item ${index} ${'z'.repeat(80)}`).join('\n');
+  it('drops unscored content before scored content to meet the output budget', async () => {
+    const lines = Array.from({ length: 4_000 }, (_, index) => `item ${index} ${'z'.repeat(80)}`);
     const result = await trimOutput(
-      { command: 'inventory', goal: 'g', output },
+      { command: 'inventory', goal: 'g', output: lines.join('\n') },
       keepEverything,
       { maxScoringRequests: 0, maxChars: 8_000 },
     );
-    expect(result.output).toBe(output);
-    expect(result.trimmed).toBe(false);
+    expect(result.trimmed).toBe(true);
+    expect(result.output.length).toBeLessThanOrEqual(8_000);
+    expect(result.output).toContain(lines[0]);
+    expect(result.output).toContain(lines.at(-1));
   });
 });

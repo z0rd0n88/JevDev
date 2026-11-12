@@ -26,6 +26,7 @@ Runtime copy of [`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-prun
 | Kept `stderr` when pruning persisted output: there it holds host notices that are in no file | `hooks/fast-jev-output.ts` | L-3 of the first review |
 | Persisted output is trimmed to `persistedMaxChars` (8,000) instead of core's ~2,200-character preview, which no trim fit, so every persisted output was left untrimmed (`budget_unfit`) | `hooks/fast-jev-output.ts` | debug-log audit 2026-11-12 |
 | Lowered the inline threshold from 10,000 to 3,000 estimated tokens: core caps inline Bash output at 15,000 characters (about 4,200 tokens), so nothing inline ever reached 10,000 | `src/output.ts` | debug-log audit 2026-11-12 |
+| When Jev's kept chunks overflow the persisted-output budget, keep the must-keep chunks (first, last, protected lines and their neighbours) plus the highest-scored rest that fit, unscored last, instead of returning the whole output: core would show only its ~2 KB head preview | `src/output.ts` | live repro 2026-11-12 |
 | Tests run on `claude plugin test` through `tests/kit.ts` instead of vitest; removed the tests for history | `tests/` | npm audit |
 
 ## What the detector misses

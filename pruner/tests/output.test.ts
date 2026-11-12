@@ -318,17 +318,26 @@ describe('budget for engine-saved output', () => {
   const withNeedle = (n: number, at: number) =>
     Array.from({ length: n }, (_, i) => (i === at ? 'ERROR worker-4 KeyError discount order=ORD-77341' : `INFO request ${i} ok`)).join('\n');
 
-  it('preserves the output when Jev keeps content beyond the budget', async () => {
+  it('keeps the highest-scored chunks when Jev keeps content beyond the budget', async () => {
     const output = withNeedle(3000, 1700);
     const onDecision = vi.fn();
     const r = await trimOutput(
       { command: 'tail -n +1 big.log', goal: 'g', output },
-      asker(0.9),
+      // c50 (lines 980-999) scores highest, c100 (lines 1980-1999) lowest; every chunk is above the drop floor.
+      { ask: async (_s: unknown, q: Record<string, unknown>) => ({
+        answers: Object.fromEntries(Object.keys(q).map((id) => [id, {
+          type: 'noul' as const, noul: id === 'c50' ? 0.95 : id === 'c100' ? 0.3 : 0.6,
+        }])),
+      }) },
       { maxChars: 4_000, onDecision },
     );
-    expect(r.output).toBe(output);
-    expect(r.trimmed).toBe(false);
-    expect(onDecision).toHaveBeenCalledWith('budget_unfit');
+    const lines = output.split('\n');
+    expect(r.trimmed).toBe(true);
+    expect(r.output.length).toBeLessThanOrEqual(4_000);
+    expect(r.output).toContain('ORD-77341');
+    expect(r.output).toContain(`${lines[990]}\n`);
+    expect(r.output).not.toContain(`${lines[1990]}\n`);
+    expect(onDecision).toHaveBeenCalledWith('pruned');
   });
 
   it('never drops an error line to meet the budget', async () => {
