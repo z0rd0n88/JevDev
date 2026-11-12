@@ -86,6 +86,14 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   return config;
 }
 
+/**
+ * The model-visible budget for output core saved to a file. Not capped at core's ~2,200-char preview: no trim fits
+ * that, so every saved output came back `budget_unfit`. The full output stays in the saved file.
+ */
+export function persistedBudget(persistedMaxChars: number, _previewChars?: number): number {
+  return Math.max(0, persistedMaxChars) || Infinity;
+}
+
 export function jevAsker(
   fetchFn: HookFetch,
   apiKey: string,
@@ -210,12 +218,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const id = event.tool_use_id && /^[\w-]+$/.test(event.tool_use_id) ? event.tool_use_id : Date.now();
       const path = persisted ?? `${archive}/bash-${id}.txt`;
       const footer = recoveryFooter(path);
-      const maxChars = persisted
-        ? Math.min(
-          Math.max(0, configured.persistedMaxChars) || Infinity,
-          answer.text?.length ?? Infinity,
-        )
-        : Infinity;
+      const maxChars = persisted ? persistedBudget(configured.persistedMaxChars, answer.text?.length) : Infinity;
       if (Number.isFinite(maxChars)) modelVisibleBudgetChars = maxChars;
       const visibleChars = Math.min(maxChars, answer.text?.length ?? combined.length);
       requestLimit = Math.min(

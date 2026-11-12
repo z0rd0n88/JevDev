@@ -1,6 +1,6 @@
 // The review's required changes, proven through the engine's own `$`: nothing here reaches a network or a real key.
 import { describe, expect, mock, test } from 'claude-code/testing';
-import { goalFromMessages } from '../hooks/fast-jev-output.js';
+import { goalFromMessages, persistedBudget } from '../hooks/fast-jev-output.js';
 
 const KEY = 'sk-or-v1-testkey';
 const noisy = Array.from({ length: 200 }, (_, i) => `${'cache '.repeat(55)}compiled module ${i} successfully`).join('\n');
@@ -244,6 +244,11 @@ describe('persisted output', () => {
     expect(result.stdout).toContain('lines omitted');
     expect(result.stderr).toBe('HOST-NOTICE');
     for (const { init } of w.fetches) expect(init.body!.includes('HOST-NOTICE')).toBe(false);
+  });
+
+  test('the budget is persistedMaxChars, not the host preview length', () => {
+    expect(persistedBudget(8_000, 2_200)).toBe(8_000);
+    expect(persistedBudget(0, 2_200)).toBe(Infinity);
   });
 });
 
