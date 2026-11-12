@@ -233,6 +233,16 @@ describe('limits', () => {
   });
 });
 
+describe('inline output', () => {
+  test('trims output under core 15,000-char inline cap', async ($, on) => {
+    const mid = Array.from({ length: 400 }, (_, i) => `[${i}/400] compiled src/mod_${i}.ts -> dist/mod_${i}.js ok`)
+      .join('\n').slice(0, 14_000);
+    world(on, mid);
+    const answer = await $.tool.call({ tool: 'Bash', command: 'npm test' });
+    expect((answer.result as { stdout: string }).stdout).toContain('lines omitted');
+  });
+});
+
 describe('persisted output', () => {
   test('keeps host notices in stderr and sends them nowhere', async ($, on) => {
     const w = world(on, noisy, {

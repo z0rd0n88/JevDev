@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from './kit.ts';
-import { classifyOutput, trimOutput } from '../src/output.js';
+import { classifyOutput, MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
 import { estimateStateTokens, estimateTokens } from '../src/jev.js';
 import type { JevQuestions, JevState } from '../src/jev.js';
 
@@ -140,8 +140,8 @@ describe('category scoring state', () => {
 
   it.each(['npm test', 'rg auth src', 'custom-command'])('keeps the strict token gate for %s', async command => {
     const ask = vi.fn(dropAll);
-    const output = Array(10_000).fill('cache').join('\n');
-    expect(estimateTokens(output)).toBe(10_000);
+    const output = Array(MIN_OUTPUT_TOKENS).fill('cache').join('\n');
+    expect(estimateTokens(output)).toBe(MIN_OUTPUT_TOKENS);
     expect((await trimOutput({ command, goal: '', output }, { ask })).output).toBe(output);
     expect(ask).not.toHaveBeenCalled();
     expect((await trimOutput({ command, goal: '', output: `${output}\ncache` }, { ask })).trimmed).toBe(true);

@@ -2,7 +2,7 @@ import { estimateStateTokens, estimateTokens, noulAnswer } from './jev.js';
 import type { JevAsker, JevQuestions } from './jev.js';
 import { classifyInformation, isProtectedLine, keepScore } from './retention.js';
 
-export const MIN_OUTPUT_TOKENS = 10_000;
+export const MIN_OUTPUT_TOKENS = 3_000;
 const DEFAULT_CHUNK_LINES = 20;
 const DEFAULT_KEEP_THRESHOLD = 0.5;
 const DEFAULT_MAX_STATE_TOKENS = 25_000;
