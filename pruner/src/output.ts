@@ -451,26 +451,52 @@ async function assemble(
   },
 ): Promise<TrimOutputResult> {
   const { keepThreshold, maxChars, asker, maxStateTokens } = opts;
+  const mustKeep = (index: number) =>
+    index === 0 ||
+    index === chunks.length - 1 ||
+    isProtectedLine(chunks[index]!.text) ||
+    isProtectedLine(chunks[index - 1]?.text.split('\n').at(-1) ?? '') ||
+    isProtectedLine(chunks[index + 1]?.text.split('\n')[0] ?? '');
   const keptIndexes = new Set<number>();
   for (let index = 0; index < chunks.length; index += 1) {
-    if (
-      omitted.has(index) ||
-      index === 0 ||
-      index === chunks.length - 1 ||
-      isProtectedLine(chunks[index]!.text) ||
-      isProtectedLine(chunks[index - 1]?.text.split('\n').at(-1) ?? '') ||
-      isProtectedLine(chunks[index + 1]?.text.split('\n')[0] ?? '') ||
-      keepScore(scores[index]!, keepThreshold)
-    ) {
+    if (omitted.has(index) || mustKeep(index) || keepScore(scores[index]!, keepThreshold)) {
       keptIndexes.add(index);
     }
   }
   const shrunk = new Map<number, RefinedChunk>();
   const fixed = new Map<number, Set<number>>();
   const render = (kept = keptIndexes) => renderOutput(input, chunks, kept, shrunk, opts.compactMarkers);
-  if (maxChars > 0 && render(omitted).length > maxChars) {
-    return untrimmed(input.output, chunks.length, scores, 'budget_unfit', opts.onDecision);
-  }
+  // maxChars is set only for output core saved to a file, where the alternative to a trim is core's ~2 KB head
+  // preview. So when the kept chunks overflow it, keep the must-keep chunks plus the highest-scored rest that fit.
+  // Unscored chunks rank last. ponytail: stops at the first chunk that does not fit; a knapsack fill if that wastes room.
+  const fillByScore = (): TrimOutputResult => {
+    const kept = new Set(chunks.map((_, index) => index).filter(mustKeep));
+    if (render(kept).length > maxChars) {
+      return untrimmed(input.output, chunks.length, scores, 'budget_unfit', opts.onDecision);
+    }
+    const rank = (index: number) => (omitted.has(index) ? -1 : scores[index]!);
+    const rest = chunks.map((_, index) => index).filter(index => !kept.has(index)).sort((a, b) => rank(b) - rank(a));
+    for (const index of rest) {
+      kept.add(index);
+      if (render(kept).length > maxChars) {
+        kept.delete(index);
+        break;
+      }
+    }
+    const output = render(kept);
+    opts.onDecision?.('pruned');
+    return {
+      output,
+      trimmed: true,
+      chunks: chunks.length,
+      kept: kept.size,
+      dropped: chunks.length - kept.size,
+      charsBefore: input.output.length,
+      charsAfter: output.length,
+      scores,
+    };
+  };
+  if (maxChars > 0 && render(omitted).length > maxChars) return fillByScore();
   if (maxChars > 0) {
     for (const index of [...keptIndexes].filter(index => !omitted.has(index)).sort(
       (a, b) => chunks[b]!.chars - chunks[a]!.chars,
@@ -498,14 +524,10 @@ async function assemble(
       }
       fixed.set(index, shrunk.get(index)?.keptLines ??
         new Set(keptIndexes.has(index) ? chunks[index]!.text.split('\n').map((_, at) => at) : []));
-      if (minimumRetainedChars(input, chunks, opts.compactMarkers, fixed) > maxChars) {
-        return untrimmed(input.output, chunks.length, scores, 'budget_unfit', opts.onDecision);
-      }
+      if (minimumRetainedChars(input, chunks, opts.compactMarkers, fixed) > maxChars) return fillByScore();
     }
   }
-  if (maxChars > 0 && render().length > maxChars) {
-    return untrimmed(input.output, chunks.length, scores, 'budget_unfit', opts.onDecision);
-  }
+  if (maxChars > 0 && render().length > maxChars) return fillByScore();
   const droppedIndexes = chunks
     .map((_, index) => index)
     .filter((index) => !keptIndexes.has(index));
