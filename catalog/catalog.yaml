@@ -1,0 +1,280 @@
+# Skill and agent catalog for the category-v1 router. Draft of 2026-11-20, tagged by hand.
+#
+# Each entry is {name, category} plus any field that differs from `defaults`:
+#   also    extra categories whose candidate pool also includes this entry
+#   action  prompt (short style text) | session (load the skill) | agent (recommend a subagent)
+#   invoke  auto (router may suggest) | user (only when the user names it) | internal (spawned by another skill)
+#   kind    skill | command | agent
+#   reason  manual | override | rule  (how the category was assigned)
+# Names match the live roster: my-skills install unprefixed into ~/.claude/skills; plugin
+# entries are <plugin>:<skill>. Live skills missing here fall back to categories.yaml keywords.
+defaults: {kind: skill, action: session, invoke: auto, reason: manual}
+
+sources:
+  my-skills:
+    - {name: addy-code, category: build-code}
+    - {name: addyosmani-api-and-interface-design, category: design-architecture}
+    - {name: addyosmani-browser-testing-with-devtools, category: test, also: [debug]}
+    - {name: addyosmani-ci-cd-and-automation, category: git-and-release}
+    - {name: addyosmani-code-review-and-quality, category: review-and-audit}
+    - {name: addyosmani-code-simplification, category: review-and-audit}
+    - {name: addyosmani-constraint-driven-development, category: plan-and-spec}
+    - {name: addyosmani-context-engineering, category: claude-setup}
+    - {name: addyosmani-debugging-and-error-recovery, category: debug}
+    - {name: addyosmani-deprecation-and-migration, category: build-code}
+    - {name: addyosmani-documentation-and-adrs, category: writing-and-communication, also: [design-architecture]}
+    - {name: addyosmani-doubt-driven-development, category: review-and-audit}
+    - {name: addyosmani-frontend-ui-engineering, category: frontend-and-design}
+    - {name: addyosmani-git-workflow-and-versioning, category: git-and-release}
+    - {name: addyosmani-idea-refine, category: think-and-research}
+    - {name: addyosmani-incremental-implementation, category: build-code}
+    - {name: addyosmani-interview-me, category: plan-and-spec}
+    - {name: addyosmani-observability-and-instrumentation, category: git-and-release}
+    - {name: addyosmani-performance-optimization, category: build-code}
+    - {name: addyosmani-planning-and-task-breakdown, category: plan-and-spec}
+    - {name: addyosmani-security-and-hardening, category: security}
+    - {name: addyosmani-shipping-and-launch, category: git-and-release}
+    - {name: addyosmani-source-driven-development, category: build-code}
+    - {name: addyosmani-spec-driven-development, category: plan-and-spec}
+    - {name: addyosmani-test-driven-development, category: test, also: [debug]}
+    - {name: addyosmani-using-agent-skills, category: claude-setup}
+    - {name: analogy, category: think-and-research}
+    - {name: audit-numeric-types, category: review-and-audit}
+    - {name: baton-pass, category: work-tracking}
+    - {name: baton-runner-managed, category: agents-and-automation, invoke: user}
+    - {name: big-next-job, category: agents-and-automation}
+    - {name: branch-off, category: agents-and-automation}
+    - {name: bro-down, category: writing-and-communication, action: prompt, invoke: user}
+    - {name: bro-next, category: writing-and-communication, action: prompt}
+    - {name: chiquita, category: writing-and-communication}
+    - {name: ci-parity-run, category: test, also: [git-and-release]}
+    - {name: claude-md-trim, category: claude-setup}
+    - {name: cloud-environment-setup, category: claude-setup}
+    - {name: code-cleaver, category: review-and-audit, invoke: user}
+    - {name: concept-fan, category: think-and-research}
+    - {name: daily-loop, category: claude-setup}
+    - {name: drift-status-check, category: work-tracking, also: [plan-and-spec]}
+    - {name: dw-review, category: review-and-audit}
+    - {name: dw-review-codex, category: review-and-audit}
+    - {name: finding-fixer, category: review-and-audit}
+    - {name: finding-fixer-codex, category: review-and-audit}
+    - {name: i-have-adhd, category: writing-and-communication, action: prompt, invoke: user}
+    - {name: inventory, category: claude-setup}
+    - {name: inversion, category: think-and-research}
+    - {name: iron-ham-split, category: git-and-release}
+    - {name: lateral, category: think-and-research}
+    - {name: mattpocock-codebase-design, category: design-architecture}
+    - {name: mattpocock-domain-modeling, category: design-architecture}
+    - {name: mattpocock-git-guardrails-claude-code, category: claude-setup, also: [git-and-release]}
+    - {name: mattpocock-grilling, category: think-and-research, also: [plan-and-spec]}
+    - {name: mattpocock-improve-codebase-architecture, category: design-architecture, invoke: user}
+    - {name: mattpocock-prototype, category: build-code}
+    - {name: mattpocock-research, category: think-and-research}
+    - {name: mattpocock-wizard, category: git-and-release}
+    - {name: mattpocock-writing-for-agents, category: claude-setup, also: [writing-and-communication]}
+    - {name: outline-transcript, category: work-tracking}
+    - {name: pr-merge-cleanup, category: git-and-release}
+    - {name: pr-review-router, category: review-and-audit}
+    - {name: provocation, category: think-and-research}
+    - {name: random-stimulus, category: think-and-research}
+    - {name: rekordbox-add, category: agents-and-automation}
+    - {name: remote-session-orchestration, category: agents-and-automation}
+    - {name: resolve-user-skill, category: claude-setup}
+    - {name: scamper, category: think-and-research}
+    - {name: six-hats, category: think-and-research}
+    - {name: skill-sheriff-cc, category: claude-setup, also: [review-and-audit]}
+    - {name: spec-tacular, category: plan-and-spec, invoke: user}
+    - {name: three-agent-wf, category: agents-and-automation}
+    - {name: vercel-agent-browser, category: agents-and-automation, also: [test]}
+    - {name: vercel-computer-use, category: agents-and-automation}
+    - {name: vista-improve-prompt, category: writing-and-communication}
+    - {name: weekly-wrapup, category: work-tracking, invoke: user}
+    - {name: worst-idea, category: think-and-research}
+    - {name: wrapup-specs, category: plan-and-spec, also: [work-tracking]}
+    - {name: zoom-out, category: design-architecture, invoke: user}
+    - {name: zord-baton-runner, category: agents-and-automation, invoke: user}
+    - {name: zord-multi-agent-review, category: review-and-audit}
+    - {name: zord-multi-agent-review-codex, category: review-and-audit}
+    - {name: zord-reasoned-review, category: review-and-audit, also: [think-and-research]}
+    - {name: zord-reasoned-review-codex, category: review-and-audit}
+    - {name: zord-teammate-handoff, category: agents-and-automation, invoke: user}
+    - {name: zord-total-review, category: review-and-audit, invoke: internal}
+    - {name: zord-total-review-scaffold, category: review-and-audit}
+    - {name: zord-total-review-init, category: review-and-audit, kind: command, invoke: user}
+
+  cloud-synced:
+    - {name: "10x-Team:10x-team", category: build-code}
+    - {name: "10x-Team:cto", category: design-architecture, also: [think-and-research]}
+    - {name: "10x-Team:dba", category: build-code, also: [design-architecture]}
+    - {name: "10x-Team:devops-engineer", category: git-and-release}
+    - {name: "10x-Team:engineering-manager", category: plan-and-spec}
+    - {name: "10x-Team:principal-architect", category: design-architecture}
+    - {name: "10x-Team:product-manager", category: plan-and-spec}
+    - {name: "10x-Team:qa-engineer", category: test}
+    - {name: "10x-Team:sde", category: build-code}
+    - {name: "10x-Team:security-engineer", category: security}
+    - {name: "10x-Team:senior-engineer", category: build-code, also: [review-and-audit]}
+    - {name: "10x-Team:sre", category: git-and-release}
+    - {name: "10x-Team:staff-engineer", category: design-architecture}
+    - {name: "42crunch-api-security-testing:42crunch-api-security-testing", category: security}
+    - {name: "42crunch-api-security-testing:42crunch-audit", category: security}
+    - {name: "42crunch-api-security-testing:42crunch-scan", category: security}
+    - {name: "42crunch-api-security-testing:42crunch-setup", category: security}
+    - {name: "42crunch-api-security-testing:generate-oas", category: build-code, also: [security]}
+    - {name: "6x6:6x6", category: writing-and-communication, action: prompt}
+    - {name: "agent-army:agent-army", category: agents-and-automation}
+    - {name: "agent-evaluation:agent-acceptance-plan", category: agents-and-automation, also: [test]}
+    - {name: "agent-evaluation:agent-cases-export", category: agents-and-automation, also: [test]}
+    - {name: "agent-evaluation:agent-outcomes-check", category: agents-and-automation, also: [review-and-audit]}
+    - {name: "agent-evaluation:agent-release-report", category: agents-and-automation}
+    - {name: "agent-guardrails:agent-authority-map", category: agents-and-automation, also: [security]}
+    - {name: "agent-guardrails:agent-boundaries-check", category: agents-and-automation, also: [security]}
+    - {name: "agent-guardrails:agent-controls-review", category: agents-and-automation, also: [security]}
+    - {name: "agent-verifier:verification", category: review-and-audit, also: [agents-and-automation]}
+    - {name: "agent-verifier:verify-language", category: review-and-audit}
+    - {name: "agent-verifier:verify-patterns", category: review-and-audit, also: [agents-and-automation]}
+    - {name: "agent-verifier:verify-quality", category: review-and-audit}
+    - {name: "agent-verifier:verify-security", category: security, also: [review-and-audit]}
+    - {name: "claude-tag-troubleshoot:config-guide", category: claude-setup}
+    - {name: "claude-tag-troubleshoot:debug-plugins", category: claude-setup}
+    - {name: "cowork-plugin-management:cowork-plugin-customizer", category: claude-setup}
+    - {name: "cowork-plugin-management:create-cowork-plugin", category: claude-setup}
+    - {name: "engineering:architecture", category: design-architecture}
+    - {name: "engineering:code-review", category: review-and-audit}
+    - {name: "engineering:debug", category: debug}
+    - {name: "engineering:deploy-checklist", category: git-and-release}
+    - {name: "engineering:documentation", category: writing-and-communication}
+    - {name: "engineering:incident-response", category: git-and-release, also: [debug]}
+    - {name: "engineering:standup", category: work-tracking}
+    - {name: "engineering:system-design", category: design-architecture}
+    - {name: "engineering:tech-debt", category: review-and-audit}
+    - {name: "engineering:testing-strategy", category: test}
+    - {name: "enterprise-search:digest", category: work-tracking}
+    - {name: "enterprise-search:knowledge-synthesis", category: think-and-research, also: [work-tracking]}
+    - {name: "enterprise-search:search", category: work-tracking}
+    - {name: "enterprise-search:search-strategy", category: work-tracking}
+    - {name: "enterprise-search:source-management", category: claude-setup}
+    - {name: "iceberg:edit", category: writing-and-communication}
+    - {name: "iceberg:jargon", category: writing-and-communication}
+    - {name: "iceberg:score", category: writing-and-communication, also: [review-and-audit]}
+    - {name: "iceberg:iceberg-edit", category: writing-and-communication, kind: agent, action: agent, invoke: internal}
+    - {name: "iceberg:iceberg-score", category: writing-and-communication, kind: agent, action: agent, invoke: internal}
+    - {name: "modern-web-guidance:chrome-extensions", category: frontend-and-design}
+    - {name: "modern-web-guidance:modern-web-guidance", category: frontend-and-design}
+    - {name: "productivity:memory-management", category: claude-setup}
+    - {name: "productivity:start", category: work-tracking}
+    - {name: "productivity:task-management", category: work-tracking}
+    - {name: "productivity:update", category: work-tracking}
+    - {name: "setup-audit:setup-audit", category: claude-setup}
+    - {name: "shepherd:shepherd", category: build-code, also: [review-and-audit]}
+    - {name: "shepherd:lens", category: review-and-audit, kind: agent, action: agent, invoke: internal}
+    - {name: "shepherd:reviewer", category: review-and-audit, kind: agent, action: agent, invoke: internal}
+    - {name: "small-business:ad-manager", category: business}
+    - {name: "small-business:ap-processor", category: business}
+    - {name: "small-business:brand-style", category: business}
+    - {name: "small-business:build-agent", category: business, also: [claude-setup]}
+    - {name: "small-business:build-connector", category: business, also: [build-code]}
+    - {name: "small-business:business-pulse", category: business}
+    - {name: "small-business:call-list", category: business}
+    - {name: "small-business:canva-creator", category: business}
+    - {name: "small-business:cash-flow-snapshot", category: business}
+    - {name: "small-business:close-month", category: business}
+    - {name: "small-business:content-strategy", category: business}
+    - {name: "small-business:contract-review", category: business}
+    - {name: "small-business:crm-autopilot", category: business}
+    - {name: "small-business:grant-rfp-writer", category: business, also: [writing-and-communication]}
+    - {name: "small-business:grow-pipeline", category: business}
+    - {name: "small-business:growth-pulse", category: business}
+    - {name: "small-business:hiring-screener", category: business}
+    - {name: "small-business:inbox-manager", category: business}
+    - {name: "small-business:inventory-planner", category: business}
+    - {name: "small-business:invoice-chase", category: business}
+    - {name: "small-business:job-post-builder", category: business}
+    - {name: "small-business:lead-finder", category: business}
+    - {name: "small-business:lead-triage", category: business}
+    - {name: "small-business:marketing-monday", category: business}
+    - {name: "small-business:monday-brief", category: business}
+    - {name: "small-business:month-end-prep", category: business}
+    - {name: "small-business:outreach-composer", category: business}
+    - {name: "small-business:pay-the-bills", category: business}
+    - {name: "small-business:payroll-prep", category: business}
+    - {name: "small-business:plan-payroll", category: business}
+    - {name: "small-business:proposal-builder", category: business}
+    - {name: "small-business:reactivate", category: business}
+    - {name: "small-business:report-builder", category: business}
+    - {name: "small-business:report-pack", category: business}
+    - {name: "small-business:restock", category: business}
+    - {name: "small-business:review-reputation", category: business}
+    - {name: "small-business:seo-ai-visibility", category: business}
+    - {name: "small-business:smb-onboard", category: business}
+    - {name: "small-business:smb-router", category: business}
+    - {name: "small-business:social-content-engine", category: business}
+    - {name: "small-business:speed-to-lead", category: business}
+    - {name: "small-business:tax-prep", category: business}
+    - {name: "small-business:tax-season-organizer", category: business}
+    - {name: "small-business:ticket-deflector", category: business}
+    - {name: "upstash:upstash", category: build-code}
+    - {name: "upstash:upstash-blob-js", category: build-code}
+    - {name: "upstash:upstash-box-cli", category: agents-and-automation}
+    - {name: "upstash:upstash-box-js", category: build-code, also: [agents-and-automation]}
+    - {name: "upstash:upstash-box-py", category: build-code, also: [agents-and-automation]}
+    - {name: "upstash:upstash-box-remote-work", category: agents-and-automation}
+    - {name: "upstash:upstash-cli", category: build-code}
+    - {name: "upstash:upstash-qstash-js", category: build-code}
+    - {name: "upstash:upstash-ratelimit-js", category: build-code, also: [security]}
+    - {name: "upstash:upstash-redis-js", category: build-code}
+    - {name: "upstash:upstash-redis-start", category: build-code}
+    - {name: "upstash:upstash-search-js", category: build-code}
+    - {name: "upstash:upstash-vector-js", category: build-code}
+    - {name: "upstash:upstash-workflow-js", category: build-code}
+    - {name: "zizi-skills:adversarial-review", category: review-and-audit, also: [think-and-research]}
+    - {name: "zizi-skills:app-store", category: business}
+    - {name: "zizi-skills:code-quality", category: review-and-audit}
+    - {name: "zizi-skills:data-analytics", category: frontend-and-design, also: [business]}
+    - {name: "zizi-skills:database-optimization", category: build-code, also: [design-architecture]}
+    - {name: "zizi-skills:debugging-and-error-recovery", category: debug}
+    - {name: "zizi-skills:deprecation-and-migration", category: build-code}
+    - {name: "zizi-skills:design-assets", category: frontend-and-design}
+    - {name: "zizi-skills:design-guide", category: frontend-and-design}
+    - {name: "zizi-skills:done", category: work-tracking}
+    - {name: "zizi-skills:explain", category: writing-and-communication, action: prompt, invoke: user}
+    - {name: "zizi-skills:find-skills", category: claude-setup}
+    - {name: "zizi-skills:first-customers", category: business}
+    - {name: "zizi-skills:frontend", category: frontend-and-design}
+    - {name: "zizi-skills:git-sync", category: git-and-release}
+    - {name: "zizi-skills:grant-writing", category: writing-and-communication}
+    - {name: "zizi-skills:handoff", category: work-tracking}
+    - {name: "zizi-skills:i18n", category: frontend-and-design}
+    - {name: "zizi-skills:idea-refine", category: think-and-research}
+    - {name: "zizi-skills:information-architecture", category: frontend-and-design}
+    - {name: "zizi-skills:infrastructure", category: git-and-release}
+    - {name: "zizi-skills:integrations", category: build-code}
+    - {name: "zizi-skills:marketing", category: business}
+    - {name: "zizi-skills:monitoring", category: git-and-release, also: [debug]}
+    - {name: "zizi-skills:orchestration", category: agents-and-automation}
+    - {name: "zizi-skills:plain-language", category: writing-and-communication}
+    - {name: "zizi-skills:planning", category: plan-and-spec}
+    - {name: "zizi-skills:project-config", category: git-and-release}
+    - {name: "zizi-skills:project-manager", category: work-tracking}
+    - {name: "zizi-skills:research-methods", category: think-and-research}
+    - {name: "zizi-skills:security-and-hardening", category: security}
+    - {name: "zizi-skills:service-architecture", category: design-architecture}
+    - {name: "zizi-skills:source-driven-development", category: build-code}
+    - {name: "zizi-skills:status-update", category: work-tracking}
+    - {name: "zizi-skills:tabler-ui", category: frontend-and-design}
+    - {name: "zizi-skills:tdd-skill", category: test, also: [debug]}
+
+  # Gold skills in benchmarks/pilot-labels-*.jsonl, named as on the roster those labels were
+  # written against. ClaudesMods:* later moved into my-skills (chiquita, pr-merge-cleanup,
+  # zord-multi-agent-review, zord-reasoned-review); idea-nebula, prd and swot-analysis did not.
+  benchmark-labels:
+    - {name: "superpowers:brainstorming", category: plan-and-spec, also: [think-and-research]}
+    - {name: "superpowers:systematic-debugging", category: debug}
+    - {name: "superpowers:test-driven-development", category: test, also: [debug]}
+    - {name: "ClaudesMods:chiquita", category: writing-and-communication}
+    - {name: "ClaudesMods:idea-nebula", category: think-and-research}
+    - {name: "ClaudesMods:multi-agent-review", category: review-and-audit}
+    - {name: "ClaudesMods:pr-merge-cleanup", category: git-and-release}
+    - {name: "ClaudesMods:prd", category: plan-and-spec}
+    - {name: "ClaudesMods:reasoned-review", category: review-and-audit, also: [think-and-research]}
+    - {name: "ClaudesMods:swot-analysis", category: think-and-research, also: [business]}

@@ -20,11 +20,17 @@ import time
 import yaml
 
 from jev_patterns import PRICE_PER_MILLION_INPUT, call, input_tokens, model_name
+import skill_catalog
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 ROUTER_VERSION = "balanced-shards-v2"
+CATEGORY_ROUTER_VERSION = "category-v1"
+CATEGORY_FLOOR = 0.35
+SECOND_CATEGORY = 0.25
+POOL_LIMIT = 32
+DESC_LIMIT = 240
 WIDE_LIMIT = 60
 SHORTLIST = 3
 SHARD_SIZE = 255
@@ -223,12 +229,7 @@ def wide_questions(entries: list[dict]) -> dict:
             "instructions": "Which of these skills, if any, is the right one to load to help with the user's latest request?",
             "criteria": {x["name"]: x["description"][:WIDE_LIMIT] for x in shard},
         }
-    questions.update(
-        {
-            f"gate::{key}": {"type": "noul", "instructions": text}
-            for key, text in GATES.items()
-        }
-    )
+    questions.update(gate_questions())
     return questions
 
 
@@ -279,6 +280,22 @@ def jev(questions: dict, request: str) -> tuple[dict, float]:
     return response, response["elapsed"]
 
 
+def gate_questions() -> dict:
+    return {
+        f"gate::{key}": {"type": "noul", "instructions": text}
+        for key, text in GATES.items()
+    }
+
+
+def gate_score(answers: dict) -> tuple[float, dict]:
+    """Average the GATES answers, inverting prose_suffices."""
+    values = {key: float(answers[f"gate::{key}"]["noul"]) for key in GATES}
+    gate = sum(
+        1 - value if key == "prose_suffices" else value for key, value in values.items()
+    ) / len(GATES)
+    return gate, values
+
+
 def suggest(request: str, entries: list[dict]) -> dict:
     by_name = {x["name"]: x for x in entries}
     first, first_seconds = jev(wide_questions(entries), request)
@@ -291,11 +308,7 @@ def suggest(request: str, entries: list[dict]) -> dict:
                 :SHORTLIST
             ]
         )
-    gate_values = {key: float(answers[f"gate::{key}"]["noul"]) for key in GATES}
-    gate = sum(
-        1 - value if key == "prose_suffices" else value
-        for key, value in gate_values.items()
-    ) / len(GATES)
+    gate, gate_values = gate_score(answers)
     result = {
         "suggestion": None,
         "model": first.get("model") or model_name(),
@@ -350,6 +363,119 @@ def suggest(request: str, entries: list[dict]) -> dict:
         result["input_tokens"] * PRICE_PER_MILLION_INPUT / 1_000_000
     )
     return result
+
+
+def category_questions(categories: dict) -> dict:
+    questions = gate_questions()
+    questions["category"] = {
+        "type": "choice",
+        "instructions": "Which area does the user's latest request belong to? Judge what the user wants done, not the words they use.",
+        "criteria": {key: " ".join(value["criteria"].split()) for key, value in categories.items()},
+    }
+    return questions
+
+
+def pool_questions(pool: list[dict]) -> dict:
+    questions = {
+        "which": {
+            "type": "choice",
+            "instructions": "Exactly one of these skills is the right one to load for the user's latest request. Which one? Read what each actually does, not just its name.",
+            "criteria": {x["name"]: x["description"][:DESC_LIMIT] for x in pool},
+        }
+    }
+    questions.update(
+        {
+            f"fits::{x['name']}": {
+                "type": "noul",
+                "instructions": f"Does the skill {x['name']!r} do the specific thing the user's request asks for? It is described as: {x['description'][:DESC_LIMIT]}",
+            }
+            for x in pool
+        }
+    )
+    return questions
+
+
+def suggest_by_category(
+    request: str, entries: list[dict], catalog_dir: Path = skill_catalog.CATALOG_DIR
+) -> dict:
+    """Request 1: gates plus a category Choice. Request 2: which plus fits over that category's pool.
+
+    Falls back to balanced-shards-v2 when the category answer is unsure, or when Jev picks
+    "other" while live skills sit uncategorized. Every extra request is counted in the result.
+    """
+    categories, catalog = skill_catalog.load(catalog_dir)
+    by_name = {x["name"]: x for x in entries}
+    grouped = skill_catalog.pools(skill_catalog.assign(entries, categories, catalog))
+    first, first_seconds = jev(category_questions(categories), request)
+    answers = first["answers"]
+    gate, gate_values = gate_score(answers)
+    ranked = sorted(
+        answers["category"]["probabilities"].items(), key=lambda pair: (-pair[1], pair[0])
+    )
+    result = {
+        "suggestion": None,
+        "model": first.get("model") or model_name(),
+        "categories": ranked[:3],
+        "chosen_categories": [],
+        "pool": [],
+        "fallback": False,
+        "gate": gate,
+        "gate_values": gate_values,
+        "fits": {},
+        "requests": 1,
+        "seconds": first_seconds,
+        "input_tokens": input_tokens(first),
+        "roster_sha256": roster_hash(entries),
+        "catalog_sha256": skill_catalog.digest(categories, catalog),
+        "router_version": CATEGORY_ROUTER_VERSION,
+    }
+
+    def finish() -> dict:
+        result["estimated_usd"] = (
+            result["input_tokens"] * PRICE_PER_MILLION_INPUT / 1_000_000
+        )
+        return result
+
+    if gate < GATE_THRESHOLD:
+        return finish()
+    chosen = [ranked[0][0]]
+    if len(ranked) > 1 and ranked[1][1] >= SECOND_CATEGORY:
+        chosen.append(ranked[1][0])
+    result["chosen_categories"] = chosen
+    names = list(dict.fromkeys(n for c in chosen for n in grouped.get(c, [])))
+    if ranked[0][1] < CATEGORY_FLOOR or (not names and grouped.get("uncategorized")):
+        flat = suggest(request, entries)
+        result.update(
+            {
+                "fallback": True,
+                "suggestion": flat["suggestion"],
+                "fits": flat["fits"],
+                "requests": result["requests"] + flat["requests"],
+                "seconds": result["seconds"] + flat["seconds"],
+                "input_tokens": result["input_tokens"] + flat["input_tokens"],
+            }
+        )
+        return finish()
+    if not names:
+        return finish()
+    pool = skill_catalog.rank(request, [by_name[n] for n in names], POOL_LIMIT)
+    result["pool"] = [x["name"] for x in pool]
+    second, second_seconds = jev(pool_questions(pool), request)
+    fits = {x["name"]: float(second["answers"][f"fits::{x['name']}"]["noul"]) for x in pool}
+    choice = second["answers"]["which"]["choice"]
+    result.update(
+        {
+            "suggestion": choice if fits.get(choice, 0.0) >= FITS_THRESHOLD else None,
+            "fits": fits,
+            "requests": 2,
+            "seconds": result["seconds"] + second_seconds,
+            "input_tokens": result["input_tokens"] + input_tokens(second),
+        }
+    )
+    return finish()
+
+
+ROUTERS = {ROUTER_VERSION: suggest, CATEGORY_ROUTER_VERSION: suggest_by_category}
 
 
 def score(rows: list[dict]) -> dict:
@@ -645,7 +771,9 @@ def benchmark(
     model: str,
     host: str,
     limit: int | None = None,
+    router: str = ROUTER_VERSION,
 ) -> dict:
+    route = ROUTERS[router]
     labels = [
         json.loads(line)
         for line in labels_path.read_text().splitlines()
@@ -689,7 +817,7 @@ def benchmark(
         row.get("host") != host
         or row.get("agent_model") != model
         or (row.get("routing") or {}).get("roster_sha256") != expected_hash
-        or (row.get("routing") or {}).get("router_version") != ROUTER_VERSION
+        or (row.get("routing") or {}).get("router_version") != router
         for row in existing.values()
     ):
         raise ValueError(
@@ -705,7 +833,7 @@ def benchmark(
         ):
             continue
         if observed is None:
-            routing = suggest(row["text"], entries)
+            routing = route(row["text"], entries)
             observed = {
                 **row,
                 "routing": routing,
@@ -751,14 +879,14 @@ def benchmark(
     }
 
 
-def run_prompt_hook(host: str) -> None:
+def run_prompt_hook(host: str, router: str = ROUTER_VERSION) -> None:
     """Route a host UserPromptSubmit event and return a non-blocking hint."""
     try:
         event = json.load(sys.stdin)
         prompt = event.get("prompt") if isinstance(event, dict) else None
         if not isinstance(prompt, str) or not prompt.strip():
             return
-        routing = suggest(prompt, host_roster(host))
+        routing = ROUTERS[router](prompt, host_roster(host))
         suggestion = routing.get("suggestion")
         if not suggestion:
             return
@@ -788,8 +916,10 @@ def run_prompt_hook(host: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=("claude", "codex"), default="claude")
+    parser.add_argument("--router", choices=tuple(ROUTERS), default=ROUTER_VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("measure")
+    sub.add_parser("catalog", help="category-v1 coverage of the live roster")
     route = sub.add_parser("route")
     route.add_argument("request")
     sub.add_parser("hook", help="handle a host UserPromptSubmit event from stdin")
@@ -809,7 +939,7 @@ def main() -> None:
     sample.add_argument("--per-session", type=int, default=3)
     args = parser.parse_args()
     if args.command == "hook":
-        run_prompt_hook(args.host)
+        run_prompt_hook(args.host, args.router)
         return
     if args.command == "sample":
         transcript_dir = args.transcripts or (
@@ -840,7 +970,14 @@ def main() -> None:
         model = args.model or ("haiku" if args.host == "claude" else "gpt-6-luna")
         print(
             json.dumps(
-                benchmark(args.labels, args.observations, model, args.host, args.limit),
+                benchmark(
+                    args.labels,
+                    args.observations,
+                    model,
+                    args.host,
+                    args.limit,
+                    args.router,
+                ),
                 indent=2,
             )
         )
@@ -848,8 +985,16 @@ def main() -> None:
     entries = host_roster(args.host)
     if args.command == "measure":
         print(json.dumps(inspect_roster(entries), indent=2, sort_keys=True))
+    elif args.command == "catalog":
+        categories, catalog = skill_catalog.load()
+        report = skill_catalog.coverage(entries, categories, catalog)
+        report["request_1_utf8_bytes"] = len(
+            json.dumps(category_questions(categories), ensure_ascii=False).encode()
+        )
+        print(json.dumps(report, indent=2, sort_keys=True))
     elif args.command == "route":
-        print(json.dumps(suggest(args.request, entries), indent=2, sort_keys=True))
+        route = ROUTERS[args.router]
+        print(json.dumps(route(args.request, entries), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

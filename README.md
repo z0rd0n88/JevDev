@@ -104,6 +104,31 @@ python3 tests/test_router.py
 
 `skill_router.py` has no agy host; `skill_router_agy.py` wraps the same router for agy: `python3 skill_router_agy.py {measure | route REQUEST | hook}`. It discovers skills under `$GEMINI_HOME` (`config/skills`, `antigravity-cli/skills`, `antigravity-cli/builtin/skills`, and `config/plugins/*/skills/*/SKILL.md`), and `hook` answers an agy `PreInvocation` event with an `ephemeralMessage`, failing open. Nothing wires it in, and no test covers it.
 
+### category-v1
+
+`--router category-v1` routes through the fixed categories in `catalog/categories.yaml`. `balanced-shards-v2` stays the default for `route`, `hook` and `benchmark`.
+
+1. **Request 1** asks the three gate questions plus one Choice over about 15 categories, using each category's written criteria. A gate below `GATE_THRESHOLD` stops here, so an abstention costs only this small request.
+2. **Request 2** runs only over the chosen category's pool. The pool adds the runner-up category when that scores at least `SECOND_CATEGORY`. It asks `which` plus `fits::<skill>` for each member, using descriptions clipped to `DESC_LIMIT`. A pool larger than `POOL_LIMIT` is trimmed in code first, by an inverse-frequency ranker over names and descriptions.
+3. **Fallback.** If the top category scores below `CATEGORY_FLOOR`, the router reruns as `balanced-shards-v2`, adds those requests to the totals and records `fallback: true`. It does the same when Jev picks `other` while live skills are uncategorized.
+
+`catalog/catalog.yaml` gives each skill:
+
+- a category, plus optional `also` categories;
+- an `action`: `prompt`, `session` or `agent`;
+- an `invoke` value. Only `auto` entries are routed: `user` marks skills that must not self-trigger, and `internal` marks subagents spawned by another skill.
+
+Live skills missing from the catalog get a keyword-rule category, and are reported as uncategorized when no single category clearly leads. Results add `categories`, `chosen_categories`, `pool`, `fallback` and `catalog_sha256`. Editing the catalog changes routing as much as changing the roster does, so start a new observations file.
+
+```bash
+python3 skill_router.py --host claude catalog
+python3 skill_router.py --host claude --router category-v1 route 'Find why this total is wrong.'
+python3 tests/test_skill_catalog.py
+python3 tests/test_router_category.py
+```
+
+`catalog` reports coverage of the live roster without a Jev call. It lists skills tagged by rule, skills left uncategorized, catalog entries missing from the roster, pool sizes, and the size of request 1. Tag every uncategorized skill in `catalog.yaml` before you benchmark.
+
 ## Authored pilot
 
 `benchmarks/pilot-labels-claude.jsonl` and `benchmarks/pilot-labels-codex.jsonl` each contain 100 self-contained, manually authored prompts: 60 with skill labels and 40 labeled `null`. Labels were fixed before agent observations. These fixtures exercise the routing and measurement protocol; results from them do not estimate accuracy on ordinary user requests. The two hosts use separate live rosters, labels, observations, and scores.
@@ -116,7 +141,11 @@ python3 skill_router.py --host claude benchmark benchmarks/pilot-labels-claude.j
 python3 skill_router.py --host codex benchmark benchmarks/pilot-labels-codex.jsonl .local/pilot-observations-codex.jsonl
 python3 skill_router.py --host claude score .local/pilot-observations-claude.jsonl
 python3 skill_router.py --host codex score .local/pilot-observations-codex.jsonl
+python3 skill_router.py --host claude --router category-v1 benchmark benchmarks/pilot-labels-claude.jsonl .local/pilot-observations-claude-category-v1.jsonl
+python3 skill_router.py --host claude score .local/pilot-observations-claude-category-v1.jsonl
 ```
+
+Compare `category-v1` with `balanced-shards-v2` only when both observation files share a roster hash. Each router needs its own observations file.
 
 Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex's first observed `SKILL.md` read count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm, so the same command resumes interrupted work. A changed roster, router version, host, or agent model requires a new observations file.
 
