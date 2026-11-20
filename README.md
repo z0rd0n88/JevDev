@@ -98,9 +98,9 @@ python3 tests/test_compact.py
 `ask_jev_files.py` asks Jev typed questions about files, one chosen file, or one situation, and prints JSON, so an agent branches on numbers without reading the files. Whole files only (no chunking). It runs from any repo: "the repo" is the git toplevel of the current directory, and paths in the output are repo-relative.
 
 ```
-python3 /home/alex/JevDev/ask_jev_files.py files [-r] -q QUESTIONS_JSON PATH_OR_GLOB...
-python3 /home/alex/JevDev/ask_jev_files.py pick  -q QUESTION_TEXT PATH...
-python3 /home/alex/JevDev/ask_jev_files.py ask   -q QUESTIONS_JSON [--state TEXT] [--paths P...] [--command CMD]
+python3 /home/alex/Projects/JevDev/ask_jev_files.py files [-r] -q QUESTIONS_JSON PATH_OR_GLOB...
+python3 /home/alex/Projects/JevDev/ask_jev_files.py pick  -q QUESTION_TEXT PATH...
+python3 /home/alex/Projects/JevDev/ask_jev_files.py ask   -q QUESTIONS_JSON [--state TEXT] [--paths P...] [--command CMD]
 ```
 
 - `files` runs one Jev call per file (16 at a time) and returns `results` sorted by path, `skipped` with a reason each, `calls`, and `model`. A directory without `-r` means `dir/*` (dotfiles excluded); up to 255 files, each under 240 000 bytes. Empty, binary, lock, and `node_modules`-style files are skipped.
@@ -208,8 +208,8 @@ Runs the gates, advisor, and skills in every repo on this machine from the prima
 1. `python3 install_user.py` (idempotent; `--home` and `--jevdev` override the defaults). It merges `~/.codex/hooks.json`, writes the `jevdev` hook in `~/.gemini/config/hooks.json`, links the four skills, links `jev` and `jev-selfcheck` into `~/.local/bin` (`bin/jev` lands with JevDev#52, so run the installer after that merge), and prints the Claude snippet. A real file or directory at a skill or `~/.local/bin` path is refused (exit 2); nothing changes. `~/.local/bin/jev` and `jev-selfcheck` must not be regular files when it runs, so move an existing copy aside first.
 2. Claude: open a ClaudeConfig PR with the printed snippet (`~/.claude/settings.json` hooks, the `CLAUDE_CODE_PLUGIN_DIRS` entry that loads `pruner/`, two `Edit` deny rules for `pruner/` and `with_jev_key.sh`, plus two `ln -s` lines). Merge and pull it while no Claude session runs; running sessions rewrite that file.
 3. Codex: open `codex` anywhere and trust the new hooks in `/hooks`.
-4. After every merge here: `git -C ~/JevDev pull` (the hooks run that checkout; keep it on `main`).
-5. Check: `python3 check_install.py --scope user` and `jev-selfcheck` (offline; fake curl, no network). Live smoke: `bash smoke.sh <claude|agy> bash --user` (runs from `/home/alex/BotHaus`).
+4. After every merge here: `git -C ~/Projects/JevDev pull` (the hooks run that checkout; keep it on `main`).
+5. Check: `python3 check_install.py --scope user` and `jev-selfcheck` (offline; fake curl, no network). Live smoke: `bash smoke.sh <claude|agy> bash --user` (runs from `/home/alex/Projects/BotHaus`).
 
 ```bash
 python3 tests/test_check_install.py

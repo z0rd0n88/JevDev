@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Live smoke: run one canned prompt in a host, then print the newest matching log row.
 # Usage: smoke.sh <claude|codex|agy> <bash|write|compact|ask|ask-skill|skill> [--read] [--user]
-# --user runs from /home/alex/BotHaus (no project hooks) and reads ~/.local/state/jevdev/.
+# --user runs from /home/alex/Projects/BotHaus (no project hooks) and reads ~/.local/state/jevdev/.
 # --read skips the host run and prints the newest row for that host and feature.
 # Evidence goes in the PR body; nothing under .local/ is ever committed.
 set -u
@@ -17,7 +17,7 @@ for a in "$@"; do
 done
 
 workdir="$here"; logdir="${JEV_LOG_DIR:-${CLAUDE_PROJECT_DIR:-$here}/.local}"
-if [ "$user_scope" -eq 1 ]; then workdir=/home/alex/BotHaus; logdir="${JEV_LOG_DIR:-$HOME/.local/state/jevdev}"; fi
+if [ "$user_scope" -eq 1 ]; then workdir=/home/alex/Projects/BotHaus; logdir="${JEV_LOG_DIR:-$HOME/.local/state/jevdev}"; fi
 case "$feature" in compact) file=compact.jsonl ;; *) file=sentinel.jsonl ;; esac
 
 # Print the newest row of $file for this host and feature with ts >= $1; exit 0 on a hit, 1 otherwise.
