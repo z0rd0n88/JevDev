@@ -101,7 +101,7 @@ def test_every_bash_block_runs_with_stub_and_prints_answers():
             "TYPESAFE_API_KEY": "stub",
         }
         for block in bash_blocks():
-            script = block.replace("/home/alex/JevDev/", f"{ROOT}/")
+            script = block.replace("/home/alex/Projects/JevDev/", f"{ROOT}/")
             proc = subprocess.run(
                 ["bash", "-c", script], cwd=ROOT, env=env, capture_output=True, text=True, timeout=90
             )

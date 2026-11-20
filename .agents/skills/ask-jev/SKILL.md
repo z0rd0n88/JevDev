@@ -14,7 +14,7 @@ Do not paste content you already have; that costs output tokens. Pass `--paths` 
 Run from the repo you are judging. `with_jev_key.sh` loads the Jev key in any repo.
 
 ```text
-bash /home/alex/JevDev/with_jev_key.sh python3 /home/alex/JevDev/ask_jev_files.py <subcommand> ...
+bash /home/alex/Projects/JevDev/with_jev_key.sh python3 /home/alex/Projects/JevDev/ask_jev_files.py <subcommand> ...
 ```
 
 ```text
@@ -44,19 +44,19 @@ Write questions against `files["path"]`, `output`, or your own field names.
 Triage a failure: run the tests through `--command` and classify the failure before choosing a fix.
 
 ```bash
-bash /home/alex/JevDev/with_jev_key.sh python3 /home/alex/JevDev/ask_jev_files.py ask --command 'python3 tests/test_sentinel.py' -q '{"kind":{"type":"choice","instructions":"What kind of failure is `output`?","criteria":{"bug_in_code":"The code under test misbehaves","wrong_test":"The test asserts the wrong expectation","environment":"A missing dependency, key, file, or service","none":"The run passed","other":"Something else"}},"flaky":{"type":"noul","instructions":"Is `output` a real failure rather than a flaky one?","criteria":{"true":"Deterministic assertion or error text","false":"Timeouts, network, or ordering that could pass on retry"}}}'
+bash /home/alex/Projects/JevDev/with_jev_key.sh python3 /home/alex/Projects/JevDev/ask_jev_files.py ask --command 'python3 tests/test_sentinel.py' -q '{"kind":{"type":"choice","instructions":"What kind of failure is `output`?","criteria":{"bug_in_code":"The code under test misbehaves","wrong_test":"The test asserts the wrong expectation","environment":"A missing dependency, key, file, or service","none":"The run passed","other":"Something else"}},"flaky":{"type":"noul","instructions":"Is `output` a real failure rather than a flaky one?","criteria":{"true":"Deterministic assertion or error text","false":"Timeouts, network, or ordering that could pass on retry"}}}'
 ```
 
 Judge a diff: put `git diff` through `--command` and score its risk before committing.
 
 ```bash
-bash /home/alex/JevDev/with_jev_key.sh python3 /home/alex/JevDev/ask_jev_files.py ask --command 'git diff' -q '{"risk":{"type":"score","instructions":"How risky is `output`?","criteria":["Isolated, tested","Some callers","Security sensitive, no tests"]},"needs_review":{"type":"noul","instructions":"Should a human review this diff before it ships?","criteria":{"true":"Touches auth, money, deletion, or untested paths","false":"Local, covered by tests, easy to revert"}}}'
+bash /home/alex/Projects/JevDev/with_jev_key.sh python3 /home/alex/Projects/JevDev/ask_jev_files.py ask --command 'git diff' -q '{"risk":{"type":"score","instructions":"How risky is `output`?","criteria":["Isolated, tested","Some callers","Security sensitive, no tests"]},"needs_review":{"type":"noul","instructions":"Should a human review this diff before it ships?","criteria":{"true":"Touches auth, money, deletion, or untested paths","false":"Local, covered by tests, easy to revert"}}}'
 ```
 
 Classify a request: pass the customer's words as `--state` with the relevant paths and decide bug or expected.
 
 ```bash
-bash /home/alex/JevDev/with_jev_key.sh python3 /home/alex/JevDev/ask_jev_files.py ask --state 'A customer wrote in: every time I click Export on the invoices page I get an error and no file downloads.' --paths scope_sentinel.py README.md -q '{"kind":{"type":"choice","instructions":"What kind of request is `text`?","criteria":{"bug":"Something that should work is broken","expected_behavior":"The product works as designed","config_change":"A setting or environment change fixes it","code_change":"A new or changed feature is needed","product_decision":"A policy or design call is needed first","other":"Something else"}},"clear_enough":{"type":"noul","instructions":"Is `text` clear enough to plan without asking a question first?","criteria":{"true":"A concrete symptom or change with the affected area named","false":"Missing the what, where, or why"}}}'
+bash /home/alex/Projects/JevDev/with_jev_key.sh python3 /home/alex/Projects/JevDev/ask_jev_files.py ask --state 'A customer wrote in: every time I click Export on the invoices page I get an error and no file downloads.' --paths scope_sentinel.py README.md -q '{"kind":{"type":"choice","instructions":"What kind of request is `text`?","criteria":{"bug":"Something that should work is broken","expected_behavior":"The product works as designed","config_change":"A setting or environment change fixes it","code_change":"A new or changed feature is needed","product_decision":"A policy or design call is needed first","other":"Something else"}},"clear_enough":{"type":"noul","instructions":"Is `text` clear enough to plan without asking a question first?","criteria":{"true":"A concrete symptom or change with the affected area named","false":"Missing the what, where, or why"}}}'
 ```
 
 ## Rules

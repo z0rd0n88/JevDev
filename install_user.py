@@ -219,7 +219,7 @@ def main(argv=None):
         description="Install the Jev gates, advisor, and skills at user scope."
     )
     ap.add_argument("--home", default=os.environ.get("HOME") or str(Path.home()))
-    ap.add_argument("--jevdev", default="/home/alex/JevDev")
+    ap.add_argument("--jevdev", default="/home/alex/Projects/JevDev")
     ap.add_argument(
         "--remove", action="store_true", help="delete what this installer owns"
     )
