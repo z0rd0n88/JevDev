@@ -1,107 +1,114 @@
-# Skill and agent catalog for the category-v1 router. Draft of 2026-11-20, tagged by hand.
+# Skill and agent catalog for the category-v1 router. Draft of 2026-11-21, tagged by hand.
 #
 # Each entry is {name, category} plus any field that differs from `defaults`:
-#   also    extra categories whose candidate pool also includes this entry
-#   action  prompt (short style text) | session (load the skill) | agent (recommend a subagent)
-#   invoke  auto (router may suggest) | user (only when the user names it) | internal (spawned by another skill)
-#   kind    skill | command | agent
-#   reason  manual | override | rule  (how the category was assigned)
-# Names match the live roster: my-skills install unprefixed into ~/.claude/skills; plugin
-# entries are <plugin>:<skill>. Live skills missing here fall back to categories.yaml keywords.
+#   also      extra categories whose candidate pool also includes this entry
+#   action    prompt (short style text) | session (load the skill) | agent (recommend a subagent)
+#   invoke    auto (router may suggest) | user (only when the user names it: skillOverrides
+#             user-invocable-only, disable-model-invocation, aliases) | internal (spawned by
+#             another skill) | "off" (skillOverrides off; quote it, YAML reads bare off as false)
+#   kind      skill | command | agent. Agents get their own namespace, so a skill and an agent
+#             may share a name (code-tour).
+#   projects  repos whose .claude/agents carry this agent
+#   reason    manual | override | rule  (how the category was assigned)
+# Names match the live roster: plugin skills are <plugin>:<skill> (my-skills installs as the
+# my-skills@z0rd0nlander plugin); loose ~/.claude/skills are unprefixed. Live skills missing
+# here fall back to categories.yaml keywords; `skill_router.py catalog` lists them.
 defaults: {kind: skill, action: session, invoke: auto, reason: manual}
 
 sources:
+  # z0rd0n88/my-skills, loaded as the my-skills@z0rd0nlander plugin.
   my-skills:
-    - {name: addy-code, category: build-code}
-    - {name: addyosmani-api-and-interface-design, category: design-architecture}
-    - {name: addyosmani-browser-testing-with-devtools, category: test, also: [debug]}
-    - {name: addyosmani-ci-cd-and-automation, category: git-and-release}
-    - {name: addyosmani-code-review-and-quality, category: review-and-audit}
-    - {name: addyosmani-code-simplification, category: review-and-audit}
-    - {name: addyosmani-constraint-driven-development, category: plan-and-spec}
-    - {name: addyosmani-context-engineering, category: claude-setup}
-    - {name: addyosmani-debugging-and-error-recovery, category: debug}
-    - {name: addyosmani-deprecation-and-migration, category: build-code}
-    - {name: addyosmani-documentation-and-adrs, category: writing-and-communication, also: [design-architecture]}
-    - {name: addyosmani-doubt-driven-development, category: review-and-audit}
-    - {name: addyosmani-frontend-ui-engineering, category: frontend-and-design}
-    - {name: addyosmani-git-workflow-and-versioning, category: git-and-release}
-    - {name: addyosmani-idea-refine, category: think-and-research}
-    - {name: addyosmani-incremental-implementation, category: build-code}
-    - {name: addyosmani-interview-me, category: plan-and-spec}
-    - {name: addyosmani-observability-and-instrumentation, category: git-and-release}
-    - {name: addyosmani-performance-optimization, category: build-code}
-    - {name: addyosmani-planning-and-task-breakdown, category: plan-and-spec}
-    - {name: addyosmani-security-and-hardening, category: security}
-    - {name: addyosmani-shipping-and-launch, category: git-and-release}
-    - {name: addyosmani-source-driven-development, category: build-code}
-    - {name: addyosmani-spec-driven-development, category: plan-and-spec}
-    - {name: addyosmani-test-driven-development, category: test, also: [debug]}
-    - {name: addyosmani-using-agent-skills, category: claude-setup}
-    - {name: analogy, category: think-and-research}
-    - {name: audit-numeric-types, category: review-and-audit}
-    - {name: baton-pass, category: work-tracking}
-    - {name: baton-runner-managed, category: agents-and-automation, invoke: user}
-    - {name: big-next-job, category: agents-and-automation}
-    - {name: branch-off, category: agents-and-automation}
-    - {name: bro-down, category: writing-and-communication, action: prompt, invoke: user}
-    - {name: bro-next, category: writing-and-communication, action: prompt}
-    - {name: chiquita, category: writing-and-communication}
-    - {name: ci-parity-run, category: test, also: [git-and-release]}
-    - {name: claude-md-trim, category: claude-setup}
-    - {name: cloud-environment-setup, category: claude-setup}
-    - {name: code-cleaver, category: review-and-audit, invoke: user}
-    - {name: concept-fan, category: think-and-research}
-    - {name: daily-loop, category: claude-setup}
-    - {name: drift-status-check, category: work-tracking, also: [plan-and-spec]}
-    - {name: dw-review, category: review-and-audit}
-    - {name: dw-review-codex, category: review-and-audit}
-    - {name: finding-fixer, category: review-and-audit}
-    - {name: finding-fixer-codex, category: review-and-audit}
-    - {name: i-have-adhd, category: writing-and-communication, action: prompt, invoke: user}
-    - {name: inventory, category: claude-setup}
-    - {name: inversion, category: think-and-research}
-    - {name: iron-ham-split, category: git-and-release}
-    - {name: lateral, category: think-and-research}
-    - {name: mattpocock-codebase-design, category: design-architecture}
-    - {name: mattpocock-domain-modeling, category: design-architecture}
-    - {name: mattpocock-git-guardrails-claude-code, category: claude-setup, also: [git-and-release]}
-    - {name: mattpocock-grilling, category: think-and-research, also: [plan-and-spec]}
-    - {name: mattpocock-improve-codebase-architecture, category: design-architecture, invoke: user}
-    - {name: mattpocock-prototype, category: build-code}
-    - {name: mattpocock-research, category: think-and-research}
-    - {name: mattpocock-wizard, category: git-and-release}
-    - {name: mattpocock-writing-for-agents, category: claude-setup, also: [writing-and-communication]}
-    - {name: outline-transcript, category: work-tracking}
-    - {name: pr-merge-cleanup, category: git-and-release}
-    - {name: pr-review-router, category: review-and-audit}
-    - {name: provocation, category: think-and-research}
-    - {name: random-stimulus, category: think-and-research}
-    - {name: rekordbox-add, category: agents-and-automation}
-    - {name: remote-session-orchestration, category: agents-and-automation}
-    - {name: resolve-user-skill, category: claude-setup}
-    - {name: scamper, category: think-and-research}
-    - {name: six-hats, category: think-and-research}
-    - {name: skill-sheriff-cc, category: claude-setup, also: [review-and-audit]}
-    - {name: spec-tacular, category: plan-and-spec, invoke: user}
-    - {name: three-agent-wf, category: agents-and-automation}
-    - {name: vercel-agent-browser, category: agents-and-automation, also: [test]}
-    - {name: vercel-computer-use, category: agents-and-automation}
-    - {name: vista-improve-prompt, category: writing-and-communication}
-    - {name: weekly-wrapup, category: work-tracking, invoke: user}
-    - {name: worst-idea, category: think-and-research}
-    - {name: wrapup-specs, category: plan-and-spec, also: [work-tracking]}
-    - {name: zoom-out, category: design-architecture, invoke: user}
-    - {name: zord-baton-runner, category: agents-and-automation, invoke: user}
-    - {name: zord-multi-agent-review, category: review-and-audit}
-    - {name: zord-multi-agent-review-codex, category: review-and-audit}
-    - {name: zord-reasoned-review, category: review-and-audit, also: [think-and-research]}
-    - {name: zord-reasoned-review-codex, category: review-and-audit}
-    - {name: zord-teammate-handoff, category: agents-and-automation, invoke: user}
-    - {name: zord-total-review, category: review-and-audit, invoke: internal}
-    - {name: zord-total-review-scaffold, category: review-and-audit}
-    - {name: zord-total-review-init, category: review-and-audit, kind: command, invoke: user}
+    - {name: "my-skills:addy-code", category: build-code}
+    - {name: "my-skills:addyosmani-api-and-interface-design", category: design-architecture}
+    - {name: "my-skills:addyosmani-browser-testing-with-devtools", category: test, also: [debug]}
+    - {name: "my-skills:addyosmani-ci-cd-and-automation", category: git-and-release}
+    - {name: "my-skills:addyosmani-code-review-and-quality", category: review-and-audit}
+    - {name: "my-skills:addyosmani-code-simplification", category: review-and-audit}
+    - {name: "my-skills:addyosmani-constraint-driven-development", category: plan-and-spec}
+    - {name: "my-skills:addyosmani-context-engineering", category: claude-setup}
+    - {name: "my-skills:addyosmani-debugging-and-error-recovery", category: debug}
+    - {name: "my-skills:addyosmani-deprecation-and-migration", category: build-code}
+    - {name: "my-skills:addyosmani-documentation-and-adrs", category: writing-and-communication, also: [design-architecture]}
+    - {name: "my-skills:addyosmani-doubt-driven-development", category: review-and-audit}
+    - {name: "my-skills:addyosmani-frontend-ui-engineering", category: frontend-and-design}
+    - {name: "my-skills:addyosmani-git-workflow-and-versioning", category: git-and-release}
+    - {name: "my-skills:addyosmani-idea-refine", category: think-and-research}
+    - {name: "my-skills:addyosmani-incremental-implementation", category: build-code}
+    - {name: "my-skills:addyosmani-interview-me", category: plan-and-spec}
+    - {name: "my-skills:addyosmani-observability-and-instrumentation", category: git-and-release}
+    - {name: "my-skills:addyosmani-performance-optimization", category: build-code}
+    - {name: "my-skills:addyosmani-planning-and-task-breakdown", category: plan-and-spec}
+    - {name: "my-skills:addyosmani-security-and-hardening", category: security}
+    - {name: "my-skills:addyosmani-shipping-and-launch", category: git-and-release}
+    - {name: "my-skills:addyosmani-source-driven-development", category: build-code}
+    - {name: "my-skills:addyosmani-spec-driven-development", category: plan-and-spec}
+    - {name: "my-skills:addyosmani-test-driven-development", category: test, also: [debug]}
+    - {name: "my-skills:addyosmani-using-agent-skills", category: claude-setup}
+    - {name: "my-skills:analogy", category: think-and-research}
+    - {name: "my-skills:audit-numeric-types", category: review-and-audit}
+    - {name: "my-skills:baton-pass", category: work-tracking}
+    - {name: "my-skills:baton-runner-managed", category: agents-and-automation, invoke: user}
+    - {name: "my-skills:big-next-job", category: agents-and-automation}
+    - {name: "my-skills:branch-off", category: agents-and-automation}
+    - {name: "my-skills:bro-down", category: writing-and-communication, action: prompt, invoke: user}
+    - {name: "my-skills:bro-next", category: writing-and-communication, action: prompt}
+    - {name: "my-skills:chiquita", category: writing-and-communication}
+    - {name: "my-skills:ci-parity-run", category: test, also: [git-and-release]}
+    - {name: "my-skills:claude-md-trim", category: claude-setup}
+    - {name: "my-skills:cloud-environment-setup", category: claude-setup}
+    - {name: "my-skills:code-cleaver", category: review-and-audit, invoke: user}
+    - {name: "my-skills:concept-fan", category: think-and-research}
+    - {name: "my-skills:daily-loop", category: claude-setup}
+    - {name: "my-skills:drift-status-check", category: work-tracking, also: [plan-and-spec], invoke: user}
+    - {name: "my-skills:dw-review", category: review-and-audit}
+    - {name: "my-skills:dw-review-codex", category: review-and-audit, invoke: "off"}
+    - {name: "my-skills:finding-fixer", category: review-and-audit}
+    - {name: "my-skills:finding-fixer-codex", category: review-and-audit, invoke: "off"}
+    - {name: "my-skills:i-have-adhd", category: writing-and-communication, action: prompt, invoke: user}
+    - {name: "my-skills:inventory", category: claude-setup}
+    - {name: "my-skills:inversion", category: think-and-research}
+    - {name: "my-skills:iron-ham-split", category: git-and-release}
+    - {name: "my-skills:lateral", category: think-and-research}
+    - {name: "my-skills:mattpocock-codebase-design", category: design-architecture}
+    - {name: "my-skills:mattpocock-domain-modeling", category: design-architecture}
+    - {name: "my-skills:mattpocock-git-guardrails-claude-code", category: claude-setup, also: [git-and-release]}
+    - {name: "my-skills:mattpocock-grilling", category: think-and-research, also: [plan-and-spec]}
+    - {name: "my-skills:mattpocock-improve-codebase-architecture", category: design-architecture, invoke: user}
+    - {name: "my-skills:mattpocock-prototype", category: build-code}
+    - {name: "my-skills:mattpocock-research", category: think-and-research}
+    - {name: "my-skills:mattpocock-wizard", category: git-and-release}
+    - {name: "my-skills:mattpocock-writing-for-agents", category: claude-setup, also: [writing-and-communication]}
+    - {name: "my-skills:outline-transcript", category: work-tracking}
+    - {name: "my-skills:pr-merge-cleanup", category: git-and-release}
+    - {name: "my-skills:pr-review-router", category: review-and-audit}
+    - {name: "my-skills:provocation", category: think-and-research}
+    - {name: "my-skills:random-stimulus", category: think-and-research}
+    - {name: "my-skills:rekordbox-add", category: agents-and-automation}
+    - {name: "my-skills:remote-session-orchestration", category: agents-and-automation}
+    - {name: "my-skills:resolve-user-skill", category: claude-setup}
+    - {name: "my-skills:scamper", category: think-and-research}
+    - {name: "my-skills:six-hats", category: think-and-research}
+    - {name: "my-skills:skill-sheriff-cc", category: claude-setup, also: [review-and-audit]}
+    - {name: "my-skills:spec-tacular", category: plan-and-spec, invoke: user}
+    - {name: "my-skills:three-agent-wf", category: agents-and-automation}
+    - {name: "my-skills:vercel-agent-browser", category: agents-and-automation, also: [test]}
+    - {name: "my-skills:vercel-computer-use", category: agents-and-automation}
+    - {name: "my-skills:vista-improve-prompt", category: writing-and-communication}
+    - {name: "my-skills:weekly-wrapup", category: work-tracking, invoke: user}
+    - {name: "my-skills:worst-idea", category: think-and-research}
+    - {name: "my-skills:wrapup-specs", category: plan-and-spec, also: [work-tracking]}
+    - {name: "my-skills:zoom-out", category: design-architecture, invoke: user}
+    - {name: "my-skills:zord-baton-runner", category: agents-and-automation, invoke: user}
+    - {name: "my-skills:zord-multi-agent-review", category: review-and-audit}
+    - {name: "my-skills:zord-multi-agent-review-codex", category: review-and-audit}
+    - {name: "my-skills:zord-reasoned-review", category: review-and-audit, also: [think-and-research]}
+    - {name: "my-skills:zord-reasoned-review-codex", category: review-and-audit}
+    - {name: "my-skills:zord-teammate-handoff", category: agents-and-automation, invoke: user}
+    - {name: "my-skills:zord-total-review", category: review-and-audit, invoke: internal}
+    - {name: "my-skills:zord-total-review-scaffold", category: review-and-audit}
+    - {name: "my-skills:zord-total-review-init", category: review-and-audit, kind: command, invoke: user}
 
+  # Plugin skills synced into claude.ai cloud sessions (several are disabled locally).
   cloud-synced:
     - {name: "10x-Team:10x-team", category: build-code}
     - {name: "10x-Team:cto", category: design-architecture, also: [think-and-research]}
@@ -264,8 +271,243 @@ sources:
     - {name: "zizi-skills:tabler-ui", category: frontend-and-design}
     - {name: "zizi-skills:tdd-skill", category: test, also: [debug]}
 
-  # Gold skills in benchmarks/pilot-labels-*.jsonl, named as on the roster those labels were
-  # written against. ClaudesMods:* later moved into my-skills (chiquita, pr-merge-cleanup,
+
+  # ~/.claude/skills: loose user skills (z0rd0n88/ClaudeConfig). Unprefixed on the live roster.
+  # Symlinked ones were tagged from their upstream SKILL.md; # by-name marks those with no description here.
+  claude-config:
+    - {name: ask-jev, category: think-and-research}
+    - {name: baton-runner, category: agents-and-automation, invoke: user}
+    - {name: build-lil-things, category: build-code}  # by-name
+    - {name: claude-handoff, category: work-tracking, invoke: "off"}
+    - {name: code-review, category: review-and-audit}
+    - {name: computer-use, category: agents-and-automation}  # by-name
+    - {name: domain-modeling, category: design-architecture}
+    - {name: fascc-review, category: review-and-audit, also: [security]}
+    - {name: find-skills, category: claude-setup}  # by-name
+    - {name: gemini-api-dev, category: build-code, invoke: "off"}  # by-name
+    - {name: gemini-live-api-dev, category: build-code, invoke: "off"}  # by-name
+    - {name: grill-me, category: think-and-research, also: [plan-and-spec], invoke: user}
+    - {name: grill-with-docs, category: plan-and-spec, also: [design-architecture], invoke: user}
+    - {name: handoff, category: work-tracking, invoke: user}
+    - {name: hindsight2020, category: work-tracking, also: [review-and-audit], invoke: user}
+    - {name: hyper-jev, category: build-code, also: [agents-and-automation]}
+    - {name: idea, category: work-tracking, also: [think-and-research]}
+    - {name: ideas, category: work-tracking, invoke: user}
+    - {name: improve-codebase-architecture, category: design-architecture, invoke: user}
+    - {name: loop-me, category: plan-and-spec, invoke: user}
+    - {name: mempalace, category: claude-setup}  # by-name
+    - {name: mempalace-recall, category: claude-setup}  # by-name
+    - {name: mempalace-task, category: claude-setup, also: [work-tracking]}  # by-name
+    - {name: orca-cli, category: agents-and-automation}  # by-name
+    - {name: orchestration, category: agents-and-automation}  # by-name
+    - {name: paxel-remote-setup, category: claude-setup}
+    - {name: planning-with-files, category: plan-and-spec}  # by-name
+    - {name: pr, category: git-and-release, also: [writing-and-communication], invoke: "off"}
+    - {name: prototype, category: build-code}
+    - {name: research, category: think-and-research}
+    - {name: research-spike-and-poc, category: think-and-research, also: [build-code]}  # by-name
+    - {name: retro, category: work-tracking, invoke: user}
+    - {name: reverse-engineer-anything, category: think-and-research, invoke: "off"}  # by-name
+    - {name: security-review, category: security, invoke: "off"}
+    - {name: setup-matt-pocock-skills, category: claude-setup, invoke: "off"}
+    - {name: tdd, category: test, also: [debug]}
+    - {name: to-questionnaire, category: plan-and-spec, invoke: user}
+    - {name: triage, category: work-tracking, invoke: user}
+    - {name: wait-what, category: writing-and-communication, invoke: user}
+    - {name: wayfinder, category: plan-and-spec, also: [agents-and-automation], invoke: user}
+    - {name: wizard, category: git-and-release}
+    - {name: writing-for-agents, category: claude-setup, also: [writing-and-communication]}
+    - {name: writing-fragments, category: writing-and-communication, invoke: user}
+    - {name: writing-shape, category: writing-and-communication, invoke: user}
+
+  # ~/.claude/skills/disabled: parked below the scan depth, so never on the live roster.
+  # gemini-api-dev and gemini-live-api-dev also sit in skills/ and are listed there.
+  skills-disabled:
+    - {name: agent-introspection-debugging, category: debug, also: [agents-and-automation]}
+    - {name: ai-regression-testing, category: test}
+    - {name: api-design, category: design-architecture}
+    - {name: architecture-decision-records, category: design-architecture, also: [writing-and-communication]}
+    - {name: ask-matt, category: claude-setup, invoke: user}
+    - {name: autoresearch, category: agents-and-automation, also: [think-and-research]}
+    - {name: backend-patterns, category: build-code}
+    - {name: benchmark, category: build-code, also: [test]}
+    - {name: cli-cast, category: build-code}
+    - {name: cli-just, category: build-code}
+    - {name: code-polish, category: review-and-audit}
+    - {name: code-review-openskills, category: review-and-audit}
+    - {name: code-simplify, category: review-and-audit}
+    - {name: code-tour, category: writing-and-communication, also: [design-architecture]}
+    - {name: codebase-design, category: design-architecture}
+    - {name: codebase-onboarding, category: writing-and-communication, also: [design-architecture]}
+    - {name: create-skill, category: claude-setup}
+    - {name: database-migrations, category: build-code}
+    - {name: debrief, category: work-tracking}
+    - {name: deployment-patterns, category: git-and-release}
+    - {name: diagnosing-bugs, category: debug}
+    - {name: docker-patterns, category: git-and-release}
+    - {name: error-handling, category: build-code}
+    - {name: ffmpeg-skill, category: agents-and-automation}
+    - {name: git-guardrails-claude-code, category: claude-setup, also: [git-and-release]}
+    - {name: git-workflow, category: git-and-release}
+    - {name: github-ops, category: git-and-release}
+    - {name: grilling, category: think-and-research, also: [plan-and-spec], invoke: user}
+    - {name: hf-cli, category: build-code, invoke: "off"}  # by-name
+    - {name: implement, category: build-code, invoke: user}
+    - {name: implement-spec, category: build-code, invoke: user}
+    - {name: knowledge-ops, category: claude-setup}
+    - {name: migrate-to-shoehorn, category: build-code, invoke: "off"}
+    - {name: normalize-line-endings, category: git-and-release}
+    - {name: production-audit, category: git-and-release, also: [review-and-audit]}
+    - {name: python-patterns, category: build-code}
+    - {name: scaffold-exercises, category: build-code}
+    - {name: setup-pre-commit, category: git-and-release}
+    - {name: setup-ts-deep-modules, category: design-architecture, invoke: user}
+    - {name: solana-dev, category: build-code}
+    - {name: suggest-session-name, category: work-tracking}
+    - {name: summarize-session, category: work-tracking}
+    - {name: tdd-workflow, category: test}
+    - {name: teach, category: think-and-research, invoke: "off"}
+    - {name: three-agent-wf, category: agents-and-automation}  # by-name
+    - {name: to-spec, category: plan-and-spec, invoke: user}
+    - {name: to-tickets, category: plan-and-spec, also: [work-tracking], invoke: user}
+    - {name: ui-ux-pro-max, category: frontend-and-design}
+    - {name: web-design-guidelines, category: frontend-and-design, also: [review-and-audit]}
+    - {name: work, category: build-code, invoke: user}
+    - {name: writing-beats, category: writing-and-communication, invoke: user}
+
+  # Skills from enabled local plugins whose source repos are public (ThinkTime, idea-autopsy,
+  # session-stickler, yt-eval). Other enabled plugins are untagged; `catalog` lists their skills.
+  local-plugins:
+    - {name: "ThinkTime:hackathon-idea-nebula", category: think-and-research}
+    - {name: "ThinkTime:hackathon-judge", category: think-and-research, also: [review-and-audit]}
+    - {name: "ThinkTime:i-cant-even", category: design-architecture, also: [think-and-research], invoke: user}
+    - {name: "ThinkTime:idea-nebula", category: think-and-research, also: [business]}
+    - {name: "ThinkTime:idea-nebula-product", category: think-and-research}
+    - {name: "ThinkTime:idea-panel", category: think-and-research}
+    - {name: "ThinkTime:improve-me", category: claude-setup}
+    - {name: "ThinkTime:swot-analysis", category: think-and-research, also: [business]}
+    - {name: "ThinkTime:versus", category: claude-setup, also: [test], invoke: user}
+    - {name: "idea-autopsy:evaluate-proposal-harsh", category: review-and-audit, also: [think-and-research]}
+    - {name: "idea-autopsy:iterate-to-v2", category: writing-and-communication, also: [think-and-research]}
+    - {name: "idea-autopsy:strategize-from-verdict", category: think-and-research}
+    - {name: "idea-autopsy:stress-test-idea", category: think-and-research, also: [review-and-audit]}
+    - {name: "session-stickler:session-airspace", category: agents-and-automation}
+    - {name: "session-stickler:session-relay", category: agents-and-automation}
+    - {name: "session-stickler:session-switcher", category: agents-and-automation, also: [work-tracking]}
+    - {name: "yt-eval:yteval", category: think-and-research, also: [writing-and-communication], invoke: "off"}
+
+  # ~/.claude/agents-parked (ClaudeConfig). `projects` lists repos whose .claude/agents carry a copy.
+  agents-parked:
+    - {name: accessibility-tester, category: test, also: [frontend-and-design], kind: agent, action: agent}
+    - {name: agent-installer, category: claude-setup, kind: agent, action: agent}
+    - {name: agent-organizer, category: agents-and-automation, kind: agent, action: agent}
+    - {name: ai-engineer, category: build-code, kind: agent, action: agent}
+    - {name: ai-writing-auditor, category: writing-and-communication, also: [review-and-audit], kind: agent, action: agent}
+    - {name: api-architect, category: design-architecture, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: api-designer, category: design-architecture, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: api-documenter, category: writing-and-communication, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: api-reviewer, category: review-and-audit, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: architect-reviewer, category: review-and-audit, also: [design-architecture], kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: backend-developer, category: build-code, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: blockchain-developer, category: build-code, kind: agent, action: agent}
+    - {name: build-engineer, category: git-and-release, kind: agent, action: agent}
+    - {name: build-error-resolver, category: debug, kind: agent, action: agent}
+    - {name: business-analyst, category: plan-and-spec, also: [business], kind: agent, action: agent}
+    - {name: chaos-engineer, category: test, kind: agent, action: agent}
+    - {name: code-reviewer, category: review-and-audit, kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe]}
+    - {name: code-simplifier, category: review-and-audit, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: code-tour, category: writing-and-communication, kind: agent, action: agent}
+    - {name: codebase-orchestrator, category: agents-and-automation, also: [review-and-audit], kind: agent, action: agent}
+    - {name: command-expert, category: claude-setup, kind: agent, action: agent}
+    - {name: commit-guardian, category: git-and-release, also: [review-and-audit], kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: communication-excellence-coach, category: writing-and-communication, kind: agent, action: agent}
+    - {name: competitive-analyst, category: business, also: [think-and-research], kind: agent, action: agent}
+    - {name: compliance-auditor, category: security, also: [business], kind: agent, action: agent}
+    - {name: content-marketer, category: business, kind: agent, action: agent}
+    - {name: context-manager, category: agents-and-automation, kind: agent, action: agent}
+    - {name: critical-thinking, category: think-and-research, also: [review-and-audit], kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe]}
+    - {name: database-optimizer, category: build-code, kind: agent, action: agent}
+    - {name: database-reviewer, category: review-and-audit, also: [build-code], kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: debugger, category: debug, kind: agent, action: agent}
+    - {name: demonstrate-understanding, category: think-and-research, kind: agent, action: agent}
+    - {name: diagram-architect, category: design-architecture, also: [writing-and-communication], kind: agent, action: agent}
+    - {name: docker-expert, category: git-and-release, kind: agent, action: agent}
+    - {name: docs-lookup, category: build-code, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: documentation-engineer, category: writing-and-communication, kind: agent, action: agent}
+    - {name: documentation-expert, category: writing-and-communication, kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe]}
+    - {name: e2e-runner, category: test, kind: agent, action: agent}
+    - {name: error-coordinator, category: debug, kind: agent, action: agent}
+    - {name: error-detective, category: debug, kind: agent, action: agent}
+    - {name: expo-react-native-expert, category: frontend-and-design, also: [build-code], kind: agent, action: agent}
+    - {name: fastapi-developer, category: build-code, kind: agent, action: agent}
+    - {name: fastapi-reviewer, category: review-and-audit, kind: agent, action: agent}
+    - {name: financial-precision-auditor, category: review-and-audit, kind: agent, action: agent}
+    - {name: fintech-engineer, category: build-code, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: frontend-developer, category: frontend-and-design, kind: agent, action: agent}
+    - {name: fullstack-developer, category: build-code, also: [frontend-and-design], kind: agent, action: agent}
+    - {name: knowledge-synthesizer, category: think-and-research, kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe]}
+    - {name: kotlin-build-resolver, category: debug, kind: agent, action: agent}
+    - {name: kotlin-mcp-expert, category: build-code, kind: agent, action: agent}
+    - {name: kotlin-reviewer, category: review-and-audit, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: kotlin-specialist, category: build-code, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: legal-advisor, category: business, kind: agent, action: agent}
+    - {name: llm-architect, category: design-architecture, kind: agent, action: agent}
+    - {name: market-researcher, category: business, also: [think-and-research], kind: agent, action: agent}
+    - {name: migrator, category: build-code, kind: agent, action: agent}
+    - {name: mobile-app-developer, category: frontend-and-design, also: [build-code], kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+    - {name: mobile-developer, category: frontend-and-design, also: [build-code], kind: agent, action: agent}
+    - {name: model-evaluator, category: think-and-research, kind: agent, action: agent}
+    - {name: multi-agent-coordinator, category: agents-and-automation, kind: agent, action: agent}
+    - {name: payment-integration, category: build-code, kind: agent, action: agent}
+    - {name: penetration-tester, category: security, kind: agent, action: agent}
+    - {name: performance-optimizer, category: build-code, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: planner, category: plan-and-spec, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: postgres-pro, category: build-code, kind: agent, action: agent}
+    - {name: product-strategist, category: business, also: [plan-and-spec], kind: agent, action: agent}
+    - {name: project-idea-validator, category: think-and-research, kind: agent, action: agent}
+    - {name: prompt-builder, category: writing-and-communication, kind: agent, action: agent}
+    - {name: prompt-engineer, category: writing-and-communication, kind: agent, action: agent}
+    - {name: python-pro, category: build-code, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: python-reviewer, category: review-and-audit, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: qa-expert, category: test, kind: agent, action: agent}
+    - {name: quant-analyst, category: business, kind: agent, action: agent}
+    - {name: react-specialist, category: frontend-and-design, kind: agent, action: agent}
+    - {name: readme-generator, category: writing-and-communication, kind: agent, action: agent}
+    - {name: refactor-cleaner, category: review-and-audit, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: research-orchestrator, category: think-and-research, also: [agents-and-automation], kind: agent, action: agent}
+    - {name: search-specialist, category: think-and-research, kind: agent, action: agent}
+    - {name: security-engineer, category: security, kind: agent, action: agent}
+    - {name: security-reviewer, category: security, also: [review-and-audit], kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe]}
+    - {name: seo-specialist, category: business, kind: agent, action: agent}
+    - {name: silent-failure-hunter, category: review-and-audit, kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe]}
+    - {name: simple-app-idea-generator, category: think-and-research, kind: agent, action: agent}
+    - {name: sql-pro, category: build-code, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: tdd-guide, category: test, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: technical-writer, category: writing-and-communication, kind: agent, action: agent}
+    - {name: test-automator, category: test, kind: agent, action: agent}
+    - {name: test-engineer, category: test, kind: agent, action: agent}
+    - {name: type-design-analyzer, category: review-and-audit, kind: agent, action: agent}
+    - {name: typescript-pro, category: build-code, kind: agent, action: agent}
+    - {name: ui-designer, category: frontend-and-design, kind: agent, action: agent}
+    - {name: ui-ux-tester, category: test, also: [frontend-and-design], kind: agent, action: agent}
+    - {name: unused-code-cleaner, category: review-and-audit, kind: agent, action: agent, projects: [z0rd0n88/friendex]}
+    - {name: web-performance-auditor, category: frontend-and-design, also: [review-and-audit], kind: agent, action: agent}
+    - {name: websocket-engineer, category: build-code, kind: agent, action: agent, projects: [VistaMarkets/vbe]}
+
+  # Agents found only in project .claude/agents. The VistaMarkets/vbe ones were tagged by name.
+  project-agents:
+    - {name: adr-consistency-reviewer, category: review-and-audit, also: [design-architecture], kind: agent, action: agent, projects: [VistaMarkets/vbe]}  # by-name
+    - {name: code-architect, category: design-architecture, kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe, jesssalomon/cyphervex]}
+    - {name: code-explorer, category: design-architecture, kind: agent, action: agent, projects: [z0rd0n88/friendex, VistaMarkets/vbe, jesssalomon/cyphervex]}
+    - {name: crypto-security-reviewer, category: security, also: [review-and-audit], kind: agent, action: agent, projects: [VistaMarkets/vbe]}  # by-name
+    - {name: docker-image-drift-reviewer, category: review-and-audit, also: [git-and-release], kind: agent, action: agent, projects: [VistaMarkets/vbe]}  # by-name
+    - {name: flyway-exposed-parity-reviewer, category: review-and-audit, kind: agent, action: agent, projects: [VistaMarkets/vbe]}  # by-name
+    - {name: numeric-precision-reviewer, category: review-and-audit, kind: agent, action: agent, projects: [VistaMarkets/vbe]}  # by-name
+    - {name: solana-mint-decimals-reviewer, category: review-and-audit, also: [security], kind: agent, action: agent, projects: [VistaMarkets/vbe]}  # by-name
+
+  # Gold skills in benchmarks/pilot-labels-claude.jsonl, named as on the roster those labels were
+  # written against (superpowers is now disabled; ClaudesMods is gone). The remapped draft is
+  # benchmarks/pilot-labels-claude-2026-11.jsonl. ClaudesMods:* later moved into my-skills (chiquita, pr-merge-cleanup,
   # zord-multi-agent-review, zord-reasoned-review); idea-nebula, prd and swot-analysis did not.
   benchmark-labels:
     - {name: "superpowers:brainstorming", category: plan-and-spec, also: [think-and-research]}

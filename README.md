@@ -112,11 +112,13 @@ python3 tests/test_router.py
 2. **Request 2** runs only over the chosen category's pool. The pool adds the runner-up category when that scores at least `SECOND_CATEGORY`. It asks `which` plus `fits::<skill>` for each member, using descriptions clipped to `DESC_LIMIT`. A pool larger than `POOL_LIMIT` is trimmed in code first, by an inverse-frequency ranker over names and descriptions.
 3. **Fallback.** If the top category scores below `CATEGORY_FLOOR`, the router reruns as `balanced-shards-v2`, adds those requests to the totals and records `fallback: true`. It does the same when Jev picks `other` while live skills are uncategorized.
 
-`catalog/catalog.yaml` gives each skill:
+`catalog/catalog.yaml` covers `my-skills` (as the `my-skills:` plugin), loose `~/.claude/skills`, parked `skills/disabled` and `agents-parked` from ClaudeConfig, project-only agents, four public local plugins and the cloud-synced roster. It gives each skill:
 
 - a category, plus optional `also` categories;
 - an `action`: `prompt`, `session` or `agent`;
-- an `invoke` value. Only `auto` entries are routed: `user` marks skills that must not self-trigger, and `internal` marks subagents spawned by another skill.
+- an `invoke` value. Only `auto` entries are routed: `user` marks skills that must not self-trigger, `internal` marks subagents spawned by another skill, and `"off"` mirrors `skillOverrides`.
+
+Agents carry `kind: agent` and sit in their own namespace, so a skill and an agent can share a name. Each agent lists the repos whose `.claude/agents` hold a copy in `projects`. Parked skills and agents are tagged but not yet routable: routing reads only the live roster.
 
 Live skills missing from the catalog get a keyword-rule category, and are reported as uncategorized when no single category clearly leads. Results add `categories`, `chosen_categories`, `pool`, `fallback` and `catalog_sha256`. Editing the catalog changes routing as much as changing the roster does, so start a new observations file.
 
@@ -148,6 +150,13 @@ python3 skill_router.py --host claude score .local/pilot-observations-claude-cat
 Compare `category-v1` with `balanced-shards-v2` only when both observation files share a roster hash. Each router needs its own observations file.
 
 `--reuse-arms` copies the baseline and oracle loads from another router's observations instead of rerunning them. Neither arm sees the router's suggestion, so a second router costs 100 agent sessions instead of 300. The source file must match the host, agent model, roster hash and labels, or the run stops before any session starts. Copied rows record `arms_reused_from`, and `score` counts them as `rows_with_reused_arms`. Both routers then share the same baseline and oracle samples, so their `routed` results are compared against identical controls.
+
+`benchmarks/pilot-labels-claude-2026-11.jsonl` is a draft remap of the Claude labels to the November 2026 roster. It keeps the same prompts and IDs. The original gold skills are gone: `ClaudesMods` was split into `my-skills` and `ThinkTime`, and `superpowers` is disabled. So each covered row now records `previous_gold`, `remap` (`rename` or `substitute`), `remap_confidence` and any `alternatives`. The four substitutes are judgment calls; review them before you run:
+
+- **`ClaudesMods:prd`**, high confidence.
+- **`superpowers:systematic-debugging`**, high confidence.
+- **`superpowers:brainstorming`**, medium confidence.
+- **`superpowers:test-driven-development`**, ambiguous: `tdd` and `my-skills:addyosmani-test-driven-development` overlap.
 
 Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex's first observed `SKILL.md` read count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm, so the same command resumes interrupted work. A changed roster, router version, host, or agent model requires a new observations file.
 

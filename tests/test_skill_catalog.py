@@ -1,5 +1,6 @@
 """The shipped catalog loads, covers every category, and assigns with provenance."""
 
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -25,7 +26,7 @@ def expect_error(directory: Path, needle: str) -> None:
 
 def main():
     categories, catalog = skill_catalog.load()
-    assert len(catalog) >= 259, len(catalog)
+    assert len(catalog) >= 474, len(catalog)
     assert "other" in categories
     every = skill_catalog.pools(
         skill_catalog.assign(
@@ -33,8 +34,15 @@ def main():
         )
     )
     assert set(every) == set(categories) - {"other"}, set(categories) - set(every)
-    assert "spec-tacular" not in every["plan-and-spec"]
-    assert "shepherd:lens" not in every["review-and-audit"]
+    assert "my-skills:spec-tacular" not in every["plan-and-spec"]
+    assert "agent:shepherd:lens" not in every["review-and-audit"]
+    assert "agent:debugger" in every["debug"]
+    assert "security-review" not in every["security"]  # skillOverrides off
+    assert catalog["code-tour"]["kind"] == "skill" and catalog["agent:code-tour"]["kind"] == "agent"
+    labels = Path(__file__).parents[1] / "benchmarks/pilot-labels-claude-2026-11.jsonl"
+    for row in map(json.loads, labels.read_text().splitlines()):
+        gold = row["gold"]
+        assert gold is None or catalog[gold]["invoke"] == "auto", gold
     assert "superpowers:test-driven-development" in every["debug"]
 
     assert skill_catalog.rule_category(
@@ -42,7 +50,7 @@ def main():
     )[0] == "business"
     assert skill_catalog.rule_category("x", "Fix a bug", categories)[0] is None
     assigned = skill_catalog.assign(
-        [entry("chiquita", "debug failing errors"), entry("mystery", "nothing to see")],
+        [entry("my-skills:chiquita", "debug failing errors"), entry("mystery", "nothing to see")],
         categories,
         catalog,
     )
@@ -62,7 +70,7 @@ def main():
     assert skill_catalog.rank("anything", pool, 5) == pool
 
     report = skill_catalog.coverage(
-        [entry("chiquita"), entry("mystery")], categories, catalog
+        [entry("my-skills:chiquita"), entry("mystery")], categories, catalog
     )
     assert report["from_catalog"] == 1 and report["uncategorized"] == ["mystery"]
     assert "ClaudesMods:prd" in report["catalog_entries_not_live"]
@@ -78,6 +86,8 @@ def main():
             ("    - {name: zz, category: other}\n", "unknown category"),
             ("    - {name: zz, category: debug, colour: red}\n", "Unknown catalog fields"),
             ("    - {name: zz, category: debug, action: launch}\n", "unknown action"),
+            ("    - {name: zz, category: debug, invoke: off}\n", "unknown invoke False"),
+            ("    - {name: zz, category: debug, kind: agent, projects: [friendex]}\n", "owner/repo"),
         ):
             (directory / "catalog.yaml").write_text(
                 original.replace("  my-skills:\n", "  my-skills:\n" + broken, 1)

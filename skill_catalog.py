@@ -22,9 +22,10 @@ import yaml
 CATALOG_DIR = Path(__file__).resolve().parent / "catalog"
 KINDS = {"skill", "command", "agent"}
 ACTIONS = {"prompt", "session", "agent"}
-INVOKES = {"auto", "user", "internal"}
+INVOKES = {"auto", "user", "internal", "off"}
 REASONS = {"manual", "override", "rule"}
-ENTRY_FIELDS = {"name", "category", "also", "kind", "action", "invoke", "reason"}
+ENTRY_FIELDS = {"name", "category", "also", "kind", "action", "invoke", "reason", "projects"}
+AGENT_PREFIX = "agent:"
 MIN_RULE_HITS = 2
 MIN_RULE_MARGIN = 1
 STOP_WORDS = set(
@@ -38,7 +39,11 @@ def tokens(text: str) -> list[str]:
 
 
 def load(directory: Path = CATALOG_DIR) -> tuple[dict, dict]:
-    """Return (categories, catalog): {key: {criteria, keywords}} and {name: entry}."""
+    """Return (categories, catalog): {key: {criteria, keywords}} and {name: entry}.
+
+    Agents are keyed "agent:<name>" so a skill and an agent may share a name; live-roster
+    lookups by skill name therefore never match an agent.
+    """
     categories = yaml.safe_load((directory / "categories.yaml").read_text())["categories"]
     if "other" not in categories:
         raise ValueError("categories.yaml needs an 'other' category")
@@ -56,10 +61,13 @@ def load(directory: Path = CATALOG_DIR) -> tuple[dict, dict]:
         for row in rows:
             if set(row) - ENTRY_FIELDS:
                 raise ValueError(f"Unknown catalog fields {sorted(set(row) - ENTRY_FIELDS)} in {row.get('name')!r}")
-            entry = {**defaults, "also": [], **row, "source": source}
+            entry = {**defaults, "also": [], "projects": [], **row, "source": source}
             name = entry["name"]
-            if name in catalog:
-                raise ValueError(f"Duplicate catalog entry {name!r}")
+            key = AGENT_PREFIX + name if entry["kind"] == "agent" else name
+            if key in catalog:
+                raise ValueError(f"Duplicate catalog entry {key!r}")
+            if not all(isinstance(p, str) and "/" in p for p in entry["projects"]):
+                raise ValueError(f"{name!r} projects must be owner/repo strings")
             for value, allowed, field in (
                 (entry["kind"], KINDS, "kind"),
                 (entry["action"], ACTIONS, "action"),
@@ -71,7 +79,7 @@ def load(directory: Path = CATALOG_DIR) -> tuple[dict, dict]:
             for category in [entry["category"], *entry["also"]]:
                 if category not in categories or category == "other":
                     raise ValueError(f"{name!r} names unknown category {category!r}")
-            catalog[name] = entry
+            catalog[key] = entry
     return categories, catalog
 
 
@@ -103,7 +111,7 @@ def assign(entries: list[dict], categories: dict, catalog: dict) -> list[dict]:
     for entry in entries:
         known = catalog.get(entry["name"])
         if known:
-            assigned.append(dict(known))
+            assigned.append({**known, "name": entry["name"]})
             continue
         category, hits = rule_category(entry["name"], entry["description"], categories)
         assigned.append(
@@ -172,7 +180,9 @@ def coverage(entries: list[dict], categories: dict, catalog: dict) -> dict:
         "from_rule": sorted(e["name"] for e in assigned if e["reason"].startswith("rule:")),
         "uncategorized": sorted(e["name"] for e in assigned if e["category"] == "uncategorized"),
         "not_routable": sorted(e["name"] for e in assigned if e["invoke"] != "auto"),
-        "catalog_entries_not_live": sorted(set(catalog) - live),
+        "catalog_entries_not_live": sorted(
+            k for k in set(catalog) - live if not k.startswith(AGENT_PREFIX)
+        ),
         "pool_sizes": {k: len(v) for k, v in sorted(grouped.items())},
         "catalog_sha256": digest(categories, catalog),
     }
