@@ -141,11 +141,13 @@ python3 skill_router.py --host claude benchmark benchmarks/pilot-labels-claude.j
 python3 skill_router.py --host codex benchmark benchmarks/pilot-labels-codex.jsonl .local/pilot-observations-codex.jsonl
 python3 skill_router.py --host claude score .local/pilot-observations-claude.jsonl
 python3 skill_router.py --host codex score .local/pilot-observations-codex.jsonl
-python3 skill_router.py --host claude --router category-v1 benchmark benchmarks/pilot-labels-claude.jsonl .local/pilot-observations-claude-category-v1.jsonl
+python3 skill_router.py --host claude --router category-v1 benchmark benchmarks/pilot-labels-claude.jsonl .local/pilot-observations-claude-category-v1.jsonl --reuse-arms .local/pilot-observations-claude.jsonl
 python3 skill_router.py --host claude score .local/pilot-observations-claude-category-v1.jsonl
 ```
 
 Compare `category-v1` with `balanced-shards-v2` only when both observation files share a roster hash. Each router needs its own observations file.
+
+`--reuse-arms` copies the baseline and oracle loads from another router's observations instead of rerunning them. Neither arm sees the router's suggestion, so a second router costs 100 agent sessions instead of 300. The source file must match the host, agent model, roster hash and labels, or the run stops before any session starts. Copied rows record `arms_reused_from`, and `score` counts them as `rows_with_reused_arms`. Both routers then share the same baseline and oracle samples, so their `routed` results are compared against identical controls.
 
 Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex's first observed `SKILL.md` read count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm, so the same command resumes interrupted work. A changed roster, router version, host, or agent model requires a new observations file.
 

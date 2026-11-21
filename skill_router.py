@@ -509,6 +509,7 @@ def score(rows: list[dict]) -> dict:
     if len(router_versions) != 1 or None in router_versions:
         raise ValueError("Observations need one recorded router version")
     report["router_version"] = next(iter(router_versions))
+    report["rows_with_reused_arms"] = sum("arms_reused_from" in row for row in rows)
     history = [row for row in rows if "historical_first_load" in row]
     if history:
         report["gold_vs_historical_disagreements"] = sum(
@@ -772,7 +773,14 @@ def benchmark(
     host: str,
     limit: int | None = None,
     router: str = ROUTER_VERSION,
+    reuse_path: Path | None = None,
 ) -> dict:
+    """Run baseline, routed, and oracle arms per labeled prompt, checkpointing each.
+
+    reuse_path names another router's observations from the same host, model, and roster.
+    Its baseline and oracle loads are copied instead of rerun, because neither arm sees the
+    router's suggestion. Copied rows record the source router in `arms_reused_from`.
+    """
     route = ROUTERS[router]
     labels = [
         json.loads(line)
@@ -823,6 +831,29 @@ def benchmark(
         raise ValueError(
             "Existing observations use a different host, model, roster, or router version"
         )
+    reusable = {}
+    if reuse_path is not None:
+        if reuse_path.resolve() == output_path.resolve():
+            raise ValueError("--reuse-arms must name another observations file")
+        for line in reuse_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            source = json.loads(line)
+            label = labels_by_id.get(source.get("id"))
+            if label is None or (source["text"], source["gold"]) != (
+                label["text"],
+                label["gold"],
+            ):
+                raise ValueError("Reused observations disagree with the label file")
+            if (
+                source.get("host") != host
+                or source.get("agent_model") != model
+                or (source.get("routing") or {}).get("roster_sha256") != expected_hash
+            ):
+                raise ValueError(
+                    "Reused observations use a different host, model, or roster"
+                )
+            reusable[source["id"]] = source
     done = 0
     for row in labels:
         if limit is not None and done >= limit:
@@ -850,6 +881,13 @@ def benchmark(
             ("oracle", suggestion_block(row["gold"], oracle=True)),
         ):
             if arm in observed["loads"]:
+                continue
+            source = reusable.get(row["id"])
+            if arm != "routed" and source and arm in source.get("loads", {}):
+                observed["loads"][arm] = source["loads"][arm]
+                observed["arm_seconds"][arm] = source["arm_seconds"][arm]
+                observed["arms_reused_from"] = source["routing"]["router_version"]
+                save_observations(output_path, existing)
                 continue
             if host == "claude":
                 loaded, seconds = first_claude_skill_load(
@@ -932,6 +970,12 @@ def main() -> None:
     run.add_argument("observations", type=Path)
     run.add_argument("--model", default=None)
     run.add_argument("--limit", type=int, default=None)
+    run.add_argument(
+        "--reuse-arms",
+        type=Path,
+        default=None,
+        help="copy baseline and oracle loads from another router's observations (same host, model, roster)",
+    )
     sample = sub.add_parser("sample")
     sample.add_argument("output", type=Path)
     sample.add_argument("--transcripts", type=Path, default=None)
@@ -977,6 +1021,7 @@ def main() -> None:
                     args.host,
                     args.limit,
                     args.router,
+                    args.reuse_arms,
                 ),
                 indent=2,
             )
