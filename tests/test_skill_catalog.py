@@ -43,6 +43,9 @@ def main():
     for row in map(json.loads, labels.read_text().splitlines()):
         gold = row["gold"]
         assert gold is None or catalog[gold]["invoke"] == "auto", gold
+        for alternative in row.get("alternatives", []):
+            key = alternative
+            assert catalog[key]["invoke"] == "auto", alternative
     assert "superpowers:test-driven-development" in every["debug"]
 
     assert skill_catalog.rule_category(

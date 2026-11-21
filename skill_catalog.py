@@ -7,19 +7,25 @@
 - pools() lists the routable names per category: invoke "auto" only, including `also`.
 - rank() trims a large pool by request relevance: inverse-frequency weighting with name hits
   worth 3 and description hits worth 2, after agentic-awesome-skills' outcomeDiscovery.ts.
+- library() resolves each routable catalog entry to its file on disk through the path
+  templates in library.yaml, so routing needs no live roster: nothing is listed in the
+  host's context, and the router points the agent at one file per request.
 """
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 
 import yaml
 
 CATALOG_DIR = Path(__file__).resolve().parent / "catalog"
+LIBRARY_FILE = Path(os.environ.get("JEV_LIBRARY") or CATALOG_DIR / "library.yaml")
 KINDS = {"skill", "command", "agent"}
 ACTIONS = {"prompt", "session", "agent"}
 INVOKES = {"auto", "user", "internal", "off"}
@@ -168,6 +174,66 @@ def rank(request: str, entries: list[dict], limit: int) -> list[dict]:
 
     order = sorted(range(len(entries)), key=lambda i: (-score(i), i))
     return [entries[i] for i in order[:limit]]
+
+
+def front_matter(path: Path) -> tuple[dict, str]:
+    """(frontmatter, body) of a SKILL.md or agent file; ({}, text) when it has none."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) == 3:
+            try:
+                meta = yaml.safe_load(parts[1])
+            except yaml.YAMLError:
+                meta = None
+            return (meta if isinstance(meta, dict) else {}), parts[2].strip()
+    return {}, text
+
+
+def library(catalog: dict, library_file: Path = LIBRARY_FILE) -> tuple[list[dict], list[str]]:
+    """Router entries for every routable catalog entry whose file resolves, plus the misses.
+
+    library.yaml maps a catalog source to path templates tried in order. {plugin} and {skill}
+    are the parts of the name around its last ':' (agents use their bare name); ~, $VARS and
+    glob patterns expand, and the first existing file wins.
+    """
+    sources = yaml.safe_load(library_file.read_text())["sources"]
+    entries, missing = [], []
+    for key, entry in sorted(catalog.items()):
+        templates = sources.get(entry["source"])
+        if entry["invoke"] != "auto" or not templates:
+            continue
+        plugin, _, skill = entry["name"].rpartition(":")
+        path = next(
+            (
+                Path(match)
+                for template in templates
+                for match in sorted(
+                    glob.glob(
+                        os.path.expandvars(
+                            os.path.expanduser(template.format(plugin=plugin, skill=skill))
+                        ),
+                        recursive=True,
+                    )
+                )
+                if Path(match).is_file()
+            ),
+            None,
+        )
+        if path is None:
+            missing.append(key)
+            continue
+        meta, body = front_matter(path)
+        entries.append(
+            {
+                "name": key,
+                "description": " ".join(str(meta.get("description") or skill).split()),
+                "body": body,
+                "path": str(path.resolve()),
+                "kind": entry["kind"],
+            }
+        )
+    return entries, missing
 
 
 def coverage(entries: list[dict], categories: dict, catalog: dict) -> dict:

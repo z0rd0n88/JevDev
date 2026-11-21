@@ -31,6 +31,8 @@ CATEGORY_FLOOR = 0.35
 SECOND_CATEGORY = 0.25
 POOL_LIMIT = 32
 DESC_LIMIT = 240
+ROSTER_MODES = ("live", "library")
+AGENT_CWD = PROJECT_ROOT / ".local" / "agent-cwd"
 WIDE_LIMIT = 60
 SHORTLIST = 3
 SHARD_SIZE = 255
@@ -206,6 +208,19 @@ def codex_roster() -> list[dict]:
 
 def host_roster(host: str) -> list[dict]:
     return roster() if host == "claude" else codex_roster()
+
+
+def library_roster() -> list[dict]:
+    """Every routable catalog entry that resolves to a file, none of it loaded in the host."""
+    _, catalog = skill_catalog.load()
+    entries, _ = skill_catalog.library(catalog)
+    if not entries:
+        raise RuntimeError(f"No library entries resolve through {skill_catalog.LIBRARY_FILE}")
+    return entries
+
+
+def entries_for(host: str, mode: str) -> list[dict]:
+    return library_roster() if mode == "library" else host_roster(host)
 
 
 def index_text(entries: list[dict]) -> str:
@@ -520,10 +535,17 @@ def score(rows: list[dict]) -> dict:
         if any(arm not in row.get("loads", {}) for row in rows):
             raise ValueError(f"Missing observed first load for {arm}")
         wrong = sum(row["loads"][arm] != row["gold"] for row in covered)
+        # Labeled same-job alternatives (near-duplicate skills) also count as right here.
+        lenient = sum(
+            row["loads"][arm] not in {row["gold"], *row.get("alternatives", [])}
+            for row in covered
+        )
         needless = sum(row["loads"][arm] is not None for row in uncovered)
         report[arm] = {
             "wrong_loads": wrong,
             "wrong_load_rate": wrong / len(covered),
+            "wrong_loads_accepting_alternatives": lenient,
+            "wrong_load_rate_accepting_alternatives": lenient / len(covered),
             "needless_loads": needless,
             "needless_load_rate": needless / len(uncovered),
         }
@@ -672,17 +694,101 @@ def first_codex_skill_load(
     return None, elapsed
 
 
-def suggestion_block(name: str | None, oracle: bool = False) -> str:
+def deploy_text(name: str, path: str | None) -> str:
+    """How a routed entry reaches the agent: by name when it is live, by its file otherwise."""
+    if not path:
+        return f"{name}."
+    if name.startswith(skill_catalog.AGENT_PREFIX):
+        return f"the {name[len(skill_catalog.AGENT_PREFIX):]} agent. Its definition is at {path}; read it and run its instructions as a subagent."
+    return f"{name}. Its instructions are at {path}; read that file and follow it."
+
+
+def suggestion_block(name: str | None, oracle: bool = False, path: str | None = None) -> str:
     if name:
         lead = (
             "The correct skill for this evaluation request is"
             if oracle
             else "Relevant to the current request:"
         )
-        body = f"{lead} {name}. Ignore this if it does not fit what the user actually asked for."
+        body = f"{lead} {deploy_text(name, path)} Ignore this if it does not fit what the user actually asked for."
     else:
         body = "No skill in the roster appears relevant to this request."
     return f"<skill_relevance>\n{body}\n</skill_relevance>"
+
+
+def parse_library_load(stdout: str, paths: dict[str, str]) -> str | None:
+    """The library entry whose file the agent's first turn reads, if any.
+
+    paths maps each library file's resolved path to its entry name. Reads of anything else
+    (the working directory, a guessed path) do not count as a load.
+    """
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            if event.get("skills"):
+                raise RuntimeError("Library-mode agent arm still lists live skills")
+        if event.get("type") != "assistant":
+            continue
+        for block in event.get("message", {}).get("content", []):
+            if block.get("type") == "tool_use" and block.get("name") == "Read":
+                target = str(block.get("input", {}).get("file_path") or "")
+                name = paths.get(os.path.realpath(target)) if target else None
+                if name:
+                    return name
+    return None
+
+
+def first_claude_library_load(
+    prompt: str, suggestion: str | None, model: str, paths: dict[str, str]
+) -> tuple[str | None, float]:
+    """One Claude agent with no skills, no plugin MCP servers and only Read: the library setup.
+
+    Library roots are not added as directories, so the agent learns a file's location only
+    from the router's suggestion.
+    """
+    AGENT_CWD.mkdir(parents=True, exist_ok=True)
+    command = [
+        "claude",
+        "-p",
+        "--model",
+        model,
+        "--disable-slash-commands",
+        "--strict-mcp-config",
+        "--tools",
+        "Read",
+        "--allowedTools",
+        "Read",
+        "--permission-mode",
+        "dontAsk",
+        "--max-turns",
+        "1",
+        "--max-budget-usd",
+        "0.10",
+        "--no-session-persistence",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
+    if suggestion is not None:
+        command.extend(["--append-system-prompt", suggestion])
+    start = time.perf_counter()
+    process = subprocess.run(
+        command,
+        input=prompt,
+        cwd=AGENT_CWD,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    elapsed = time.perf_counter() - start
+    loaded = parse_library_load(process.stdout, paths)
+    if loaded is None and process.returncode and '"type":"result"' not in process.stdout.replace(" ", ""):
+        raise RuntimeError(f"claude arm exited {process.returncode} without a result; inspect auth locally")
+    return loaded, elapsed
 
 
 def sample_prompts(
@@ -774,13 +880,19 @@ def benchmark(
     limit: int | None = None,
     router: str = ROUTER_VERSION,
     reuse_path: Path | None = None,
+    roster_mode: str = "live",
 ) -> dict:
     """Run baseline, routed, and oracle arms per labeled prompt, checkpointing each.
+
+    roster_mode "library" routes over the catalog library and runs each arm with no skills
+    loaded; a load is the agent reading the suggested file. It supports Claude only.
 
     reuse_path names another router's observations from the same host, model, and roster.
     Its baseline and oracle loads are copied instead of rerun, because neither arm sees the
     router's suggestion. Copied rows record the source router in `arms_reused_from`.
     """
+    if roster_mode == "library" and host != "claude":
+        raise ValueError("Library mode benchmarks the Claude host only")
     route = ROUTERS[router]
     labels = [
         json.loads(line)
@@ -800,8 +912,10 @@ def benchmark(
         raise ValueError("Label file is for a different host")
     if not any(row.get("gold") is None for row in labels):
         raise ValueError("The labeled set needs uncovered prompts")
-    entries = host_roster(host)
+    entries = entries_for(host, roster_mode)
     names = {x["name"] for x in entries}
+    path_of = {x["name"]: x.get("path") for x in entries}
+    library_paths = {x["path"]: x["name"] for x in entries if x.get("path")}
     if any(row.get("gold") not in names | {None} for row in labels):
         raise ValueError("A gold skill is absent from the current roster")
     existing = {}
@@ -826,6 +940,7 @@ def benchmark(
         or row.get("agent_model") != model
         or (row.get("routing") or {}).get("roster_sha256") != expected_hash
         or (row.get("routing") or {}).get("router_version") != router
+        or row.get("roster_mode", "live") != roster_mode
         for row in existing.values()
     ):
         raise ValueError(
@@ -847,6 +962,7 @@ def benchmark(
                 raise ValueError("Reused observations disagree with the label file")
             if (
                 source.get("host") != host
+                or source.get("roster_mode", "live") != roster_mode
                 or source.get("agent_model") != model
                 or (source.get("routing") or {}).get("roster_sha256") != expected_hash
             ):
@@ -871,14 +987,21 @@ def benchmark(
                 "loads": {},
                 "arm_seconds": {},
                 "agent_model": model,
+                "roster_mode": roster_mode,
                 "host": host,
             }
             existing[row["id"]] = observed
             save_observations(output_path, existing)
         for arm, block in (
             ("baseline", None),
-            ("routed", suggestion_block(observed["routing"]["suggestion"])),
-            ("oracle", suggestion_block(row["gold"], oracle=True)),
+            (
+                "routed",
+                suggestion_block(
+                    observed["routing"]["suggestion"],
+                    path=path_of.get(observed["routing"]["suggestion"]),
+                ),
+            ),
+            ("oracle", suggestion_block(row["gold"], oracle=True, path=path_of.get(row["gold"]))),
         ):
             if arm in observed["loads"]:
                 continue
@@ -889,7 +1012,11 @@ def benchmark(
                 observed["arms_reused_from"] = source["routing"]["router_version"]
                 save_observations(output_path, existing)
                 continue
-            if host == "claude":
+            if roster_mode == "library":
+                loaded, seconds = first_claude_library_load(
+                    row["text"], block, model, library_paths
+                )
+            elif host == "claude":
                 loaded, seconds = first_claude_skill_load(
                     row["text"], block, model, names
                 )
@@ -917,21 +1044,29 @@ def benchmark(
     }
 
 
-def run_prompt_hook(host: str, router: str = ROUTER_VERSION) -> None:
+def run_prompt_hook(host: str, router: str = ROUTER_VERSION, roster_mode: str = "live") -> None:
     """Route a host UserPromptSubmit event and return a non-blocking hint."""
     try:
         event = json.load(sys.stdin)
         prompt = event.get("prompt") if isinstance(event, dict) else None
         if not isinstance(prompt, str) or not prompt.strip():
             return
-        routing = ROUTERS[router](prompt, host_roster(host))
+        entries = entries_for(host, roster_mode)
+        routing = ROUTERS[router](prompt, entries)
         suggestion = routing.get("suggestion")
         if not suggestion:
             return
-        context = (
-            f"Jev skill router suggests `{suggestion}` for this request. "
-            "Load that skill and use its instructions if it fits the task."
-        )
+        path = next((x.get("path") for x in entries if x["name"] == suggestion), None)
+        if path:
+            context = (
+                f"Jev skill router suggests {deploy_text(suggestion, path)} "
+                "Use it only if it fits the task."
+            )
+        else:
+            context = (
+                f"Jev skill router suggests `{suggestion}` for this request. "
+                "Load that skill and use its instructions if it fits the task."
+            )
         print(
             json.dumps(
                 {
@@ -955,6 +1090,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=("claude", "codex"), default="claude")
     parser.add_argument("--router", choices=tuple(ROUTERS), default=ROUTER_VERSION)
+    parser.add_argument(
+        "--roster",
+        choices=ROSTER_MODES,
+        default="live",
+        help="live: the host's loaded skills; library: catalog files resolved through catalog/library.yaml, nothing loaded",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("measure")
     sub.add_parser("catalog", help="category-v1 coverage of the live roster")
@@ -983,7 +1124,7 @@ def main() -> None:
     sample.add_argument("--per-session", type=int, default=3)
     args = parser.parse_args()
     if args.command == "hook":
-        run_prompt_hook(args.host, args.router)
+        run_prompt_hook(args.host, args.router, args.roster)
         return
     if args.command == "sample":
         transcript_dir = args.transcripts or (
@@ -1022,12 +1163,29 @@ def main() -> None:
                     args.limit,
                     args.router,
                     args.reuse_arms,
+                    args.roster,
                 ),
                 indent=2,
             )
         )
         return
-    entries = host_roster(args.host)
+    if args.command == "catalog" and args.roster == "library":
+        categories, catalog = skill_catalog.load()
+        entries, missing = skill_catalog.library(catalog)
+        report = skill_catalog.coverage(entries, categories, catalog)
+        report.update(
+            {
+                "library_file": str(skill_catalog.LIBRARY_FILE),
+                "library_entries": len(entries),
+                "library_unresolved": missing,
+                "request_1_utf8_bytes": len(
+                    json.dumps(category_questions(categories), ensure_ascii=False).encode()
+                ),
+            }
+        )
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    entries = entries_for(args.host, args.roster)
     if args.command == "measure":
         print(json.dumps(inspect_roster(entries), indent=2, sort_keys=True))
     elif args.command == "catalog":

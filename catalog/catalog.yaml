@@ -310,7 +310,7 @@ sources:
     - {name: reverse-engineer-anything, category: think-and-research, invoke: "off"}  # by-name
     - {name: security-review, category: security, invoke: "off"}
     - {name: setup-matt-pocock-skills, category: claude-setup, invoke: "off"}
-    - {name: tdd, category: test, also: [debug]}
+    - {name: tdd, category: test, invoke: user}  # parked 2026-11-21 in favour of my-skills:addyosmani-test-driven-development
     - {name: to-questionnaire, category: plan-and-spec, invoke: user}
     - {name: triage, category: work-tracking, invoke: user}
     - {name: wait-what, category: writing-and-communication, invoke: user}

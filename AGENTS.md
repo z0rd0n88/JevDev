@@ -14,7 +14,7 @@ Read API credentials from the environment. Never commit credential values, `~/.c
 
 ## Routing and evaluation
 
-Discover each host's live skill roster when routing. Record the host, model, router version, and roster hash with observations; do not combine measurements from different snapshots. Score Claude and Codex separately, using the same labeled prompts for baseline, routed, and oracle arms within each host. Label prompts before inspecting observed loads. Do not present an authored pilot as an estimate of real-world accuracy or infer accuracy from a smoke test.
+Route over either the host's live skill roster (`--roster live`) or the catalog library (`--roster library`: skills and agents resolved from files through `catalog/library.yaml`, none preloaded in the host; this is the target design). Record the host, model, router version, roster mode, and roster hash with observations; do not combine measurements from different snapshots. Score Claude and Codex separately, using the same labeled prompts for baseline, routed, and oracle arms within each host. Label prompts before inspecting observed loads. Do not present an authored pilot as an estimate of real-world accuracy or infer accuracy from a smoke test.
 
 See `README.md` for host-specific preflights and benchmark commands.
 

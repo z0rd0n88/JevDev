@@ -129,6 +129,18 @@ python3 tests/test_skill_catalog.py
 python3 tests/test_router_category.py
 ```
 
+### Library mode (no live roster)
+
+`--roster library` makes the router choose from the whole catalog, so nothing needs to sit in the host's skill listing. Each routable catalog entry resolves to its file through the path templates in `catalog/library.yaml`: parked skills, agents, and `my-skills` from its checkout. The router then deploys only its pick, as a hint that names the file. A skill hint reads "read that file and follow it"; an agent hint says to run the file's instructions as a subagent. `JEV_LIBRARY` points at another templates file.
+
+```bash
+python3 skill_router.py --roster library catalog
+python3 skill_router.py --roster library --router category-v1 route 'Find why this total is wrong.'
+python3 skill_router.py --host claude --roster library --router category-v1 hook
+```
+
+A library-mode benchmark runs every Claude arm with no skills (`--disable-slash-commands`), no plugin MCP servers (`--strict-mcp-config`) and only `Read`. The library directories are not added to the session, so the agent learns a file's location only from the hint. A load is the first turn reading a library file. The baseline arm therefore measures a bare agent, and the routed and oracle arms measure what one routed file adds. `score` also reports `wrong_loads_accepting_alternatives`, which counts a row's labeled same-job `alternatives` as right. With every parked skill available, near-duplicates such as `diagnosing-bugs` and `my-skills:addyosmani-debugging-and-error-recovery` compete.
+
 `catalog` reports coverage of the live roster without a Jev call. It lists skills tagged by rule, skills left uncategorized, catalog entries missing from the roster, pool sizes, and the size of request 1. Tag every uncategorized skill in `catalog.yaml` before you benchmark.
 
 ## Authored pilot
