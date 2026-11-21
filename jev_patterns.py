@@ -4,6 +4,10 @@
   (a str verbatim, anything else JSON-encoded), one attempt, default timeout 40 s.
 - The child environment is SAFE_ENV (each only if set) plus one key: TYPESAFE_API_KEY when
   non-empty, else OPENROUTER_API_KEY when non-empty. JEV_MODEL travels as -m, never in env.
+- SAFE_ENV forwards the proxy settings (HTTPS_PROXY, NO_PROXY, each in either case) and the CA
+  bundle (CURL_CA_BUNDLE, SSL_CERT_FILE), so curl inside jev works behind a proxy with its own CA.
+  A proxy URL can carry credentials (user:pass@host); jev needs it to reach the provider, so it
+  is forwarded. Every other variable, GH_TOKEN included, stays out of the child.
 - str(JevError) is the safe message and never contains jev's stderr; stderr is reachable only
   as JevError.stderr (first non-empty line, at most 200 characters).
 - JEV, DEFAULT_MODEL, and NO_KEY are defined here once, at import: set JEV_BIN before importing.
@@ -31,6 +35,13 @@ SAFE_ENV = (
     "TMPDIR",
     "JEV_BASE_URL",
     "JEV_ALLOW_LOCAL",
+    # curl inside jev reads these to reach the provider through a proxy with its own CA.
+    "HTTPS_PROXY",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "CURL_CA_BUNDLE",
+    "SSL_CERT_FILE",
 )
 
 
