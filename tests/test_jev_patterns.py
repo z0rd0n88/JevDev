@@ -52,6 +52,15 @@ print(json.dumps({"model": "typesafe/jev-stub", "answers": {"q": {"type": "noul"
                   "usage": {"input_tokens": 42}}))
 """
 QUESTIONS = {"q": {"type": "noul", "instructions": "x"}}
+# A distinct value per name, so each must arrive under its own name; the URLs carry credentials, as real ones can.
+PROXY_ENV = {
+    "HTTPS_PROXY": "http://user:pass@upper.proxy.example:3128",
+    "https_proxy": "http://user:pass@lower.proxy.example:3128",
+    "NO_PROXY": "localhost",
+    "no_proxy": "127.0.0.1",
+    "CURL_CA_BUNDLE": "/ca/curl-bundle.pem",
+    "SSL_CERT_FILE": "/ca/ssl-cert.pem",
+}
 ALLOWED = {
     "PATH",
     "HOME",
@@ -62,7 +71,9 @@ ALLOWED = {
     "JEV_ALLOW_LOCAL",
     "TYPESAFE_API_KEY",
     "OPENROUTER_API_KEY",
+    *PROXY_ENV,
 }
+# The host's own proxy settings are dropped too, so the checks below behave the same behind a proxy.
 BASE = {
     k: v
     for k, v in os.environ.items()
@@ -74,6 +85,7 @@ BASE = {
         "JEV_BASE_URL",
         "JEV_ALLOW_LOCAL",
         "GH_TOKEN",
+        *PROXY_ENV,
     }
 }
 
@@ -150,6 +162,29 @@ def check_call() -> None:
     assert json.loads(rec()["stdin"]) == {"body": "[REDACTED]", "token": "[REDACTED]", "n": 1}, rec()
     call("token=x&&mark", QUESTIONS, job="t", redacted=True)
     assert rec()["stdin"] == "token=x&&mark", rec()
+
+
+def check_proxy_env() -> None:
+    """Proxy and CA settings reach jev so curl works behind a proxy; other secrets still do not."""
+    # http_proxy stays out: every provider route is https, and SAFE_ENV lists only what jev needs.
+    use(
+        GH_TOKEN="ghp_leak",
+        http_proxy="http://user:pass@plain.proxy.example:3128",
+        TYPESAFE_API_KEY="k",
+        **PROXY_ENV,
+    )
+    call({"a": 1}, QUESTIONS, job="t")
+    env = rec()["env"]
+    assert {k: env.get(k) for k in PROXY_ENV} == PROXY_ENV, sorted(env)
+    assert "GH_TOKEN" not in env and "http_proxy" not in env, sorted(env)
+    assert set(env) <= ALLOWED - {"OPENROUTER_API_KEY"}, sorted(env)
+
+    # each only if set: a parent without a proxy passes none, not empty values
+    use(GH_TOKEN="ghp_leak", TYPESAFE_API_KEY="k")
+    call({"a": 1}, QUESTIONS, job="t")
+    env = rec()["env"]
+    assert not set(PROXY_ENV) & set(env), sorted(env)
+    assert "GH_TOKEN" not in env, sorted(env)
 
 
 def check_errors() -> None:
@@ -246,6 +281,6 @@ def check_structure() -> None:
 
 
 if __name__ == "__main__":
-    for check in (check_call, check_errors, check_helpers, check_structure):
+    for check in (check_call, check_proxy_env, check_errors, check_helpers, check_structure):
         check()
     print("jev_patterns ok")
