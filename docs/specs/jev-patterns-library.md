@@ -135,7 +135,7 @@ Jev request `{"model", "state", "questions"}` and response `{"model", "answers":
 - GC1: Python ≥ 3.12 (3.12.3 here), standard library only; no new third-party import in any file this spec touches.
 - GC2: After Phase 4, `jev_patterns.call` is the only `subprocess.run` of `jev` in the repo: `grep -n '"-j"' *.py` prints exactly one line and it is in `jev_patterns.py` (today it prints six: `scope_sentinel.py:241`, `ask_jev_files.py:163`, `compact_advisor.py:157`, `skill_router.py:288`, `fixture_curator.py:80`, `handoff_check.py:176`; `str(JEV)` would miss the handoff, which names its variable `target_bin`). Until then, a migrated caller has no `"-j"` literal left.
 - GC3: Every `call` runs `[str(JEV), "-m", <model>, "-q", json.dumps(questions), "-j", <job>]` with the state on stdin (a `str` verbatim, anything else `json.dumps`-encoded), `capture_output=True, text=True, check=False, start_new_session=True`, default timeout 40 s.
-- GC4: The child environment of every `call` is exactly: `PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, `JEV_ALLOW_LOCAL` (each only if set in the parent; `JEV_MODEL` is read by `model_name()` in the parent and travels as `-m`, never as an environment variable) plus `TYPESAFE_API_KEY` when it is non-empty, else `OPENROUTER_API_KEY` when it is non-empty. Nothing else. Key presence is truthiness everywhere (`has_key()` and `isolated_env()` agree); `handoff_check.py:74-77` tests membership, which forwards an empty `TYPESAFE_API_KEY` and drops a set `OPENROUTER_API_KEY`, and is not carried over.
+- GC4: The child environment of every `call` is exactly: `PATH`, `HOME`, `USER`, `SYSTEMROOT`, `TMPDIR`, `JEV_BASE_URL`, `JEV_ALLOW_LOCAL`, and the proxy and CA settings `HTTPS_PROXY`, `https_proxy`, `NO_PROXY`, `no_proxy`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE` that `curl` inside `jev` needs behind a proxy with its own CA (added by PR #78; a proxy URL can carry credentials, accepted because `jev` needs it to reach the provider) (each only if set in the parent; `JEV_MODEL` is read by `model_name()` in the parent and travels as `-m`, never as an environment variable) plus `TYPESAFE_API_KEY` when it is non-empty, else `OPENROUTER_API_KEY` when it is non-empty. Nothing else. Key presence is truthiness everywhere (`has_key()` and `isolated_env()` agree); `handoff_check.py:74-77` tests membership, which forwards an empty `TYPESAFE_API_KEY` and drops a set `OPENROUTER_API_KEY`, and is not carried over.
 - GC5: `str(JevError)` never contains `jev`'s stderr; stderr is reachable only as `JevError.stderr` (first non-empty line, at most 200 characters). The only caller that emits it is `ask_jev_files.py`, through `scope_sentinel.redact`.
 - GC6: `JEV = Path(os.environ.get("JEV_BIN") or Path.home() / ".local/bin/jev")`, `DEFAULT_MODEL = "jev-latest"`, `NO_KEY = "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"` are defined once, in `jev_patterns.py`, at import time.
 - GC7: No row key in `sentinel.jsonl` or `compact.jsonl` is renamed or removed; `SENTINEL_VERSION`, `ADVISOR_VERSION`, `ROUTER_VERSION` are unchanged.
@@ -153,7 +153,8 @@ JEV: Path                     # os.environ["JEV_BIN"] or ~/.local/bin/jev, resol
 DEFAULT_MODEL = "jev-latest"
 DEFAULT_TIMEOUT = 40.0
 NO_KEY = "Jev key unavailable in environment; set TYPESAFE_API_KEY or OPENROUTER_API_KEY"
-SAFE_ENV = ("PATH", "HOME", "USER", "SYSTEMROOT", "TMPDIR", "JEV_BASE_URL")
+SAFE_ENV = ("PATH", "HOME", "USER", "SYSTEMROOT", "TMPDIR", "JEV_BASE_URL", "JEV_ALLOW_LOCAL",
+            "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "CURL_CA_BUNDLE", "SSL_CERT_FILE")
 
 class JevError(RuntimeError):
     returncode: int | None    # jev's exit status; None for OSError, timeout, bad JSON, missing answer
