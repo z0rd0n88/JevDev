@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -265,6 +266,40 @@ def check_helpers() -> None:
     assert isinstance(JevError("x"), RuntimeError)
 
 
+def check_job_positional() -> None:
+    """#80: call()'s argv, fed to the real bin/jev as a dry run, sends {model, state, questions} and no job."""
+    job = "JOB-LABEL-MARKER"
+    use(TYPESAFE_API_KEY="k", JEV_MODEL="m1")
+    call({"a": 1}, QUESTIONS, job=job)
+    r = rec()
+    # -j is jev's bare full-JSON flag; the job is the positional <question> left after the options.
+    assert r["argv"][-2:] == ["-j", job], r["argv"]
+    # -n prints the request body and sends nothing; no key reaches the real script.
+    dry = subprocess.run(
+        [str(ROOT / "bin/jev"), "-n", *r["argv"]],
+        input=r["stdin"],
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ["PATH"]},
+        timeout=10,
+        check=False,
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert json.loads(dry.stdout) == {"model": "m1", "state": {"a": 1}, "questions": QUESTIONS}, dry.stdout
+    assert job not in dry.stdout + dry.stderr, "the job must not reach the request"
+    # Without the positional, jev refuses with usage (exit 64): the job is what satisfies it.
+    bare = subprocess.run(
+        [str(ROOT / "bin/jev"), "-n", *r["argv"][:-1]],
+        input=r["stdin"],
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ["PATH"]},
+        timeout=10,
+        check=False,
+    )
+    assert bare.returncode == 64, (bare.returncode, bare.stdout)
+
+
 def check_structure() -> None:
     """AC-1.4: the sentinel's only subprocess.run is git, it has no "-j", and the library is stdlib-only."""
     sentinel = (ROOT / "scope_sentinel.py").read_text().splitlines()
@@ -281,6 +316,6 @@ def check_structure() -> None:
 
 
 if __name__ == "__main__":
-    for check in (check_call, check_proxy_env, check_errors, check_helpers, check_structure):
+    for check in (check_call, check_proxy_env, check_errors, check_helpers, check_job_positional, check_structure):
         check()
     print("jev_patterns ok")

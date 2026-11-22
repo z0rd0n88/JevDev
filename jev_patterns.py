@@ -102,6 +102,9 @@ def call(
     if not redacted:
         state = redact_state(state)
     stdin = state if isinstance(state, str) else json.dumps(state)
+    # -j is jev's bare full-JSON flag (the answers check below needs the full response), not "-j <job>". jev
+    # requires one positional <question>, which -q mode never reads, so the job fills it: it reaches only jev's
+    # argv (visible in `ps`), never the request body, the provider or a log row (#80; check_job_positional).
     start = time.perf_counter()
     try:
         process = subprocess.run(
