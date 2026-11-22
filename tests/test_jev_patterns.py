@@ -166,11 +166,17 @@ def check_call() -> None:
 
 def check_proxy_env() -> None:
     """Proxy and CA settings reach jev so curl works behind a proxy; other secrets still do not."""
-    use(GH_TOKEN="ghp_leak", TYPESAFE_API_KEY="k", **PROXY_ENV)
+    # http_proxy stays out: every provider route is https, and SAFE_ENV lists only what jev needs.
+    use(
+        GH_TOKEN="ghp_leak",
+        http_proxy="http://user:pass@plain.proxy.example:3128",
+        TYPESAFE_API_KEY="k",
+        **PROXY_ENV,
+    )
     call({"a": 1}, QUESTIONS, job="t")
     env = rec()["env"]
     assert {k: env.get(k) for k in PROXY_ENV} == PROXY_ENV, sorted(env)
-    assert "GH_TOKEN" not in env, sorted(env)
+    assert "GH_TOKEN" not in env and "http_proxy" not in env, sorted(env)
     assert set(env) <= ALLOWED - {"OPENROUTER_API_KEY"}, sorted(env)
 
     # each only if set: a parent without a proxy passes none, not empty values
