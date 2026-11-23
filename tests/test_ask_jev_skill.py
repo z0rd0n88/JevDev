@@ -99,11 +99,12 @@ def test_every_bash_block_runs_with_stub_and_prints_answers():
             "JEV_BIN": str(stub),
             "JEV_LOG_DIR": tmp,
             "TYPESAFE_API_KEY": "stub",
+            "PATH": f"{ROOT / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
         }
         for block in bash_blocks():
-            script = block.replace("/home/alex/Projects/JevDev/", f"{ROOT}/")
+            assert block.startswith("ask-jev-files "), block
             proc = subprocess.run(
-                ["bash", "-c", script], cwd=ROOT, env=env, capture_output=True, text=True, timeout=90
+                ["bash", "-c", block], cwd=ROOT, env=env, capture_output=True, text=True, timeout=90
             )
             assert proc.returncode == 0, (block, proc.stdout, proc.stderr)
             assert "answers" in json.loads(proc.stdout), proc.stdout
