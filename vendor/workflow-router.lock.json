@@ -1,0 +1,118 @@
+{
+  "files": {
+    "SKILL.md": {
+      "mode": "100644",
+      "sha256": "b34f0e27653e507c248a9df7c8955342145802294b10238946a559e6a37362c1"
+    },
+    "evals/.gitignore": {
+      "mode": "100644",
+      "sha256": "ac69d9ae9fe884d8efdfed1a9349204167c0e8652129fd5b3f6f2cc073fb369d"
+    },
+    "evals/README.md": {
+      "mode": "100644",
+      "sha256": "b4b1b238df79702ddcbdca779b0fcc74c6b19e1eefdadbba0682ca0edb2ce0d6"
+    },
+    "evals/jev-judge/README.md": {
+      "mode": "100644",
+      "sha256": "4ba713134a94ecba47c91f40cbac4d89079e7cd29d2adf64f2d51298f95888ed"
+    },
+    "evals/jev-judge/holdout-orch.jsonl": {
+      "mode": "100644",
+      "sha256": "8494dbf91c75a8e6e29c9044ea7d22562b5b0379d1d717d040ba7a620ea0bd0a"
+    },
+    "evals/jev-judge/holdout-process.jsonl": {
+      "mode": "100644",
+      "sha256": "55b69d43e8cea02bbc8c65cd9b8adabccb93ed12063621443900b194fbda2181"
+    },
+    "evals/orchestration-judge/README.md": {
+      "mode": "100644",
+      "sha256": "c6f624a86fc405e4001cbc6ce7c51d6915f5a7198db2f34cdf1ff3c5cfadbd10"
+    },
+    "evals/orchestration-judge/cases.jsonl": {
+      "mode": "100644",
+      "sha256": "f39083c0ca1dbe7072064a3db691a86e6c3cde15d804b3c85bb33daacd391884"
+    },
+    "evals/orchestration-judge/judge.md": {
+      "mode": "100644",
+      "sha256": "68d70ebebaf6144da191689c8a549b6210b701828a92a6a268f8b9cf5f8e2769"
+    },
+    "evals/orchestration-judge/run.sh": {
+      "mode": "100755",
+      "sha256": "acec292f59aaa772863c69076e1cbd31f35d4257c825437336628aba84bc6919"
+    },
+    "evals/orchestration-judge/schema.json": {
+      "mode": "100644",
+      "sha256": "08dac9f150d7a1ac710cdd0e32261005bb733ac37857dbfe83b9a601cc79b214"
+    },
+    "evals/process-judge/README.md": {
+      "mode": "100644",
+      "sha256": "f7c46bd422226d24cd86d008657f56a831373692accf86767d890e81cc363989"
+    },
+    "evals/process-judge/cases.jsonl": {
+      "mode": "100644",
+      "sha256": "0b3b7682a2ac4df5298a5073426f37c77ad74aa49405e5b150a2356a6341762d"
+    },
+    "evals/process-judge/judge.md": {
+      "mode": "100644",
+      "sha256": "84d9aa528069bef75096ea8f8809d32ec71a8a1acf0e267cd666d3e9ff01875f"
+    },
+    "evals/process-judge/run.sh": {
+      "mode": "100755",
+      "sha256": "56a0415441ce8fb5f1427a5f07b71b40921ff3f7a237397d3fba0e3249ceb06f"
+    },
+    "evals/process-judge/schema.json": {
+      "mode": "100644",
+      "sha256": "392cf985bb0bee6336053b8b97b721cf77895a209efee8191871c45503489263"
+    },
+    "evals/trigger/README.md": {
+      "mode": "100644",
+      "sha256": "f097ec36043cf865050a1d9160b4a8314f39056787a5b3654a6fcd9f29ae4772"
+    },
+    "evals/trigger/cases.jsonl": {
+      "mode": "100644",
+      "sha256": "3f64cfc4c6a82e3569857439af6a115e589dbda7925e1f6f9b6fef8cc7536b47"
+    },
+    "evals/trigger/run.sh": {
+      "mode": "100755",
+      "sha256": "62198c86835742ad83fdad135e830a15851b80e156c7feabd0f4d0580dd98cf5"
+    },
+    "hooks/README.md": {
+      "mode": "100644",
+      "sha256": "96dece9e4f1d774c821806a7dfa5f8d9d6c524d6a6dd2255ed09177bf36287db"
+    },
+    "hooks/jev_route.py": {
+      "mode": "100755",
+      "sha256": "7bbe79d9d390b9e0cd266d9cb113e14abaffc6dde1867d4edd5f143c1dcf138e"
+    },
+    "hooks/questions.json": {
+      "mode": "100644",
+      "sha256": "ba578eafc8161842ca0713babb10ec7f5ed3c51a70dddd3a70dcb96abc445dec"
+    },
+    "references/agent-orchestration.md": {
+      "mode": "100644",
+      "sha256": "35c50ea7a65c2aae1a854768bd7f3d292f2f51735dc250a4430644f6450caca6"
+    },
+    "references/catalog.md": {
+      "mode": "100644",
+      "sha256": "cdb15d06984e14fb8aeb568ccac19a55f4746025a32978c34c76b0f3fadabc20"
+    },
+    "references/durable-workflows.md": {
+      "mode": "100644",
+      "sha256": "5b50a85f77a786ecafab71ae1e07a69da61bf456f0e77f4137f446960d6d5122"
+    },
+    "references/engineering-workflows.md": {
+      "mode": "100644",
+      "sha256": "262f062762504650945e6baa72cb6e0ce106f9d84f144248421473fb7041a72b"
+    },
+    "references/sharp-edges.md": {
+      "mode": "100644",
+      "sha256": "6b2ad47d624296984313a7bd27f2c36aebb7385522a2d4240d5dbe02290e7da0"
+    }
+  },
+  "source": {
+    "commit": "4fc9a8d2ebca2b08b22a13ce3713bf2f091cf06c",
+    "path": "skills/workflow-router",
+    "repo": "z0rd0n88/my-skills",
+    "tree": "bb7af7b0c8f7073e43863ad55ac577ae87c4beb4"
+  }
+}

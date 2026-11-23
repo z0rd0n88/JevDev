@@ -1,0 +1,36 @@
+# Is vendor/workflow-router still what my-skills has on its default branch?
+# The offline half (nobody edited the copy) runs in checks.yml through tests/test_vendor_sync.py.
+name: vendor-drift
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "vendor/**"
+      - "vendor_sync.py"
+      - ".github/workflows/vendor-drift.yml"
+permissions:
+  contents: read
+jobs:
+  upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HAS_TOKEN: ${{ secrets.MY_SKILLS_READ_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: env.HAS_TOKEN != 'true'
+        run: echo "::warning::MY_SKILLS_READ_TOKEN is not set, so vendor/workflow-router was not compared with my-skills."
+      - if: env.HAS_TOKEN == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: z0rd0n88/my-skills
+          token: ${{ secrets.MY_SKILLS_READ_TOKEN }}
+          path: .upstream/my-skills
+      - if: env.HAS_TOKEN == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: env.HAS_TOKEN == 'true'
+        run: python3 vendor_sync.py check --source .upstream/my-skills
