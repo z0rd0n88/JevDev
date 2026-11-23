@@ -201,7 +201,7 @@ def check_claude_recommend() -> None:  # AC-4.1
         assert (
             json.loads(rec["argv"][rec["argv"].index("-q") + 1]) == ca.COMPACT_QUESTIONS
         )
-        assert rec["argv"][rec["argv"].index("-j") + 1] == "compact_advisor"
+        assert rec["argv"][-1] == "compact_advisor"
         assert state["recent_turn"] == "did now write the changelog", state
 
 

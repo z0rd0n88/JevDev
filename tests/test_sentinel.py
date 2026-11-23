@@ -363,7 +363,7 @@ def check_bash_gate() -> None:
         assert state["command"] == "rm -rf build" and state["cwd"] == str(repo / "sub"), state
         questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
         assert questions == EXPECTED_QUESTIONS, questions
-        assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
+        assert rec["argv"][-1] == "scope_sentinel", rec["argv"]
 
         # AC-1.2: judge-all, a harmless command is judged and not blocked
         (tmp / "cfg.json").write_text(json.dumps({"effect": "read_only", "effect_confidence": 0.95, "destructive": 0.02}))
@@ -494,7 +494,7 @@ def check_write_gate() -> None:
         assert state["path"] == "notes.txt", state
         questions = json.loads(rec["argv"][rec["argv"].index("-q") + 1])
         assert list(questions) == ["kind", "contains_secret"], questions
-        assert rec["argv"][rec["argv"].index("-j") + 1] == "scope_sentinel", rec["argv"]
+        assert rec["argv"][-1] == "scope_sentinel", rec["argv"]
         assert row["sentinel_version"] == "shadow-v8" and row["gate"] == "write" and "error" not in row, row
         assert row["tool"] == "Write", row
         assert row["path"] == "notes.txt" and row["redacted_hits"] >= 1, row

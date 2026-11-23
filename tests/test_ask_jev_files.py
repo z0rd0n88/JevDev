@@ -22,7 +22,7 @@ here = Path(__file__).parent
 state = sys.stdin.read()
 argv = sys.argv[1:]
 questions = json.loads(argv[argv.index("-q") + 1])
-job = argv[argv.index("-j") + 1]
+job = argv[-1]  # jev_patterns.call ends argv with the job positional; -j is a bare flag
 (here / f"rec-{time.time_ns()}-{os.getpid()}.json").write_text(
     json.dumps({"job": job, "questions": questions, "state": json.loads(state)}))
 cfg = json.loads((here / "cfg.json").read_text()) if (here / "cfg.json").exists() else {}
