@@ -115,9 +115,27 @@ def main():
         result = route("What is the capital of Iceland?", debug=0.9)
         assert result["requests"] == 1 and result["suggestion"] is None
         assert router.ROUTERS["category-v1"] is router.suggest_by_category
+
+        nogate = router.ROUTERS["category-nogate-v1"]
+        MockJev.calls.clear()
+        MockJev.category = {"debug": 0.9}
+        result = nogate("What is the capital of Iceland?", ROSTER)
+        first, _ = MockJev.calls
+        assert set(first["questions"]) == {"category"}, "no gate questions"
+        assert result["suggestion"] == "superpowers:systematic-debugging", result
+        assert result["router_version"] == "category-nogate-v1" and result["gate"] is None
+        MockJev.calls.clear()
+        MockJev.category = {"other": 0.9, "debug": 0.1}
+        result = nogate("What is the capital of Iceland?", ROSTER)
+        assert result["requests"] == 1 and result["suggestion"] is None
+        MockJev.calls.clear()
+        MockJev.category = {"other": 0.3, "debug": 0.2, "test": 0.1}
+        result = nogate("Hmm.", unknown)
+        assert result["chosen_categories"] == ["debug", "test"] and not result["fallback"]
+        assert result["requests"] == 2 and "mystery-tool" in result["pool"], result
         print(
             "PASS: category-v1 two-request path, runner-up category, user-invoked excluded, "
-            "low-confidence and uncategorized fallback, gate abstention"
+            "low-confidence and uncategorized fallback, gate abstention; nogate variant"
         )
     finally:
         server.shutdown()

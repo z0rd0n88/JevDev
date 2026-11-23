@@ -112,13 +112,15 @@ python3 tests/test_router.py
 2. **Request 2** runs only over the chosen category's pool. The pool adds the runner-up category when that scores at least `SECOND_CATEGORY`. It asks `which` plus `fits::<skill>` for each member, using descriptions clipped to `DESC_LIMIT`. A pool larger than `POOL_LIMIT` is trimmed in code first, by an inverse-frequency ranker over names and descriptions.
 3. **Fallback.** If the top category scores below `CATEGORY_FLOOR`, the router reruns as `balanced-shards-v2`, adds those requests to the totals and records `fallback: true`. It does the same when Jev picks `other` while live skills are uncategorized.
 
+`--router category-nogate-v1` is the same router without the gate. Request 1 asks only the category Choice. A confident `other` (at least `CATEGORY_FLOOR`) abstains. An unsure answer widens the pool to the top two non-`other` categories instead of falling back. Uncategorized skills join every pool. The `fits` check in request 2 alone decides whether anything is suggested.
+
 `catalog/catalog.yaml` covers `my-skills` (as the `my-skills:` plugin), loose `~/.claude/skills`, parked `skills/disabled` and `agents-parked` from ClaudeConfig, project-only agents, four public local plugins and the cloud-synced roster. It gives each skill:
 
 - a category, plus optional `also` categories;
 - an `action`: `prompt`, `session` or `agent`;
 - an `invoke` value. Only `auto` entries are routed: `user` marks skills that must not self-trigger, `internal` marks subagents spawned by another skill, and `"off"` mirrors `skillOverrides`.
 
-Agents carry `kind: agent` and sit in their own namespace, so a skill and an agent can share a name. Each agent lists the repos whose `.claude/agents` hold a copy in `projects`. Parked skills and agents are tagged but not yet routable: routing reads only the live roster.
+Agents carry `kind: agent` and sit in their own namespace, so a skill and an agent can share a name. Each agent lists the repos whose `.claude/agents` hold a copy in `projects`. With `--roster live`, routing reads only the host's roster, so parked skills and agents are never picked. Library mode (below) routes them too.
 
 Live skills missing from the catalog get a keyword-rule category, and are reported as uncategorized when no single category clearly leads. Results add `categories`, `chosen_categories`, `pool`, `fallback` and `catalog_sha256`. Editing the catalog changes routing as much as changing the roster does, so start a new observations file.
 

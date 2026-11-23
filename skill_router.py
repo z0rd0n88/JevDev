@@ -27,6 +27,7 @@ CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 ROUTER_VERSION = "balanced-shards-v2"
 CATEGORY_ROUTER_VERSION = "category-v1"
+NOGATE_ROUTER_VERSION = "category-nogate-v1"
 CATEGORY_FLOOR = 0.35
 SECOND_CATEGORY = 0.25
 POOL_LIMIT = 32
@@ -380,8 +381,8 @@ def suggest(request: str, entries: list[dict]) -> dict:
     return result
 
 
-def category_questions(categories: dict) -> dict:
-    questions = gate_questions()
+def category_questions(categories: dict, gated: bool = True) -> dict:
+    questions = gate_questions() if gated else {}
     questions["category"] = {
         "type": "choice",
         "instructions": "Which area does the user's latest request belong to? Judge what the user wants done, not the words they use.",
@@ -411,19 +412,26 @@ def pool_questions(pool: list[dict]) -> dict:
 
 
 def suggest_by_category(
-    request: str, entries: list[dict], catalog_dir: Path = skill_catalog.CATALOG_DIR
+    request: str,
+    entries: list[dict],
+    catalog_dir: Path = skill_catalog.CATALOG_DIR,
+    gated: bool = True,
 ) -> dict:
     """Request 1: gates plus a category Choice. Request 2: which plus fits over that category's pool.
 
     Falls back to balanced-shards-v2 when the category answer is unsure, or when Jev picks
     "other" while live skills sit uncategorized. Every extra request is counted in the result.
+
+    With gated=False (category-nogate-v1) there are no gate questions and no fallback: a
+    confident "other" abstains, an unsure answer widens to the top two categories, uncategorized
+    skills join every pool, and the fit check alone decides whether anything is suggested.
     """
     categories, catalog = skill_catalog.load(catalog_dir)
     by_name = {x["name"]: x for x in entries}
     grouped = skill_catalog.pools(skill_catalog.assign(entries, categories, catalog))
-    first, first_seconds = jev(category_questions(categories), request)
+    first, first_seconds = jev(category_questions(categories, gated), request)
     answers = first["answers"]
-    gate, gate_values = gate_score(answers)
+    gate, gate_values = gate_score(answers) if gated else (None, {})
     ranked = sorted(
         answers["category"]["probabilities"].items(), key=lambda pair: (-pair[1], pair[0])
     )
@@ -442,7 +450,7 @@ def suggest_by_category(
         "input_tokens": input_tokens(first),
         "roster_sha256": roster_hash(entries),
         "catalog_sha256": skill_catalog.digest(categories, catalog),
-        "router_version": CATEGORY_ROUTER_VERSION,
+        "router_version": CATEGORY_ROUTER_VERSION if gated else NOGATE_ROUTER_VERSION,
     }
 
     def finish() -> dict:
@@ -451,14 +459,25 @@ def suggest_by_category(
         )
         return result
 
-    if gate < GATE_THRESHOLD:
+    if gated and gate < GATE_THRESHOLD:
         return finish()
-    chosen = [ranked[0][0]]
-    if len(ranked) > 1 and ranked[1][1] >= SECOND_CATEGORY:
-        chosen.append(ranked[1][0])
+    if gated:
+        chosen = [ranked[0][0]]
+        if len(ranked) > 1 and ranked[1][1] >= SECOND_CATEGORY:
+            chosen.append(ranked[1][0])
+    else:
+        if ranked[0][0] == "other" and ranked[0][1] >= CATEGORY_FLOOR:
+            return finish()
+        unsure = ranked[0][1] < CATEGORY_FLOOR
+        areas = [pair for pair in ranked if pair[0] != "other"]
+        chosen = [areas[0][0]] + [
+            key for key, p in areas[1:2] if unsure or p >= SECOND_CATEGORY
+        ]
     result["chosen_categories"] = chosen
     names = list(dict.fromkeys(n for c in chosen for n in grouped.get(c, [])))
-    if ranked[0][1] < CATEGORY_FLOOR or (not names and grouped.get("uncategorized")):
+    if not gated:
+        names = list(dict.fromkeys(names + grouped.get("uncategorized", [])))
+    elif ranked[0][1] < CATEGORY_FLOOR or (not names and grouped.get("uncategorized")):
         flat = suggest(request, entries)
         result.update(
             {
@@ -490,7 +509,15 @@ def suggest_by_category(
     return finish()
 
 
-ROUTERS = {ROUTER_VERSION: suggest, CATEGORY_ROUTER_VERSION: suggest_by_category}
+def suggest_by_category_nogate(request: str, entries: list[dict]) -> dict:
+    return suggest_by_category(request, entries, gated=False)
+
+
+ROUTERS = {
+    ROUTER_VERSION: suggest,
+    CATEGORY_ROUTER_VERSION: suggest_by_category,
+    NOGATE_ROUTER_VERSION: suggest_by_category_nogate,
+}
 
 
 def score(rows: list[dict]) -> dict:
