@@ -1,0 +1,11 @@
+{
+  "name": "jev",
+  "version": "0.1.0",
+  "description": "Jev, TypeSafe's System One decision model, in Claude Code: the ask-jev and hyper-jev skills, the jev and ask-jev-files CLIs, and opt-in skill router, Scope Sentinel and compaction advisor hooks (off until JEV_HOOKS turns them on).",
+  "author": { "name": "z0rd0n88" },
+  "homepage": "https://github.com/z0rd0n88/JevDev",
+  "repository": "https://github.com/z0rd0n88/JevDev",
+  "keywords": ["jev", "typesafe", "decision-model", "hooks", "skills"],
+  "skills": ["./.agents/skills/"],
+  "hooks": "./plugin/hooks.json"
+}

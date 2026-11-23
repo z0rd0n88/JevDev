@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# ask_jev_files.py with the Jev key loaded from ~/.secrets. On PATH through the jev plugin's bin/, or link it into ~/.local/bin.
+root="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+export JEV_BIN="${JEV_BIN:-$root/bin/jev}"
+exec bash "$root/with_jev_key.sh" python3 "$root/ask_jev_files.py" "$@"
