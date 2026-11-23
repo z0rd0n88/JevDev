@@ -2,7 +2,7 @@
   "files": {
     "SKILL.md": {
       "mode": "100644",
-      "sha256": "b34f0e27653e507c248a9df7c8955342145802294b10238946a559e6a37362c1"
+      "sha256": "86b9c061fce3f67be98ad5e34fb55aa2bce8b14ea9d6fbaa9fd2f4579013b419"
     },
     "evals/.gitignore": {
       "mode": "100644",
@@ -102,7 +102,7 @@
     },
     "references/engineering-workflows.md": {
       "mode": "100644",
-      "sha256": "262f062762504650945e6baa72cb6e0ce106f9d84f144248421473fb7041a72b"
+      "sha256": "e8dea23a6207aeaec98c5cfde7757c41127eccb49335f25d9595e724b42f1f22"
     },
     "references/sharp-edges.md": {
       "mode": "100644",
@@ -110,9 +110,9 @@
     }
   },
   "source": {
-    "commit": "4fc9a8d2ebca2b08b22a13ce3713bf2f091cf06c",
+    "commit": "b5324bdaf892084fb8600f0991bfbb9ee7b7499f",
     "path": "skills/workflow-router",
     "repo": "z0rd0n88/my-skills",
-    "tree": "bb7af7b0c8f7073e43863ad55ac577ae87c4beb4"
+    "tree": "c2e1a21ba06d25ec566ae6a48229c3ae9cec807b"
   }
 }
