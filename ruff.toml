@@ -1,3 +1,6 @@
+# vendor/ holds exact copies of code edited elsewhere (see vendor/README.md); a lint fix there would be drift.
+extend-exclude = ["vendor"]
+
 [lint]
 # Tests and check_install.py name small lambdas on purpose; rewriting 17 of them as defs adds nothing.
 ignore = ["E731"]

@@ -1,0 +1,106 @@
+{
+  "files": {
+    "SKILL.md": {
+      "mode": "100644",
+      "sha256": "89a8b28c8ea17f644c8e85c34d0de11c959fee0d8b13b1d487f4e74f92ff900c"
+    },
+    "evals/.gitignore": {
+      "mode": "100644",
+      "sha256": "ac69d9ae9fe884d8efdfed1a9349204167c0e8652129fd5b3f6f2cc073fb369d"
+    },
+    "evals/README.md": {
+      "mode": "100644",
+      "sha256": "aa6ccc21e219cfed4b42ecf57f6373b8f4af8394a55a158cd1f0dde31b092cf5"
+    },
+    "evals/jev-judge/README.md": {
+      "mode": "100644",
+      "sha256": "aa497e50aeccaa8f7c0d4a82b19f8f92a548352f240c61713b8a31fdfbb86f7b"
+    },
+    "evals/jev-judge/holdout-orch.jsonl": {
+      "mode": "100644",
+      "sha256": "8494dbf91c75a8e6e29c9044ea7d22562b5b0379d1d717d040ba7a620ea0bd0a"
+    },
+    "evals/jev-judge/holdout-process.jsonl": {
+      "mode": "100644",
+      "sha256": "55b69d43e8cea02bbc8c65cd9b8adabccb93ed12063621443900b194fbda2181"
+    },
+    "evals/orchestration-judge/README.md": {
+      "mode": "100644",
+      "sha256": "c6f624a86fc405e4001cbc6ce7c51d6915f5a7198db2f34cdf1ff3c5cfadbd10"
+    },
+    "evals/orchestration-judge/cases.jsonl": {
+      "mode": "100644",
+      "sha256": "f39083c0ca1dbe7072064a3db691a86e6c3cde15d804b3c85bb33daacd391884"
+    },
+    "evals/orchestration-judge/judge.md": {
+      "mode": "100644",
+      "sha256": "68d70ebebaf6144da191689c8a549b6210b701828a92a6a268f8b9cf5f8e2769"
+    },
+    "evals/orchestration-judge/run.sh": {
+      "mode": "100755",
+      "sha256": "ae6a0d2af474baef4f0f1c0c27517b6dd49d6445797fb7cee2aa35b0669bb308"
+    },
+    "evals/orchestration-judge/schema.json": {
+      "mode": "100644",
+      "sha256": "08dac9f150d7a1ac710cdd0e32261005bb733ac37857dbfe83b9a601cc79b214"
+    },
+    "evals/process-judge/README.md": {
+      "mode": "100644",
+      "sha256": "f7c46bd422226d24cd86d008657f56a831373692accf86767d890e81cc363989"
+    },
+    "evals/process-judge/cases.jsonl": {
+      "mode": "100644",
+      "sha256": "0b3b7682a2ac4df5298a5073426f37c77ad74aa49405e5b150a2356a6341762d"
+    },
+    "evals/process-judge/judge.md": {
+      "mode": "100644",
+      "sha256": "84d9aa528069bef75096ea8f8809d32ec71a8a1acf0e267cd666d3e9ff01875f"
+    },
+    "evals/process-judge/run.sh": {
+      "mode": "100755",
+      "sha256": "0322b8e4d21212c24a2fe82ca400b405c4eda21ac8ff33bfe0c9819f577d6517"
+    },
+    "evals/process-judge/schema.json": {
+      "mode": "100644",
+      "sha256": "392cf985bb0bee6336053b8b97b721cf77895a209efee8191871c45503489263"
+    },
+    "hooks/README.md": {
+      "mode": "100644",
+      "sha256": "628e2b0678e9a7607622be991914f14719a142cee59ea312fadd03a8652fde8b"
+    },
+    "hooks/jev_route.py": {
+      "mode": "100755",
+      "sha256": "d73eb1cd6ee1182679184b0b3339a79fecddf37dc46ce3089dfd86b2e8704652"
+    },
+    "hooks/questions.json": {
+      "mode": "100644",
+      "sha256": "ba578eafc8161842ca0713babb10ec7f5ed3c51a70dddd3a70dcb96abc445dec"
+    },
+    "references/agent-orchestration.md": {
+      "mode": "100644",
+      "sha256": "ebab68951a0ef57c103ae75ec281155749f986217b4f93ff12c5c77246edbfd7"
+    },
+    "references/catalog.md": {
+      "mode": "100644",
+      "sha256": "cdb15d06984e14fb8aeb568ccac19a55f4746025a32978c34c76b0f3fadabc20"
+    },
+    "references/durable-workflows.md": {
+      "mode": "100644",
+      "sha256": "a9d8680c2f9a302426ec13b653ccb3c0500fcce8c85e6dd08ce96954b3223d38"
+    },
+    "references/engineering-workflows.md": {
+      "mode": "100644",
+      "sha256": "26029c14e8bc975d87131f86c22b819e10b65a31f0c3320b3890203a48e8723b"
+    },
+    "references/sharp-edges.md": {
+      "mode": "100644",
+      "sha256": "9ea5ff1c37aadf25bfc3f691aa8bf3c671e46e2fbe72ae6ccd2ed0beb2b87ae1"
+    }
+  },
+  "source": {
+    "commit": "63592ce7ef215b9731c259ae4d1910ed73804798",
+    "path": "skills/workflow-router",
+    "repo": "z0rd0n88/my-skills",
+    "tree": "434bafbf103ce7928b037d502b4d80cd8e7ef3a0"
+  }
+}

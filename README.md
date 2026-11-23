@@ -19,6 +19,7 @@ Private source repository for Jev experiments, prototypes, and developer tooling
 | [Finding triage](#finding-triage) | `finding_triage.py`, `corpus_findings.py`, `calibrate_findings.py` | library, CLIs | offline |
 | [Skills](#skills) | `hyper-jev`, `ask-jev` | agent skills | Claude, Codex, agy |
 | [Bash output pruner](#bash-output-pruner) | `pruner/` | Claude Code mod | Claude |
+| [Workflow router](#workflow-router) | `vendor/workflow-router/`, `vendor_sync.py` | CLI (hook not wired) | Claude |
 | [Install check](#install-check), [user-scope install](#user-scope-install) | `check_install.py`, `install_user.py` | CLI | Claude, Codex, agy |
 | [Smoke tests](#smoke-tests), [checks](#development) | `smoke.sh`, `check.sh`, CI | shell | any |
 
@@ -318,6 +319,28 @@ Tests need no npm install and make no network calls:
 ```bash
 claude plugin validate pruner
 claude plugin test pruner
+```
+
+## Workflow router
+
+`vendor/workflow-router/` is an exact copy of the `workflow-router` skill from [`z0rd0n88/my-skills`](https://github.com/z0rd0n88/my-skills) (`skills/workflow-router/`). The skill picks a workflow for a task; its `hooks/jev_route.py` asks Jev three questions in one call (which process workflow the prompt starts in, whether the user asked for a multi-agent workflow, and how well the work suits one) and can run as a `UserPromptSubmit` hook that suggests a route. The questions and the gate table in that script restate the skill's rules, so the script lives inside the skill and my-skills is the only place either is edited. The whole skill folder is copied so the script's case files and the documents it points to come with it.
+
+```bash
+bash with_jev_key.sh python3 vendor/workflow-router/hooks/jev_route.py ask 'Bump React from 17 to 19.'
+bash with_jev_key.sh python3 vendor/workflow-router/hooks/jev_route.py eval vendor/workflow-router/evals/process-judge/cases.jsonl process
+```
+
+- **Not installed.** No hook config in this repo runs `jev_route.py`, and the copy is not under `.agents/skills/`, so no host loads the skill from here. [`vendor/workflow-router/hooks/README.md`](vendor/workflow-router/hooks/README.md) has the settings snippet and says what the hook sends.
+- **Outside this repo's rules for its own code.** `jev_route.py` calls Jev with `curl` and has its own short secret-pattern list, because it has to run from a skill folder with no JevDev module beside it. It does not go through `jev_patterns.call()` or `redaction.py`, and `ruff.toml` excludes `vendor/` so a lint fix cannot become a local edit.
+- **The copy cannot be edited here.** `vendor/workflow-router.lock.json` records the my-skills commit, the skill folder's git tree id, and each file's sha256 and mode. `python3 vendor_sync.py check` compares the copy with the lock, offline; `tests/test_vendor_sync.py` runs it, so `bash check.sh` and CI fail on a hand edit, an added or missing file, or a changed executable bit. Files git ignores (the judges' `out-*/` run output) are skipped.
+- **A change in my-skills shows up as stale.** `python3 vendor_sync.py check --source <my-skills checkout>` also compares the lock with that checkout's committed files. `.github/workflows/vendor-drift.yml` runs it against my-skills' default branch every Monday, on demand, and on pull requests that touch `vendor/`. my-skills is private, so the workflow needs a repository secret `MY_SKILLS_READ_TOKEN` (a fine-grained token with read access to that repo's contents); without it the job prints a warning and compares nothing.
+- **Updating.** `python3 vendor_sync.py sync --source <my-skills checkout>` replaces the copy with the checkout's committed files and rewrites the lock. It refuses a checkout with uncommitted changes under the skill. Commit the copy and the lock together.
+
+```bash
+python3 vendor_sync.py check
+python3 vendor_sync.py check --source ../my-skills
+python3 vendor_sync.py sync --source ../my-skills
+python3 tests/test_vendor_sync.py
 ```
 
 ## Smoke tests

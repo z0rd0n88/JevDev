@@ -6,7 +6,7 @@ JevDev is the private source repository for JEV-related code, prototypes, and ex
 
 ## Changes
 
-Make tracked changes on a non-`main` feature branch in a dedicated worktree and submit them through a pull request. Stage the exact intended files, including deletions, and verify the staged paths before committing. Run `bash check.sh` before pushing; CI runs the same lint and tests. Preserve unrelated work in other checkouts and configuration repositories.
+Make tracked changes on a non-`main` feature branch in a dedicated worktree and submit them through a pull request. Stage the exact intended files, including deletions, and verify the staged paths before committing. Run `bash check.sh` before pushing; CI runs the same lint and tests. Preserve unrelated work in other checkouts and configuration repositories. Never edit `vendor/workflow-router/`: it is an exact copy of a skill edited in `z0rd0n88/my-skills`, so change it there and run `python3 vendor_sync.py sync --source <my-skills checkout>` (see `vendor/README.md`).
 
 ## Credentials and data
 
