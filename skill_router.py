@@ -27,7 +27,7 @@ CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 ROUTER_VERSION = "balanced-shards-v2"
 CATEGORY_ROUTER_VERSION = "category-v1"
-NOGATE_ROUTER_VERSION = "category-nogate-v1"
+NOGATE_ROUTER_VERSION = "category-nogate-v2"
 CATEGORY_FLOOR = 0.35
 SECOND_CATEGORY = 0.25
 POOL_LIMIT = 32
@@ -391,7 +391,10 @@ def category_questions(categories: dict, gated: bool = True) -> dict:
     return questions
 
 
-def pool_questions(pool: list[dict]) -> dict:
+def pool_questions(pool: list[dict], gated: bool = True) -> dict:
+    """gated keeps category-v1's "does it do the thing" check. Without the gate, the check
+    asks whether the skill improves the execution, so a generalist that merely can do a
+    routine edit does not pass."""
     questions = {
         "which": {
             "type": "choice",
@@ -403,7 +406,11 @@ def pool_questions(pool: list[dict]) -> dict:
         {
             f"fits::{x['name']}": {
                 "type": "noul",
-                "instructions": f"Does the skill {x['name']!r} do the specific thing the user's request asks for? It is described as: {x['description'][:DESC_LIMIT]}",
+                "instructions": (
+                    f"Does the skill {x['name']!r} do the specific thing the user's request asks for? It is described as: {x['description'][:DESC_LIMIT]}"
+                    if gated
+                    else f"Does the skill {x['name']!r} improve the execution of the user's request? It is described as: {x['description'][:DESC_LIMIT]}"
+                ),
             }
             for x in pool
         }
@@ -422,9 +429,10 @@ def suggest_by_category(
     Falls back to balanced-shards-v2 when the category answer is unsure, or when Jev picks
     "other" while live skills sit uncategorized. Every extra request is counted in the result.
 
-    With gated=False (category-nogate-v1) there are no gate questions and no fallback: a
+    With gated=False (category-nogate-v2) there are no gate questions and no fallback: a
     confident "other" abstains, an unsure answer widens to the top two categories, uncategorized
-    skills join every pool, and the fit check alone decides whether anything is suggested.
+    skills join every pool, and the fit check, asking whether each skill improves the
+    execution, alone decides whether anything is suggested.
     """
     categories, catalog = skill_catalog.load(catalog_dir)
     by_name = {x["name"]: x for x in entries}
@@ -494,7 +502,7 @@ def suggest_by_category(
         return finish()
     pool = skill_catalog.rank(request, [by_name[n] for n in names], POOL_LIMIT)
     result["pool"] = [x["name"] for x in pool]
-    second, second_seconds = jev(pool_questions(pool), request)
+    second, second_seconds = jev(pool_questions(pool, gated), request)
     fits = {x["name"]: float(second["answers"][f"fits::{x['name']}"]["noul"]) for x in pool}
     choice = second["answers"]["which"]["choice"]
     result.update(

@@ -116,14 +116,16 @@ def main():
         assert result["requests"] == 1 and result["suggestion"] is None
         assert router.ROUTERS["category-v1"] is router.suggest_by_category
 
-        nogate = router.ROUTERS["category-nogate-v1"]
+        nogate = router.ROUTERS["category-nogate-v2"]
         MockJev.calls.clear()
         MockJev.category = {"debug": 0.9}
         result = nogate("What is the capital of Iceland?", ROSTER)
         first, _ = MockJev.calls
         assert set(first["questions"]) == {"category"}, "no gate questions"
+        fits_text = MockJev.calls[1]["questions"]["fits::superpowers:systematic-debugging"]["instructions"]
+        assert "improve the execution" in fits_text, fits_text
         assert result["suggestion"] == "superpowers:systematic-debugging", result
-        assert result["router_version"] == "category-nogate-v1" and result["gate"] is None
+        assert result["router_version"] == "category-nogate-v2" and result["gate"] is None
         MockJev.calls.clear()
         MockJev.category = {"other": 0.9, "debug": 0.1}
         result = nogate("What is the capital of Iceland?", ROSTER)
