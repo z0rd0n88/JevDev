@@ -1,6 +1,7 @@
 """The one Jev transport: every Jev call in the repo goes through call().
 
-- call runs JEV -m <model> -q <questions JSON> -j <job> with the state on stdin
+- call runs JEV -m <model> -q <questions JSON> -j -- <job> with the state on stdin. -j is the bare
+  full-JSON flag; the job fills jev's required <question> positional, which -q mode ignores
   (a str verbatim, anything else JSON-encoded), one attempt, default timeout 40 s.
 - The child environment is SAFE_ENV (each only if set) plus one key: TYPESAFE_API_KEY when
   non-empty, else OPENROUTER_API_KEY when non-empty. JEV_MODEL travels as -m, never in env.
@@ -105,10 +106,11 @@ def call(
     # -j is jev's bare full-JSON flag (the answers check below needs the full response), not "-j <job>". jev
     # requires one positional <question>, which -q mode never reads, so the job fills it: it reaches only jev's
     # argv (visible in `ps`), never the request body, the provider or a log row (#80; check_job_positional).
+    # "--" ends jev's options, so a job that starts with "-" is still the positional, not a flag.
     start = time.perf_counter()
     try:
         process = subprocess.run(
-            [str(JEV), "-m", model_name(model), "-q", json.dumps(questions), "-j", job],
+            [str(JEV), "-m", model_name(model), "-q", json.dumps(questions), "-j", "--", job],
             input=stdin,
             capture_output=True,
             text=True,

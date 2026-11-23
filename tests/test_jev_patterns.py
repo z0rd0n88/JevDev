@@ -136,6 +136,7 @@ def check_call() -> None:
         "-q",
         '{"q": {"type": "noul", "instructions": "x"}}',
         "-j",
+        "--",
         "t",
     ], r["argv"]
     assert json.loads(r["stdin"]) == {"a": 1}, r["stdin"]
@@ -272,8 +273,8 @@ def check_job_positional() -> None:
     use(TYPESAFE_API_KEY="k", JEV_MODEL="m1")
     call({"a": 1}, QUESTIONS, job=job)
     r = rec()
-    # -j is jev's bare full-JSON flag; the job is the positional <question> left after the options.
-    assert r["argv"][-2:] == ["-j", job], r["argv"]
+    # -j is jev's bare full-JSON flag; "--" ends the options, and the job is the positional <question> after them.
+    assert r["argv"][-3:] == ["-j", "--", job], r["argv"]
     # -n prints the request body and sends nothing; no key reaches the real script.
     dry = subprocess.run(
         [str(ROOT / "bin/jev"), "-n", *r["argv"]],
@@ -298,6 +299,22 @@ def check_job_positional() -> None:
         check=False,
     )
     assert bare.returncode == 64, (bare.returncode, bare.stdout)
+    # A job that starts with "-" must not be parsed as jev options ("-x" would be an unknown flag, "-n" a dry run).
+    for dash_job in ("-x", "-n", "--"):
+        call({"a": 1}, QUESTIONS, job=dash_job)
+        r = rec()
+        assert r["argv"][-1] == dash_job, r["argv"]
+        dry = subprocess.run(
+            [str(ROOT / "bin/jev"), "-n", *r["argv"]],
+            input=r["stdin"],
+            capture_output=True,
+            text=True,
+            env={"PATH": os.environ["PATH"]},
+            timeout=10,
+            check=False,
+        )
+        assert dry.returncode == 0, (dash_job, dry.returncode, dry.stderr)
+        assert json.loads(dry.stdout)["questions"] == QUESTIONS, dry.stdout
 
 
 def check_structure() -> None:
