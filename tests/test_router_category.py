@@ -19,6 +19,7 @@ spec.loader.exec_module(router)
 class MockJev(BaseHTTPRequestHandler):
     calls = []
     low_gate = False
+    fit = 0.9
     category = {}
 
     def log_message(self, format, *args):
@@ -40,6 +41,8 @@ class MockJev(BaseHTTPRequestHandler):
                 answers[key] = {"type": "choice", "choice": choice, "probabilities": probabilities}
             else:
                 probability = 0.1 if key == "gate::prose_suffices" else 0.9
+                if key.startswith("fits::"):
+                    probability = self.fit
                 if self.low_gate and key.startswith("gate::"):
                     probability = 1 - probability
                 answers[key] = {"type": "noul", "noul": probability}
@@ -135,6 +138,12 @@ def main():
         result = nogate("Hmm.", unknown)
         assert result["chosen_categories"] == ["debug", "test"] and not result["fallback"]
         assert result["requests"] == 2 and "mystery-tool" in result["pool"], result
+        MockJev.fit = 0.4
+        MockJev.category = {"debug": 0.9}
+        assert nogate("Rename tmp in utils.py.", ROSTER)["suggestion"] is None, "below 0.55"
+        MockJev.low_gate = False
+        assert route("Rename tmp in utils.py.", debug=0.9)["suggestion"], "gated keeps 0.30"
+        MockJev.fit = 0.9
         print(
             "PASS: category-v1 two-request path, runner-up category, user-invoked excluded, "
             "low-confidence and uncategorized fallback, gate abstention; nogate variant"

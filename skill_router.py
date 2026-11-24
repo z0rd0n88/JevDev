@@ -40,6 +40,7 @@ SHARD_SIZE = 255
 EXCERPT = 700
 GATE_THRESHOLD = 0.30
 FITS_THRESHOLD = 0.30
+NOGATE_FITS_THRESHOLD = 0.55  # chosen on the pilot and the no-skill edit prompts; confirm on fresh ones
 GATES = {
     "acts_on_user_system": "Is the assistant being asked to act on the user's files, accounts, devices, or online services, rather than only to explain or advise?",
     "would_follow_documented_procedure": "Would a careful expert answering this consult a specific documented procedure or set of commands, rather than answering from general understanding?",
@@ -502,12 +503,13 @@ def suggest_by_category(
         return finish()
     pool = skill_catalog.rank(request, [by_name[n] for n in names], POOL_LIMIT)
     result["pool"] = [x["name"] for x in pool]
+    cutoff = FITS_THRESHOLD if gated else NOGATE_FITS_THRESHOLD
     second, second_seconds = jev(pool_questions(pool, gated), request)
     fits = {x["name"]: float(second["answers"][f"fits::{x['name']}"]["noul"]) for x in pool}
     choice = second["answers"]["which"]["choice"]
     result.update(
         {
-            "suggestion": choice if fits.get(choice, 0.0) >= FITS_THRESHOLD else None,
+            "suggestion": choice if fits.get(choice, 0.0) >= cutoff else None,
             "fits": fits,
             "requests": 2,
             "seconds": result["seconds"] + second_seconds,
