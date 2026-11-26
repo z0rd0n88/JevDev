@@ -145,6 +145,8 @@ A library-mode benchmark runs every Claude arm with no skills (`--disable-slash-
 
 `catalog` reports coverage of the live roster without a Jev call. It lists skills tagged by rule, skills left uncategorized, catalog entries missing from the roster, pool sizes, and the size of request 1. Tag every uncategorized skill in `catalog.yaml` before you benchmark.
 
+This repo's own Claude `UserPromptSubmit` hook runs `--roster library --router category-nogate-v2 hook`. Every routed prompt appends one row to `skill-router.jsonl` in `$JEV_LOG_DIR`, or this checkout's ignored `.local/` (mode 0600). A row holds the prompt (through `redact_strict`, clipped to 500 characters), the suggestion and its fit, the best fit, the categories, and the cost. A failed route logs an `error` row. Review real picks with `tail .local/skill-router.jsonl`.
+
 ## Authored pilot
 
 `benchmarks/pilot-labels-claude.jsonl` and `benchmarks/pilot-labels-codex.jsonl` each contain 100 self-contained, manually authored prompts: 60 with skill labels and 40 labeled `null`. Labels were fixed before agent observations. These fixtures exercise the routing and measurement protocol; results from them do not estimate accuracy on ordinary user requests. The two hosts use separate live rosters, labels, observations, and scores.

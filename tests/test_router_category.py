@@ -2,10 +2,12 @@
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import threading
 
 SOURCE = Path(__file__).parents[1] / "skill_router.py"
@@ -76,6 +78,42 @@ def route(request: str, roster=ROSTER, **category) -> dict:
     return router.suggest_by_category(request, roster)
 
 
+def run_hook(prompt: str) -> str:
+    stdin, stdout = sys.stdin, sys.stdout
+    sys.stdin, sys.stdout = io.StringIO(json.dumps({"prompt": prompt})), io.StringIO()
+    try:
+        router.run_prompt_hook("claude", "category-nogate-v2", "library")
+        return sys.stdout.getvalue()
+    finally:
+        sys.stdin, sys.stdout = stdin, stdout
+
+
+def check_hook_log() -> None:
+    old_entries, old_dir = router.entries_for, os.environ.get("JEV_LOG_DIR")
+    router.entries_for = lambda host, mode: ROSTER
+    with tempfile.TemporaryDirectory() as raw:
+        os.environ["JEV_LOG_DIR"] = raw
+        try:
+            MockJev.category = {"debug": 0.9}
+            out = run_hook("Find why this fails; my key is ghp_abcdefghijklmnop")
+            assert "superpowers:systematic-debugging" in out, out
+            log = Path(raw) / "skill-router.jsonl"
+            assert oct(log.stat().st_mode & 0o777) == "0o600"
+            (row,) = map(json.loads, log.read_text().splitlines())
+            assert "ghp_abcdefghijklmnop" not in row["prompt"], row["prompt"]
+            assert row["suggestion"] == "superpowers:systematic-debugging" and row["suggestion_fit"] == 0.9
+            assert row["router_version"] == "category-nogate-v2" and row["roster_mode"] == "library"
+            router.entries_for = lambda host, mode: 1 / 0
+            assert "failed open" in run_hook("Anything")
+            assert json.loads(log.read_text().splitlines()[1])["error"] == "ZeroDivisionError"
+        finally:
+            router.entries_for = old_entries
+            if old_dir is None:
+                os.environ.pop("JEV_LOG_DIR", None)
+            else:
+                os.environ["JEV_LOG_DIR"] = old_dir
+
+
 def main():
     server = ThreadingHTTPServer(("127.0.0.1", 0), MockJev)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -144,6 +182,8 @@ def main():
         MockJev.low_gate = False
         assert route("Rename tmp in utils.py.", debug=0.9)["suggestion"], "gated keeps 0.30"
         MockJev.fit = 0.9
+
+        check_hook_log()
         print(
             "PASS: category-v1 two-request path, runner-up category, user-invoked excluded, "
             "low-confidence and uncategorized fallback, gate abstention; nogate variant"

@@ -20,6 +20,7 @@ import time
 import yaml
 
 from jev_patterns import PRICE_PER_MILLION_INPUT, call, input_tokens, model_name
+from redaction import redact_strict
 import skill_catalog
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -34,6 +35,7 @@ POOL_LIMIT = 32
 DESC_LIMIT = 240
 ROSTER_MODES = ("live", "library")
 AGENT_CWD = PROJECT_ROOT / ".local" / "agent-cwd"
+HOOK_LOG_PROMPT_CHARS = 500
 WIDE_LIMIT = 60
 SHORTLIST = 3
 SHARD_SIZE = 255
@@ -1081,16 +1083,65 @@ def benchmark(
     }
 
 
+def hook_log_path() -> Path:
+    """$JEV_LOG_DIR (user scope: one central directory), else this checkout's ignored .local."""
+    return Path(os.environ.get("JEV_LOG_DIR") or PROJECT_ROOT / ".local") / "skill-router.jsonl"
+
+
+def log_hook_pick(row: dict) -> None:
+    """Append one routing decision; logging must never break the hook."""
+    try:
+        path = hook_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a") as f:
+            f.write(json.dumps(row, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+
+def hook_row(host: str, router: str, roster_mode: str, prompt: str) -> dict:
+    return {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "host": host,
+        "router_version": router,
+        "roster_mode": roster_mode,
+        "prompt": redact_strict(prompt)[:HOOK_LOG_PROMPT_CHARS],
+    }
+
+
 def run_prompt_hook(host: str, router: str = ROUTER_VERSION, roster_mode: str = "live") -> None:
-    """Route a host UserPromptSubmit event and return a non-blocking hint."""
+    """Route a host UserPromptSubmit event and return a non-blocking hint.
+
+    Every routed prompt appends a row to hook_log_path(): the redacted, clipped prompt,
+    the pick and its fit, the categories and the cost, so real use can be reviewed later.
+    """
+    row = None
     try:
         event = json.load(sys.stdin)
         prompt = event.get("prompt") if isinstance(event, dict) else None
         if not isinstance(prompt, str) or not prompt.strip():
             return
+        row = hook_row(host, router, roster_mode, prompt)
         entries = entries_for(host, roster_mode)
         routing = ROUTERS[router](prompt, entries)
         suggestion = routing.get("suggestion")
+        fits = routing.get("fits") or {}
+        top_fit = max(fits.items(), key=lambda pair: pair[1]) if fits else None
+        row.update(
+            {
+                "suggestion": suggestion,
+                "suggestion_fit": fits.get(suggestion) if suggestion else None,
+                "top_fit": list(top_fit) if top_fit else None,
+                "categories": routing.get("categories"),
+                "chosen_categories": routing.get("chosen_categories"),
+                "requests": routing.get("requests"),
+                "input_tokens": routing.get("input_tokens"),
+                "estimated_usd": routing.get("estimated_usd"),
+                "seconds": routing.get("seconds"),
+                "roster_sha256": routing.get("roster_sha256"),
+            }
+        )
+        log_hook_pick(row)
         if not suggestion:
             return
         path = next((x.get("path") for x in entries if x["name"] == suggestion), None)
@@ -1114,8 +1165,11 @@ def run_prompt_hook(host: str, router: str = ROUTER_VERSION, roster_mode: str = 
                 }
             )
         )
-    except Exception:
+    except Exception as error:
         # Routing is advisory: a Jev outage or missing key must never block a prompt.
+        if row is not None and "suggestion" not in row:
+            row["error"] = type(error).__name__
+            log_hook_pick(row)
         message = (
             "Jev skill routing failed open; this prompt will continue without a "
             "router suggestion. Check the Jev credentials and router configuration."
