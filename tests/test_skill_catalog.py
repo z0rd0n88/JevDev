@@ -34,7 +34,7 @@ def main():
         )
     )
     assert set(every) == set(categories) - {"other"}, set(categories) - set(every)
-    assert "my-skills:spec-tacular" not in every["plan-and-spec"]
+    assert "zord-workflow:spec-tacular" not in every["plan-and-spec"]
     assert "agent:shepherd:lens" not in every["review-and-audit"]
     assert "agent:debugger" in every["debug"]
     assert "security-review" not in every["security"]  # skillOverrides off
@@ -53,7 +53,7 @@ def main():
     )[0] == "business"
     assert skill_catalog.rule_category("x", "Fix a bug", categories)[0] is None
     assigned = skill_catalog.assign(
-        [entry("my-skills:chiquita", "debug failing errors"), entry("mystery", "nothing to see")],
+        [entry("zord-workflow:chiquita", "debug failing errors"), entry("mystery", "nothing to see")],
         categories,
         catalog,
     )
@@ -73,7 +73,7 @@ def main():
     assert skill_catalog.rank("anything", pool, 5) == pool
 
     report = skill_catalog.coverage(
-        [entry("my-skills:chiquita"), entry("mystery")], categories, catalog
+        [entry("zord-workflow:chiquita"), entry("mystery")], categories, catalog
     )
     assert report["from_catalog"] == 1 and report["uncategorized"] == ["mystery"]
     assert "ClaudesMods:prd" in report["catalog_entries_not_live"]

@@ -114,7 +114,7 @@ python3 tests/test_router.py
 
 `--router category-nogate-v2` is the same router without the gate. Request 1 asks only the category Choice. A confident `other` (at least `CATEGORY_FLOOR`) abstains. An unsure answer widens the pool to the top two non-`other` categories instead of falling back. Uncategorized skills join every pool. The `fits` check in request 2 alone decides whether anything is suggested, and asks whether each skill improves the execution of the request rather than whether it can do it. A skill must score at least `NOGATE_FITS_THRESHOLD` (0.55) to be suggested. (v1 asked the old question with a 0.30 cutoff; on 30 routine file edits it routed 19.)
 
-`catalog/catalog.yaml` covers `my-skills` (as the `my-skills:` plugin), loose `~/.claude/skills`, parked `skills/disabled` and `agents-parked` from ClaudeConfig, project-only agents, four public local plugins and the cloud-synced roster. It gives each skill:
+`catalog/catalog.yaml` covers `my-skills` (as its five `zord-*` plugins, e.g. `zord-review:multi-agent-review`), loose `~/.claude/skills`, parked `skills/disabled` and `agents-parked` from ClaudeConfig, project-only agents, four public local plugins and the cloud-synced roster. It gives each skill:
 
 - a category, plus optional `also` categories;
 - an `action`: `prompt`, `session` or `agent`;
@@ -172,7 +172,7 @@ Compare `category-v1` with `balanced-shards-v2` only when both observation files
 - **`ClaudesMods:prd`**, high confidence.
 - **`superpowers:systematic-debugging`**, high confidence.
 - **`superpowers:brainstorming`**, medium confidence.
-- **`superpowers:test-driven-development`**, ambiguous: `tdd` and `my-skills:addyosmani-test-driven-development` overlap.
+- **`superpowers:test-driven-development`**, ambiguous: `tdd` and `zord-addyosmani:addyosmani-test-driven-development` overlap.
 
 Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex's first observed `SKILL.md` read count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm, so the same command resumes interrupted work. A changed roster, router version, host, or agent model requires a new observations file.
 

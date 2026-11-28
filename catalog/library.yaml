@@ -9,7 +9,7 @@
 sources:
   my-skills:
     - ~/Projects/my-skills/skills/{skill}/SKILL.md
-    - ~/.claude/plugins/cache/z0rd0nlander/my-skills/*/skills/{skill}/SKILL.md
+    - ~/.claude/plugins/cache/z0rd0nlander/{plugin}/*/skills/{skill}/SKILL.md
   claude-config:
     - ~/.claude/skills/{skill}/SKILL.md
     - ~/.agents/skills/{skill}/SKILL.md

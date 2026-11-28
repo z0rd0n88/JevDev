@@ -63,12 +63,12 @@ def entry(name: str, description: str) -> dict:
 
 
 ROSTER = [
-    entry("my-skills:chiquita", "Cuts fluff from a doc while keeping every fact."),
+    entry("zord-workflow:chiquita", "Cuts fluff from a doc while keeping every fact."),
     entry("superpowers:systematic-debugging", "Find the root cause before fixing."),
-    entry("my-skills:addyosmani-debugging-and-error-recovery", "Systematic root-cause debugging."),
-    entry("my-skills:ci-parity-run", "Run a repo's CI job list locally."),
-    entry("my-skills:spec-tacular", "User-invoked spec writer."),
-    entry("my-skills:addyosmani-interview-me", "Interview the user about requirements."),
+    entry("zord-addyosmani:addyosmani-debugging-and-error-recovery", "Systematic root-cause debugging."),
+    entry("zord-review:ci-parity-run", "Run a repo's CI job list locally."),
+    entry("zord-workflow:spec-tacular", "User-invoked spec writer."),
+    entry("zord-addyosmani:addyosmani-interview-me", "Interview the user about requirements."),
 ]
 
 
@@ -128,7 +128,7 @@ def main():
         assert "other" in first["questions"]["category"]["criteria"]
         assert set(second["questions"]["which"]["criteria"]) == {
             "superpowers:systematic-debugging",
-            "my-skills:addyosmani-debugging-and-error-recovery",
+            "zord-addyosmani:addyosmani-debugging-and-error-recovery",
         }
         assert result["suggestion"] == "superpowers:systematic-debugging", result
         assert result["requests"] == 2 and result["input_tokens"] == 200
@@ -138,10 +138,10 @@ def main():
 
         result = route("Debug the flaky CI run.", debug=0.6, test=0.3)
         assert result["chosen_categories"] == ["debug", "test"]
-        assert "my-skills:ci-parity-run" in result["pool"]
+        assert "zord-review:ci-parity-run" in result["pool"]
 
         result = route("Write me a PRD.", **{"plan-and-spec": 0.95})
-        assert result["pool"] == ["my-skills:addyosmani-interview-me"], result["pool"]
+        assert result["pool"] == ["zord-addyosmani:addyosmani-interview-me"], result["pool"]
 
         result = route("Hmm.", debug=0.2, test=0.2, security=0.2)
         assert result["fallback"] and result["requests"] == 3, result

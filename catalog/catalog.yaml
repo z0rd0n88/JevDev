@@ -10,102 +10,103 @@
 #             may share a name (code-tour).
 #   projects  repos whose .claude/agents carry this agent
 #   reason    manual | override | rule  (how the category was assigned)
-# Names match the live roster: plugin skills are <plugin>:<skill> (my-skills installs as the
-# my-skills@z0rd0nlander plugin); loose ~/.claude/skills are unprefixed. Live skills missing
-# here fall back to categories.yaml keywords; `skill_router.py catalog` lists them.
+# Names match the live roster: plugin skills are <plugin>:<skill> (my-skills ships five plugins,
+# zord-review, zord-workflow, zord-lateral, zord-addyosmani and zord-mattpocock; skill names
+# carry no zord- prefix); loose ~/.claude/skills are unprefixed. Live skills missing here fall
+# back to categories.yaml keywords; `skill_router.py catalog` lists them.
 defaults: {kind: skill, action: session, invoke: auto, reason: manual}
 
 sources:
-  # z0rd0n88/my-skills, loaded as the my-skills@z0rd0nlander plugin.
+  # z0rd0n88/my-skills, loaded as the five zord-* plugins from the z0rd0nlander marketplace.
   my-skills:
-    - {name: "my-skills:addy-code", category: build-code}
-    - {name: "my-skills:addyosmani-api-and-interface-design", category: design-architecture}
-    - {name: "my-skills:addyosmani-browser-testing-with-devtools", category: test, also: [debug]}
-    - {name: "my-skills:addyosmani-ci-cd-and-automation", category: git-and-release}
-    - {name: "my-skills:addyosmani-code-review-and-quality", category: review-and-audit}
-    - {name: "my-skills:addyosmani-code-simplification", category: review-and-audit}
-    - {name: "my-skills:addyosmani-constraint-driven-development", category: plan-and-spec}
-    - {name: "my-skills:addyosmani-context-engineering", category: claude-setup}
-    - {name: "my-skills:addyosmani-debugging-and-error-recovery", category: debug}
-    - {name: "my-skills:addyosmani-deprecation-and-migration", category: build-code}
-    - {name: "my-skills:addyosmani-documentation-and-adrs", category: writing-and-communication, also: [design-architecture]}
-    - {name: "my-skills:addyosmani-doubt-driven-development", category: review-and-audit}
-    - {name: "my-skills:addyosmani-frontend-ui-engineering", category: frontend-and-design}
-    - {name: "my-skills:addyosmani-git-workflow-and-versioning", category: git-and-release}
-    - {name: "my-skills:addyosmani-idea-refine", category: think-and-research}
-    - {name: "my-skills:addyosmani-incremental-implementation", category: build-code}
-    - {name: "my-skills:addyosmani-interview-me", category: plan-and-spec}
-    - {name: "my-skills:addyosmani-observability-and-instrumentation", category: git-and-release}
-    - {name: "my-skills:addyosmani-performance-optimization", category: build-code}
-    - {name: "my-skills:addyosmani-planning-and-task-breakdown", category: plan-and-spec}
-    - {name: "my-skills:addyosmani-security-and-hardening", category: security}
-    - {name: "my-skills:addyosmani-shipping-and-launch", category: git-and-release}
-    - {name: "my-skills:addyosmani-source-driven-development", category: build-code}
-    - {name: "my-skills:addyosmani-spec-driven-development", category: plan-and-spec}
-    - {name: "my-skills:addyosmani-test-driven-development", category: test, also: [debug]}
-    - {name: "my-skills:addyosmani-using-agent-skills", category: claude-setup}
-    - {name: "my-skills:analogy", category: think-and-research}
-    - {name: "my-skills:audit-numeric-types", category: review-and-audit}
-    - {name: "my-skills:baton-pass", category: work-tracking}
-    - {name: "my-skills:baton-runner-managed", category: agents-and-automation, invoke: user}
-    - {name: "my-skills:big-next-job", category: agents-and-automation}
-    - {name: "my-skills:walk-off", category: agents-and-automation}
-    - {name: "my-skills:spec-to-test-development", category: test, also: [plan-and-spec, build-code]}
-    - {name: "my-skills:workflow-router", category: agents-and-automation, invoke: internal}  # run by its own jev_route.py hook
-    - {name: "my-skills:bro-down", category: writing-and-communication, action: prompt, invoke: user}
-    - {name: "my-skills:bro-next", category: writing-and-communication, action: prompt}
-    - {name: "my-skills:chiquita", category: writing-and-communication}
-    - {name: "my-skills:ci-parity-run", category: test, also: [git-and-release]}
-    - {name: "my-skills:claude-md-trim", category: claude-setup}
-    - {name: "my-skills:cloud-environment-setup", category: claude-setup}
-    - {name: "my-skills:code-cleaver", category: review-and-audit, invoke: user}
-    - {name: "my-skills:concept-fan", category: think-and-research}
-    - {name: "my-skills:daily-loop", category: claude-setup}
-    - {name: "my-skills:drift-status-check", category: work-tracking, also: [plan-and-spec], invoke: user}
-    - {name: "my-skills:dw-review", category: review-and-audit}
-    - {name: "my-skills:dw-review-codex", category: review-and-audit, invoke: "off"}
-    - {name: "my-skills:finding-fixer", category: review-and-audit}
-    - {name: "my-skills:finding-fixer-codex", category: review-and-audit, invoke: "off"}
-    - {name: "my-skills:i-have-adhd", category: writing-and-communication, action: prompt, invoke: user}
-    - {name: "my-skills:inversion", category: think-and-research}
-    - {name: "my-skills:iron-ham-split", category: git-and-release}
-    - {name: "my-skills:lateral", category: think-and-research}
-    - {name: "my-skills:mattpocock-codebase-design", category: design-architecture}
-    - {name: "my-skills:mattpocock-domain-modeling", category: design-architecture}
-    - {name: "my-skills:mattpocock-git-guardrails-claude-code", category: claude-setup, also: [git-and-release]}
-    - {name: "my-skills:mattpocock-grilling", category: think-and-research, also: [plan-and-spec]}
-    - {name: "my-skills:mattpocock-improve-codebase-architecture", category: design-architecture, invoke: user}
-    - {name: "my-skills:mattpocock-prototype", category: build-code}
-    - {name: "my-skills:mattpocock-research", category: think-and-research}
-    - {name: "my-skills:mattpocock-wizard", category: git-and-release}
-    - {name: "my-skills:mattpocock-writing-for-agents", category: claude-setup, also: [writing-and-communication]}
-    - {name: "my-skills:outline-transcript", category: work-tracking}
-    - {name: "my-skills:pr-merge-cleanup", category: git-and-release}
-    - {name: "my-skills:pr-review-router", category: review-and-audit}
-    - {name: "my-skills:provocation", category: think-and-research}
-    - {name: "my-skills:random-stimulus", category: think-and-research}
-    - {name: "my-skills:remote-session-orchestration", category: agents-and-automation}
-    - {name: "my-skills:resolve-user-skill", category: claude-setup}
-    - {name: "my-skills:scamper", category: think-and-research}
-    - {name: "my-skills:six-hats", category: think-and-research}
-    - {name: "my-skills:skill-sheriff-cc", category: claude-setup, also: [review-and-audit]}
-    - {name: "my-skills:spec-tacular", category: plan-and-spec, invoke: user}
-    - {name: "my-skills:vercel-agent-browser", category: agents-and-automation, also: [test]}
-    - {name: "my-skills:vercel-computer-use", category: agents-and-automation}
-    - {name: "my-skills:vista-improve-prompt", category: writing-and-communication}
-    - {name: "my-skills:weekly-wrapup", category: work-tracking, invoke: user}
-    - {name: "my-skills:worst-idea", category: think-and-research}
-    - {name: "my-skills:wrapup-specs", category: plan-and-spec, also: [work-tracking]}
-    - {name: "my-skills:zoom-out", category: design-architecture, invoke: user}
-    - {name: "my-skills:baton-runner", category: agents-and-automation, invoke: user}
-    - {name: "my-skills:multi-agent-review", category: review-and-audit}
-    - {name: "my-skills:multi-agent-review-codex", category: review-and-audit}
-    - {name: "my-skills:reasoned-review", category: review-and-audit, also: [think-and-research]}
-    - {name: "my-skills:reasoned-review-codex", category: review-and-audit}
-    - {name: "my-skills:teammate-handoff", category: agents-and-automation, invoke: user}
-    - {name: "my-skills:total-review", category: review-and-audit, invoke: internal}
-    - {name: "my-skills:total-review-scaffold", category: review-and-audit}
-    - {name: "my-skills:total-review-init", category: review-and-audit, kind: command, invoke: user}
+    - {name: "zord-addyosmani:addy-code", category: build-code}
+    - {name: "zord-addyosmani:addyosmani-api-and-interface-design", category: design-architecture}
+    - {name: "zord-addyosmani:addyosmani-browser-testing-with-devtools", category: test, also: [debug]}
+    - {name: "zord-addyosmani:addyosmani-ci-cd-and-automation", category: git-and-release}
+    - {name: "zord-addyosmani:addyosmani-code-review-and-quality", category: review-and-audit}
+    - {name: "zord-addyosmani:addyosmani-code-simplification", category: review-and-audit}
+    - {name: "zord-addyosmani:addyosmani-constraint-driven-development", category: plan-and-spec}
+    - {name: "zord-addyosmani:addyosmani-context-engineering", category: claude-setup}
+    - {name: "zord-addyosmani:addyosmani-debugging-and-error-recovery", category: debug}
+    - {name: "zord-addyosmani:addyosmani-deprecation-and-migration", category: build-code}
+    - {name: "zord-addyosmani:addyosmani-documentation-and-adrs", category: writing-and-communication, also: [design-architecture]}
+    - {name: "zord-addyosmani:addyosmani-doubt-driven-development", category: review-and-audit}
+    - {name: "zord-addyosmani:addyosmani-frontend-ui-engineering", category: frontend-and-design}
+    - {name: "zord-addyosmani:addyosmani-git-workflow-and-versioning", category: git-and-release}
+    - {name: "zord-addyosmani:addyosmani-idea-refine", category: think-and-research}
+    - {name: "zord-addyosmani:addyosmani-incremental-implementation", category: build-code}
+    - {name: "zord-addyosmani:addyosmani-interview-me", category: plan-and-spec}
+    - {name: "zord-addyosmani:addyosmani-observability-and-instrumentation", category: git-and-release}
+    - {name: "zord-addyosmani:addyosmani-performance-optimization", category: build-code}
+    - {name: "zord-addyosmani:addyosmani-planning-and-task-breakdown", category: plan-and-spec}
+    - {name: "zord-addyosmani:addyosmani-security-and-hardening", category: security}
+    - {name: "zord-addyosmani:addyosmani-shipping-and-launch", category: git-and-release}
+    - {name: "zord-addyosmani:addyosmani-source-driven-development", category: build-code}
+    - {name: "zord-addyosmani:addyosmani-spec-driven-development", category: plan-and-spec}
+    - {name: "zord-addyosmani:addyosmani-test-driven-development", category: test, also: [debug]}
+    - {name: "zord-addyosmani:addyosmani-using-agent-skills", category: claude-setup}
+    - {name: "zord-lateral:analogy", category: think-and-research}
+    - {name: "zord-review:audit-numeric-types", category: review-and-audit}
+    - {name: "zord-workflow:baton-pass", category: work-tracking}
+    - {name: "zord-workflow:baton-runner-managed", category: agents-and-automation, invoke: user}
+    - {name: "zord-workflow:big-next-job", category: agents-and-automation}
+    - {name: "zord-workflow:walk-off", category: agents-and-automation}
+    - {name: "zord-workflow:spec-to-test-development", category: test, also: [plan-and-spec, build-code]}
+    - {name: "zord-workflow:workflow-router", category: agents-and-automation, invoke: internal}  # run by its own jev_route.py hook
+    - {name: "zord-workflow:bro-down", category: writing-and-communication, action: prompt, invoke: user}
+    - {name: "zord-workflow:bro-next", category: writing-and-communication, action: prompt}
+    - {name: "zord-workflow:chiquita", category: writing-and-communication}
+    - {name: "zord-review:ci-parity-run", category: test, also: [git-and-release]}
+    - {name: "zord-workflow:claude-md-trim", category: claude-setup}
+    - {name: "zord-workflow:cloud-environment-setup", category: claude-setup}
+    - {name: "zord-review:code-cleaver", category: review-and-audit, invoke: user}
+    - {name: "zord-lateral:concept-fan", category: think-and-research}
+    - {name: "zord-workflow:daily-loop", category: claude-setup}
+    - {name: "zord-review:drift-status-check", category: work-tracking, also: [plan-and-spec], invoke: user}
+    - {name: "zord-review:dw-review", category: review-and-audit}
+    - {name: "zord-review:dw-review-codex", category: review-and-audit, invoke: "off"}
+    - {name: "zord-review:finding-fixer", category: review-and-audit}
+    - {name: "zord-review:finding-fixer-codex", category: review-and-audit, invoke: "off"}
+    - {name: "zord-workflow:i-have-adhd", category: writing-and-communication, action: prompt, invoke: user}
+    - {name: "zord-lateral:inversion", category: think-and-research}
+    - {name: "zord-workflow:iron-ham-split", category: git-and-release}
+    - {name: "zord-lateral:lateral", category: think-and-research}
+    - {name: "zord-mattpocock:mattpocock-codebase-design", category: design-architecture}
+    - {name: "zord-mattpocock:mattpocock-domain-modeling", category: design-architecture}
+    - {name: "zord-mattpocock:mattpocock-git-guardrails-claude-code", category: claude-setup, also: [git-and-release]}
+    - {name: "zord-mattpocock:mattpocock-grilling", category: think-and-research, also: [plan-and-spec]}
+    - {name: "zord-mattpocock:mattpocock-improve-codebase-architecture", category: design-architecture, invoke: user}
+    - {name: "zord-mattpocock:mattpocock-prototype", category: build-code}
+    - {name: "zord-mattpocock:mattpocock-research", category: think-and-research}
+    - {name: "zord-mattpocock:mattpocock-wizard", category: git-and-release}
+    - {name: "zord-mattpocock:mattpocock-writing-for-agents", category: claude-setup, also: [writing-and-communication]}
+    - {name: "zord-workflow:outline-transcript", category: work-tracking}
+    - {name: "zord-workflow:pr-merge-cleanup", category: git-and-release}
+    - {name: "zord-review:pr-review-router", category: review-and-audit}
+    - {name: "zord-lateral:provocation", category: think-and-research}
+    - {name: "zord-lateral:random-stimulus", category: think-and-research}
+    - {name: "zord-workflow:remote-session-orchestration", category: agents-and-automation}
+    - {name: "zord-workflow:resolve-user-skill", category: claude-setup}
+    - {name: "zord-lateral:scamper", category: think-and-research}
+    - {name: "zord-lateral:six-hats", category: think-and-research}
+    - {name: "zord-review:skill-sheriff-cc", category: claude-setup, also: [review-and-audit]}
+    - {name: "zord-workflow:spec-tacular", category: plan-and-spec, invoke: user}
+    - {name: "zord-workflow:vercel-agent-browser", category: agents-and-automation, also: [test]}
+    - {name: "zord-workflow:vercel-computer-use", category: agents-and-automation}
+    - {name: "zord-workflow:vista-improve-prompt", category: writing-and-communication}
+    - {name: "zord-workflow:weekly-wrapup", category: work-tracking, invoke: user}
+    - {name: "zord-lateral:worst-idea", category: think-and-research}
+    - {name: "zord-workflow:wrapup-specs", category: plan-and-spec, also: [work-tracking]}
+    - {name: "zord-workflow:zoom-out", category: design-architecture, invoke: user}
+    - {name: "zord-workflow:baton-runner", category: agents-and-automation, invoke: user}
+    - {name: "zord-review:multi-agent-review", category: review-and-audit}
+    - {name: "zord-review:multi-agent-review-codex", category: review-and-audit}
+    - {name: "zord-review:reasoned-review", category: review-and-audit, also: [think-and-research]}
+    - {name: "zord-review:reasoned-review-codex", category: review-and-audit}
+    - {name: "zord-workflow:teammate-handoff", category: agents-and-automation, invoke: user}
+    - {name: "zord-review:total-review", category: review-and-audit, invoke: internal}
+    - {name: "zord-review:total-review-scaffold", category: review-and-audit}
+    - {name: "zord-review:total-review-init", category: review-and-audit, kind: command, invoke: user}
 
   # Plugin skills synced into claude.ai cloud sessions (several are disabled locally).
   cloud-synced:
@@ -309,7 +310,7 @@ sources:
     - {name: reverse-engineer-anything, category: think-and-research, invoke: "off"}  # by-name
     - {name: security-review, category: security, invoke: "off"}
     - {name: setup-matt-pocock-skills, category: claude-setup, invoke: "off"}
-    - {name: tdd, category: test, invoke: user}  # parked 2026-11-21 in favour of my-skills:addyosmani-test-driven-development
+    - {name: tdd, category: test, invoke: user}  # parked 2026-11-21 in favour of zord-addyosmani:addyosmani-test-driven-development
     - {name: to-questionnaire, category: plan-and-spec, invoke: user}
     - {name: triage, category: work-tracking, invoke: user}
     - {name: wait-what, category: writing-and-communication, invoke: user}
