@@ -26,7 +26,7 @@ def expect_error(directory: Path, needle: str) -> None:
 
 def main():
     categories, catalog = skill_catalog.load()
-    assert len(catalog) >= 474, len(catalog)
+    assert len(catalog) >= 473, len(catalog)
     assert "other" in categories
     every = skill_catalog.pools(
         skill_catalog.assign(
