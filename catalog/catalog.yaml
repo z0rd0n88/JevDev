@@ -49,7 +49,9 @@ sources:
     - {name: "my-skills:baton-pass", category: work-tracking}
     - {name: "my-skills:baton-runner-managed", category: agents-and-automation, invoke: user}
     - {name: "my-skills:big-next-job", category: agents-and-automation}
-    - {name: "my-skills:branch-off", category: agents-and-automation}
+    - {name: "my-skills:walk-off", category: agents-and-automation}
+    - {name: "my-skills:spec-to-test-development", category: test, also: [plan-and-spec, build-code]}
+    - {name: "my-skills:workflow-router", category: agents-and-automation, invoke: internal}  # run by its own jev_route.py hook
     - {name: "my-skills:bro-down", category: writing-and-communication, action: prompt, invoke: user}
     - {name: "my-skills:bro-next", category: writing-and-communication, action: prompt}
     - {name: "my-skills:chiquita", category: writing-and-communication}
@@ -98,15 +100,15 @@ sources:
     - {name: "my-skills:worst-idea", category: think-and-research}
     - {name: "my-skills:wrapup-specs", category: plan-and-spec, also: [work-tracking]}
     - {name: "my-skills:zoom-out", category: design-architecture, invoke: user}
-    - {name: "my-skills:zord-baton-runner", category: agents-and-automation, invoke: user}
-    - {name: "my-skills:zord-multi-agent-review", category: review-and-audit}
-    - {name: "my-skills:zord-multi-agent-review-codex", category: review-and-audit}
-    - {name: "my-skills:zord-reasoned-review", category: review-and-audit, also: [think-and-research]}
-    - {name: "my-skills:zord-reasoned-review-codex", category: review-and-audit}
-    - {name: "my-skills:zord-teammate-handoff", category: agents-and-automation, invoke: user}
-    - {name: "my-skills:zord-total-review", category: review-and-audit, invoke: internal}
-    - {name: "my-skills:zord-total-review-scaffold", category: review-and-audit}
-    - {name: "my-skills:zord-total-review-init", category: review-and-audit, kind: command, invoke: user}
+    - {name: "my-skills:baton-runner", category: agents-and-automation, invoke: user}
+    - {name: "my-skills:multi-agent-review", category: review-and-audit}
+    - {name: "my-skills:multi-agent-review-codex", category: review-and-audit}
+    - {name: "my-skills:reasoned-review", category: review-and-audit, also: [think-and-research]}
+    - {name: "my-skills:reasoned-review-codex", category: review-and-audit}
+    - {name: "my-skills:teammate-handoff", category: agents-and-automation, invoke: user}
+    - {name: "my-skills:total-review", category: review-and-audit, invoke: internal}
+    - {name: "my-skills:total-review-scaffold", category: review-and-audit}
+    - {name: "my-skills:total-review-init", category: review-and-audit, kind: command, invoke: user}
 
   # Plugin skills synced into claude.ai cloud sessions (several are disabled locally).
   cloud-synced:
@@ -508,7 +510,7 @@ sources:
   # Gold skills in benchmarks/pilot-labels-claude.jsonl, named as on the roster those labels were
   # written against (superpowers is now disabled; ClaudesMods is gone). The remapped draft is
   # benchmarks/pilot-labels-claude-2026-11.jsonl. ClaudesMods:* later moved into my-skills (chiquita, pr-merge-cleanup,
-  # zord-multi-agent-review, zord-reasoned-review); idea-nebula, prd and swot-analysis did not.
+  # multi-agent-review, reasoned-review; zord- prefix dropped 2026-11-23); idea-nebula, prd and swot-analysis did not.
   benchmark-labels:
     - {name: "superpowers:brainstorming", category: plan-and-spec, also: [think-and-research]}
     - {name: "superpowers:systematic-debugging", category: debug}
