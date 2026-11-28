@@ -1,0 +1,25 @@
+# Where each catalog source's files live, for `--roster library`: the router reads skills and
+# agents from here instead of the host's live roster, so none of them sit in the context.
+#
+# Templates are tried in order and the first existing file wins. {plugin} and {skill} are the
+# parts of a catalog name around its last ':' (an agent uses its bare name); ~, $VARS and glob
+# patterns (including **) expand. Point JEV_LIBRARY at another file to use different roots,
+# and run `skill_router.py --roster library catalog` to list entries that resolve nowhere.
+# Sources left out here (cloud-synced, benchmark-labels) are never routed in library mode.
+sources:
+  my-skills:
+    - ~/Projects/my-skills/skills/{skill}/SKILL.md
+    - ~/.claude/plugins/cache/z0rd0nlander/{plugin}/*/skills/{skill}/SKILL.md
+  claude-config:
+    - ~/.claude/skills/{skill}/SKILL.md
+    - ~/.agents/skills/{skill}/SKILL.md
+  skills-disabled:
+    - ~/.claude/skills/disabled/{skill}/SKILL.md
+    - ~/.agents/skills/{skill}/SKILL.md
+  local-plugins:
+    - ~/.claude/plugins/cache/z0rd0nlander/{plugin}/*/skills/{skill}/SKILL.md
+    - ~/.claude/plugins/cache/*/{plugin}/*/skills/{skill}/SKILL.md
+  agents-parked:
+    - ~/.claude/agents-parked/{skill}.md
+  project-agents:
+    - ~/Projects/*/.claude/agents/{skill}.md

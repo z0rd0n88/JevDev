@@ -20,17 +20,29 @@ import time
 import yaml
 
 from jev_patterns import PRICE_PER_MILLION_INPUT, call, input_tokens, model_name
+from redaction import redact_strict
+import skill_catalog
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 ROUTER_VERSION = "balanced-shards-v2"
+CATEGORY_ROUTER_VERSION = "category-v1"
+NOGATE_ROUTER_VERSION = "category-nogate-v2"
+CATEGORY_FLOOR = 0.35
+SECOND_CATEGORY = 0.25
+POOL_LIMIT = 32
+DESC_LIMIT = 240
+ROSTER_MODES = ("live", "library")
+AGENT_CWD = PROJECT_ROOT / ".local" / "agent-cwd"
+HOOK_LOG_PROMPT_CHARS = 500
 WIDE_LIMIT = 60
 SHORTLIST = 3
 SHARD_SIZE = 255
 EXCERPT = 700
 GATE_THRESHOLD = 0.30
 FITS_THRESHOLD = 0.30
+NOGATE_FITS_THRESHOLD = 0.55  # chosen on the pilot and the no-skill edit prompts; confirm on fresh ones
 GATES = {
     "acts_on_user_system": "Is the assistant being asked to act on the user's files, accounts, devices, or online services, rather than only to explain or advise?",
     "would_follow_documented_procedure": "Would a careful expert answering this consult a specific documented procedure or set of commands, rather than answering from general understanding?",
@@ -202,6 +214,19 @@ def host_roster(host: str) -> list[dict]:
     return roster() if host == "claude" else codex_roster()
 
 
+def library_roster() -> list[dict]:
+    """Every routable catalog entry that resolves to a file, none of it loaded in the host."""
+    _, catalog = skill_catalog.load()
+    entries, _ = skill_catalog.library(catalog)
+    if not entries:
+        raise RuntimeError(f"No library entries resolve through {skill_catalog.LIBRARY_FILE}")
+    return entries
+
+
+def entries_for(host: str, mode: str) -> list[dict]:
+    return library_roster() if mode == "library" else host_roster(host)
+
+
 def index_text(entries: list[dict]) -> str:
     return "\n".join(f"- {x['name']}: {x['description'][:WIDE_LIMIT]}" for x in entries)
 
@@ -223,12 +248,7 @@ def wide_questions(entries: list[dict]) -> dict:
             "instructions": "Which of these skills, if any, is the right one to load to help with the user's latest request?",
             "criteria": {x["name"]: x["description"][:WIDE_LIMIT] for x in shard},
         }
-    questions.update(
-        {
-            f"gate::{key}": {"type": "noul", "instructions": text}
-            for key, text in GATES.items()
-        }
-    )
+    questions.update(gate_questions())
     return questions
 
 
@@ -279,6 +299,22 @@ def jev(questions: dict, request: str) -> tuple[dict, float]:
     return response, response["elapsed"]
 
 
+def gate_questions() -> dict:
+    return {
+        f"gate::{key}": {"type": "noul", "instructions": text}
+        for key, text in GATES.items()
+    }
+
+
+def gate_score(answers: dict) -> tuple[float, dict]:
+    """Average the GATES answers, inverting prose_suffices."""
+    values = {key: float(answers[f"gate::{key}"]["noul"]) for key in GATES}
+    gate = sum(
+        1 - value if key == "prose_suffices" else value for key, value in values.items()
+    ) / len(GATES)
+    return gate, values
+
+
 def suggest(request: str, entries: list[dict]) -> dict:
     by_name = {x["name"]: x for x in entries}
     first, first_seconds = jev(wide_questions(entries), request)
@@ -291,11 +327,7 @@ def suggest(request: str, entries: list[dict]) -> dict:
                 :SHORTLIST
             ]
         )
-    gate_values = {key: float(answers[f"gate::{key}"]["noul"]) for key in GATES}
-    gate = sum(
-        1 - value if key == "prose_suffices" else value
-        for key, value in gate_values.items()
-    ) / len(GATES)
+    gate, gate_values = gate_score(answers)
     result = {
         "suggestion": None,
         "model": first.get("model") or model_name(),
@@ -352,6 +384,154 @@ def suggest(request: str, entries: list[dict]) -> dict:
     return result
 
 
+def category_questions(categories: dict, gated: bool = True) -> dict:
+    questions = gate_questions() if gated else {}
+    questions["category"] = {
+        "type": "choice",
+        "instructions": "Which area does the user's latest request belong to? Judge what the user wants done, not the words they use.",
+        "criteria": {key: " ".join(value["criteria"].split()) for key, value in categories.items()},
+    }
+    return questions
+
+
+def pool_questions(pool: list[dict], gated: bool = True) -> dict:
+    """gated keeps category-v1's "does it do the thing" check. Without the gate, the check
+    asks whether the skill improves the execution, so a generalist that merely can do a
+    routine edit does not pass."""
+    questions = {
+        "which": {
+            "type": "choice",
+            "instructions": "Exactly one of these skills is the right one to load for the user's latest request. Which one? Read what each actually does, not just its name.",
+            "criteria": {x["name"]: x["description"][:DESC_LIMIT] for x in pool},
+        }
+    }
+    questions.update(
+        {
+            f"fits::{x['name']}": {
+                "type": "noul",
+                "instructions": (
+                    f"Does the skill {x['name']!r} do the specific thing the user's request asks for? It is described as: {x['description'][:DESC_LIMIT]}"
+                    if gated
+                    else f"Does the skill {x['name']!r} improve the execution of the user's request? It is described as: {x['description'][:DESC_LIMIT]}"
+                ),
+            }
+            for x in pool
+        }
+    )
+    return questions
+
+
+def suggest_by_category(
+    request: str,
+    entries: list[dict],
+    catalog_dir: Path = skill_catalog.CATALOG_DIR,
+    gated: bool = True,
+) -> dict:
+    """Request 1: gates plus a category Choice. Request 2: which plus fits over that category's pool.
+
+    Falls back to balanced-shards-v2 when the category answer is unsure, or when Jev picks
+    "other" while live skills sit uncategorized. Every extra request is counted in the result.
+
+    With gated=False (category-nogate-v2) there are no gate questions and no fallback: a
+    confident "other" abstains, an unsure answer widens to the top two categories, uncategorized
+    skills join every pool, and the fit check, asking whether each skill improves the
+    execution, alone decides whether anything is suggested.
+    """
+    categories, catalog = skill_catalog.load(catalog_dir)
+    by_name = {x["name"]: x for x in entries}
+    grouped = skill_catalog.pools(skill_catalog.assign(entries, categories, catalog))
+    first, first_seconds = jev(category_questions(categories, gated), request)
+    answers = first["answers"]
+    gate, gate_values = gate_score(answers) if gated else (None, {})
+    ranked = sorted(
+        answers["category"]["probabilities"].items(), key=lambda pair: (-pair[1], pair[0])
+    )
+    result = {
+        "suggestion": None,
+        "model": first.get("model") or model_name(),
+        "categories": ranked[:3],
+        "chosen_categories": [],
+        "pool": [],
+        "fallback": False,
+        "gate": gate,
+        "gate_values": gate_values,
+        "fits": {},
+        "requests": 1,
+        "seconds": first_seconds,
+        "input_tokens": input_tokens(first),
+        "roster_sha256": roster_hash(entries),
+        "catalog_sha256": skill_catalog.digest(categories, catalog),
+        "router_version": CATEGORY_ROUTER_VERSION if gated else NOGATE_ROUTER_VERSION,
+    }
+
+    def finish() -> dict:
+        result["estimated_usd"] = (
+            result["input_tokens"] * PRICE_PER_MILLION_INPUT / 1_000_000
+        )
+        return result
+
+    if gated and gate < GATE_THRESHOLD:
+        return finish()
+    if gated:
+        chosen = [ranked[0][0]]
+        if len(ranked) > 1 and ranked[1][1] >= SECOND_CATEGORY:
+            chosen.append(ranked[1][0])
+    else:
+        if ranked[0][0] == "other" and ranked[0][1] >= CATEGORY_FLOOR:
+            return finish()
+        unsure = ranked[0][1] < CATEGORY_FLOOR
+        areas = [pair for pair in ranked if pair[0] != "other"]
+        chosen = [areas[0][0]] + [
+            key for key, p in areas[1:2] if unsure or p >= SECOND_CATEGORY
+        ]
+    result["chosen_categories"] = chosen
+    names = list(dict.fromkeys(n for c in chosen for n in grouped.get(c, [])))
+    if not gated:
+        names = list(dict.fromkeys(names + grouped.get("uncategorized", [])))
+    elif ranked[0][1] < CATEGORY_FLOOR or (not names and grouped.get("uncategorized")):
+        flat = suggest(request, entries)
+        result.update(
+            {
+                "fallback": True,
+                "suggestion": flat["suggestion"],
+                "fits": flat["fits"],
+                "requests": result["requests"] + flat["requests"],
+                "seconds": result["seconds"] + flat["seconds"],
+                "input_tokens": result["input_tokens"] + flat["input_tokens"],
+            }
+        )
+        return finish()
+    if not names:
+        return finish()
+    pool = skill_catalog.rank(request, [by_name[n] for n in names], POOL_LIMIT)
+    result["pool"] = [x["name"] for x in pool]
+    cutoff = FITS_THRESHOLD if gated else NOGATE_FITS_THRESHOLD
+    second, second_seconds = jev(pool_questions(pool, gated), request)
+    fits = {x["name"]: float(second["answers"][f"fits::{x['name']}"]["noul"]) for x in pool}
+    choice = second["answers"]["which"]["choice"]
+    result.update(
+        {
+            "suggestion": choice if fits.get(choice, 0.0) >= cutoff else None,
+            "fits": fits,
+            "requests": 2,
+            "seconds": result["seconds"] + second_seconds,
+            "input_tokens": result["input_tokens"] + input_tokens(second),
+        }
+    )
+    return finish()
+
+
+def suggest_by_category_nogate(request: str, entries: list[dict]) -> dict:
+    return suggest_by_category(request, entries, gated=False)
+
+
+ROUTERS = {
+    ROUTER_VERSION: suggest,
+    CATEGORY_ROUTER_VERSION: suggest_by_category,
+    NOGATE_ROUTER_VERSION: suggest_by_category_nogate,
+}
+
+
 def score(rows: list[dict]) -> dict:
     """Score *observed first loads*, never silently replace them with gold."""
     if len(rows) < 100:
@@ -383,6 +563,7 @@ def score(rows: list[dict]) -> dict:
     if len(router_versions) != 1 or None in router_versions:
         raise ValueError("Observations need one recorded router version")
     report["router_version"] = next(iter(router_versions))
+    report["rows_with_reused_arms"] = sum("arms_reused_from" in row for row in rows)
     history = [row for row in rows if "historical_first_load" in row]
     if history:
         report["gold_vs_historical_disagreements"] = sum(
@@ -393,10 +574,17 @@ def score(rows: list[dict]) -> dict:
         if any(arm not in row.get("loads", {}) for row in rows):
             raise ValueError(f"Missing observed first load for {arm}")
         wrong = sum(row["loads"][arm] != row["gold"] for row in covered)
+        # Labeled same-job alternatives (near-duplicate skills) also count as right here.
+        lenient = sum(
+            row["loads"][arm] not in {row["gold"], *row.get("alternatives", [])}
+            for row in covered
+        )
         needless = sum(row["loads"][arm] is not None for row in uncovered)
         report[arm] = {
             "wrong_loads": wrong,
             "wrong_load_rate": wrong / len(covered),
+            "wrong_loads_accepting_alternatives": lenient,
+            "wrong_load_rate_accepting_alternatives": lenient / len(covered),
             "needless_loads": needless,
             "needless_load_rate": needless / len(uncovered),
         }
@@ -545,17 +733,101 @@ def first_codex_skill_load(
     return None, elapsed
 
 
-def suggestion_block(name: str | None, oracle: bool = False) -> str:
+def deploy_text(name: str, path: str | None) -> str:
+    """How a routed entry reaches the agent: by name when it is live, by its file otherwise."""
+    if not path:
+        return f"{name}."
+    if name.startswith(skill_catalog.AGENT_PREFIX):
+        return f"the {name[len(skill_catalog.AGENT_PREFIX):]} agent. Its definition is at {path}; read it and run its instructions as a subagent."
+    return f"{name}. Its instructions are at {path}; read that file and follow it."
+
+
+def suggestion_block(name: str | None, oracle: bool = False, path: str | None = None) -> str:
     if name:
         lead = (
             "The correct skill for this evaluation request is"
             if oracle
             else "Relevant to the current request:"
         )
-        body = f"{lead} {name}. Ignore this if it does not fit what the user actually asked for."
+        body = f"{lead} {deploy_text(name, path)} Ignore this if it does not fit what the user actually asked for."
     else:
         body = "No skill in the roster appears relevant to this request."
     return f"<skill_relevance>\n{body}\n</skill_relevance>"
+
+
+def parse_library_load(stdout: str, paths: dict[str, str]) -> str | None:
+    """The library entry whose file the agent's first turn reads, if any.
+
+    paths maps each library file's resolved path to its entry name. Reads of anything else
+    (the working directory, a guessed path) do not count as a load.
+    """
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            if event.get("skills"):
+                raise RuntimeError("Library-mode agent arm still lists live skills")
+        if event.get("type") != "assistant":
+            continue
+        for block in event.get("message", {}).get("content", []):
+            if block.get("type") == "tool_use" and block.get("name") == "Read":
+                target = str(block.get("input", {}).get("file_path") or "")
+                name = paths.get(os.path.realpath(target)) if target else None
+                if name:
+                    return name
+    return None
+
+
+def first_claude_library_load(
+    prompt: str, suggestion: str | None, model: str, paths: dict[str, str]
+) -> tuple[str | None, float]:
+    """One Claude agent with no skills, no plugin MCP servers and only Read: the library setup.
+
+    Library roots are not added as directories, so the agent learns a file's location only
+    from the router's suggestion.
+    """
+    AGENT_CWD.mkdir(parents=True, exist_ok=True)
+    command = [
+        "claude",
+        "-p",
+        "--model",
+        model,
+        "--disable-slash-commands",
+        "--strict-mcp-config",
+        "--tools",
+        "Read",
+        "--allowedTools",
+        "Read",
+        "--permission-mode",
+        "dontAsk",
+        "--max-turns",
+        "1",
+        "--max-budget-usd",
+        "0.10",
+        "--no-session-persistence",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
+    if suggestion is not None:
+        command.extend(["--append-system-prompt", suggestion])
+    start = time.perf_counter()
+    process = subprocess.run(
+        command,
+        input=prompt,
+        cwd=AGENT_CWD,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    elapsed = time.perf_counter() - start
+    loaded = parse_library_load(process.stdout, paths)
+    if loaded is None and process.returncode and '"type":"result"' not in process.stdout.replace(" ", ""):
+        raise RuntimeError(f"claude arm exited {process.returncode} without a result; inspect auth locally")
+    return loaded, elapsed
 
 
 def sample_prompts(
@@ -645,7 +917,22 @@ def benchmark(
     model: str,
     host: str,
     limit: int | None = None,
+    router: str = ROUTER_VERSION,
+    reuse_path: Path | None = None,
+    roster_mode: str = "live",
 ) -> dict:
+    """Run baseline, routed, and oracle arms per labeled prompt, checkpointing each.
+
+    roster_mode "library" routes over the catalog library and runs each arm with no skills
+    loaded; a load is the agent reading the suggested file. It supports Claude only.
+
+    reuse_path names another router's observations from the same host, model, and roster.
+    Its baseline and oracle loads are copied instead of rerun, because neither arm sees the
+    router's suggestion. Copied rows record the source router in `arms_reused_from`.
+    """
+    if roster_mode == "library" and host != "claude":
+        raise ValueError("Library mode benchmarks the Claude host only")
+    route = ROUTERS[router]
     labels = [
         json.loads(line)
         for line in labels_path.read_text().splitlines()
@@ -664,8 +951,10 @@ def benchmark(
         raise ValueError("Label file is for a different host")
     if not any(row.get("gold") is None for row in labels):
         raise ValueError("The labeled set needs uncovered prompts")
-    entries = host_roster(host)
+    entries = entries_for(host, roster_mode)
     names = {x["name"] for x in entries}
+    path_of = {x["name"]: x.get("path") for x in entries}
+    library_paths = {x["path"]: x["name"] for x in entries if x.get("path")}
     if any(row.get("gold") not in names | {None} for row in labels):
         raise ValueError("A gold skill is absent from the current roster")
     existing = {}
@@ -689,12 +978,37 @@ def benchmark(
         row.get("host") != host
         or row.get("agent_model") != model
         or (row.get("routing") or {}).get("roster_sha256") != expected_hash
-        or (row.get("routing") or {}).get("router_version") != ROUTER_VERSION
+        or (row.get("routing") or {}).get("router_version") != router
+        or row.get("roster_mode", "live") != roster_mode
         for row in existing.values()
     ):
         raise ValueError(
             "Existing observations use a different host, model, roster, or router version"
         )
+    reusable = {}
+    if reuse_path is not None:
+        if reuse_path.resolve() == output_path.resolve():
+            raise ValueError("--reuse-arms must name another observations file")
+        for line in reuse_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            source = json.loads(line)
+            label = labels_by_id.get(source.get("id"))
+            if label is None or (source["text"], source["gold"]) != (
+                label["text"],
+                label["gold"],
+            ):
+                raise ValueError("Reused observations disagree with the label file")
+            if (
+                source.get("host") != host
+                or source.get("roster_mode", "live") != roster_mode
+                or source.get("agent_model") != model
+                or (source.get("routing") or {}).get("roster_sha256") != expected_hash
+            ):
+                raise ValueError(
+                    "Reused observations use a different host, model, or roster"
+                )
+            reusable[source["id"]] = source
     done = 0
     for row in labels:
         if limit is not None and done >= limit:
@@ -705,25 +1019,43 @@ def benchmark(
         ):
             continue
         if observed is None:
-            routing = suggest(row["text"], entries)
+            routing = route(row["text"], entries)
             observed = {
                 **row,
                 "routing": routing,
                 "loads": {},
                 "arm_seconds": {},
                 "agent_model": model,
+                "roster_mode": roster_mode,
                 "host": host,
             }
             existing[row["id"]] = observed
             save_observations(output_path, existing)
         for arm, block in (
             ("baseline", None),
-            ("routed", suggestion_block(observed["routing"]["suggestion"])),
-            ("oracle", suggestion_block(row["gold"], oracle=True)),
+            (
+                "routed",
+                suggestion_block(
+                    observed["routing"]["suggestion"],
+                    path=path_of.get(observed["routing"]["suggestion"]),
+                ),
+            ),
+            ("oracle", suggestion_block(row["gold"], oracle=True, path=path_of.get(row["gold"]))),
         ):
             if arm in observed["loads"]:
                 continue
-            if host == "claude":
+            source = reusable.get(row["id"])
+            if arm != "routed" and source and arm in source.get("loads", {}):
+                observed["loads"][arm] = source["loads"][arm]
+                observed["arm_seconds"][arm] = source["arm_seconds"][arm]
+                observed["arms_reused_from"] = source["routing"]["router_version"]
+                save_observations(output_path, existing)
+                continue
+            if roster_mode == "library":
+                loaded, seconds = first_claude_library_load(
+                    row["text"], block, model, library_paths
+                )
+            elif host == "claude":
                 loaded, seconds = first_claude_skill_load(
                     row["text"], block, model, names
                 )
@@ -751,21 +1083,78 @@ def benchmark(
     }
 
 
-def run_prompt_hook(host: str) -> None:
-    """Route a host UserPromptSubmit event and return a non-blocking hint."""
+def hook_log_path() -> Path:
+    """$JEV_LOG_DIR (user scope: one central directory), else this checkout's ignored .local."""
+    return Path(os.environ.get("JEV_LOG_DIR") or PROJECT_ROOT / ".local") / "skill-router.jsonl"
+
+
+def log_hook_pick(row: dict) -> None:
+    """Append one routing decision; logging must never break the hook."""
+    try:
+        path = hook_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a") as f:
+            f.write(json.dumps(row, sort_keys=True) + "\n")
+    except OSError:
+        pass
+
+
+def hook_row(host: str, router: str, roster_mode: str, prompt: str) -> dict:
+    return {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "host": host,
+        "router_version": router,
+        "roster_mode": roster_mode,
+        "prompt": redact_strict(prompt)[:HOOK_LOG_PROMPT_CHARS],
+    }
+
+
+def run_prompt_hook(host: str, router: str = ROUTER_VERSION, roster_mode: str = "live") -> None:
+    """Route a host UserPromptSubmit event and return a non-blocking hint.
+
+    Every routed prompt appends a row to hook_log_path(): the redacted, clipped prompt,
+    the pick and its fit, the categories and the cost, so real use can be reviewed later.
+    """
+    row = None
     try:
         event = json.load(sys.stdin)
         prompt = event.get("prompt") if isinstance(event, dict) else None
         if not isinstance(prompt, str) or not prompt.strip():
             return
-        routing = suggest(prompt, host_roster(host))
+        row = hook_row(host, router, roster_mode, prompt)
+        entries = entries_for(host, roster_mode)
+        routing = ROUTERS[router](prompt, entries)
         suggestion = routing.get("suggestion")
+        fits = routing.get("fits") or {}
+        top_fit = max(fits.items(), key=lambda pair: pair[1]) if fits else None
+        row.update(
+            {
+                "suggestion": suggestion,
+                "suggestion_fit": fits.get(suggestion) if suggestion else None,
+                "top_fit": list(top_fit) if top_fit else None,
+                "categories": routing.get("categories"),
+                "chosen_categories": routing.get("chosen_categories"),
+                "requests": routing.get("requests"),
+                "input_tokens": routing.get("input_tokens"),
+                "estimated_usd": routing.get("estimated_usd"),
+                "seconds": routing.get("seconds"),
+                "roster_sha256": routing.get("roster_sha256"),
+            }
+        )
+        log_hook_pick(row)
         if not suggestion:
             return
-        context = (
-            f"Jev skill router suggests `{suggestion}` for this request. "
-            "Load that skill and use its instructions if it fits the task."
-        )
+        path = next((x.get("path") for x in entries if x["name"] == suggestion), None)
+        if path:
+            context = (
+                f"Jev skill router suggests {deploy_text(suggestion, path)} "
+                "Use it only if it fits the task."
+            )
+        else:
+            context = (
+                f"Jev skill router suggests `{suggestion}` for this request. "
+                "Load that skill and use its instructions if it fits the task."
+            )
         print(
             json.dumps(
                 {
@@ -776,8 +1165,11 @@ def run_prompt_hook(host: str) -> None:
                 }
             )
         )
-    except Exception:
+    except Exception as error:
         # Routing is advisory: a Jev outage or missing key must never block a prompt.
+        if row is not None and "suggestion" not in row:
+            row["error"] = type(error).__name__
+            log_hook_pick(row)
         message = (
             "Jev skill routing failed open; this prompt will continue without a "
             "router suggestion. Check the Jev credentials and router configuration."
@@ -788,8 +1180,16 @@ def run_prompt_hook(host: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", choices=("claude", "codex"), default="claude")
+    parser.add_argument("--router", choices=tuple(ROUTERS), default=ROUTER_VERSION)
+    parser.add_argument(
+        "--roster",
+        choices=ROSTER_MODES,
+        default="live",
+        help="live: the host's loaded skills; library: catalog files resolved through catalog/library.yaml, nothing loaded",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("measure")
+    sub.add_parser("catalog", help="category-v1 coverage of the live roster")
     route = sub.add_parser("route")
     route.add_argument("request")
     sub.add_parser("hook", help="handle a host UserPromptSubmit event from stdin")
@@ -802,6 +1202,12 @@ def main() -> None:
     run.add_argument("observations", type=Path)
     run.add_argument("--model", default=None)
     run.add_argument("--limit", type=int, default=None)
+    run.add_argument(
+        "--reuse-arms",
+        type=Path,
+        default=None,
+        help="copy baseline and oracle loads from another router's observations (same host, model, roster)",
+    )
     sample = sub.add_parser("sample")
     sample.add_argument("output", type=Path)
     sample.add_argument("--transcripts", type=Path, default=None)
@@ -809,7 +1215,7 @@ def main() -> None:
     sample.add_argument("--per-session", type=int, default=3)
     args = parser.parse_args()
     if args.command == "hook":
-        run_prompt_hook(args.host)
+        run_prompt_hook(args.host, args.router, args.roster)
         return
     if args.command == "sample":
         transcript_dir = args.transcripts or (
@@ -840,16 +1246,49 @@ def main() -> None:
         model = args.model or ("haiku" if args.host == "claude" else "gpt-6-luna")
         print(
             json.dumps(
-                benchmark(args.labels, args.observations, model, args.host, args.limit),
+                benchmark(
+                    args.labels,
+                    args.observations,
+                    model,
+                    args.host,
+                    args.limit,
+                    args.router,
+                    args.reuse_arms,
+                    args.roster,
+                ),
                 indent=2,
             )
         )
         return
-    entries = host_roster(args.host)
+    if args.command == "catalog" and args.roster == "library":
+        categories, catalog = skill_catalog.load()
+        entries, missing = skill_catalog.library(catalog)
+        report = skill_catalog.coverage(entries, categories, catalog)
+        report.update(
+            {
+                "library_file": str(skill_catalog.LIBRARY_FILE),
+                "library_entries": len(entries),
+                "library_unresolved": missing,
+                "request_1_utf8_bytes": len(
+                    json.dumps(category_questions(categories), ensure_ascii=False).encode()
+                ),
+            }
+        )
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    entries = entries_for(args.host, args.roster)
     if args.command == "measure":
         print(json.dumps(inspect_roster(entries), indent=2, sort_keys=True))
+    elif args.command == "catalog":
+        categories, catalog = skill_catalog.load()
+        report = skill_catalog.coverage(entries, categories, catalog)
+        report["request_1_utf8_bytes"] = len(
+            json.dumps(category_questions(categories), ensure_ascii=False).encode()
+        )
+        print(json.dumps(report, indent=2, sort_keys=True))
     elif args.command == "route":
-        print(json.dumps(suggest(args.request, entries), indent=2, sort_keys=True))
+        route = ROUTERS[args.router]
+        print(json.dumps(route(args.request, entries), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

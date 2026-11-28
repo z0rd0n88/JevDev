@@ -104,6 +104,49 @@ python3 tests/test_router.py
 
 `skill_router.py` has no agy host; `skill_router_agy.py` wraps the same router for agy: `python3 skill_router_agy.py {measure | route REQUEST | hook}`. It discovers skills under `$GEMINI_HOME` (`config/skills`, `antigravity-cli/skills`, `antigravity-cli/builtin/skills`, and `config/plugins/*/skills/*/SKILL.md`), and `hook` answers an agy `PreInvocation` event with an `ephemeralMessage`, failing open. Nothing wires it in, and no test covers it.
 
+### category-v1
+
+`--router category-v1` routes through the fixed categories in `catalog/categories.yaml`. `balanced-shards-v2` stays the default for `route`, `hook` and `benchmark`.
+
+1. **Request 1** asks the three gate questions plus one Choice over about 15 categories, using each category's written criteria. A gate below `GATE_THRESHOLD` stops here, so an abstention costs only this small request.
+2. **Request 2** runs only over the chosen category's pool. The pool adds the runner-up category when that scores at least `SECOND_CATEGORY`. It asks `which` plus `fits::<skill>` for each member, using descriptions clipped to `DESC_LIMIT`. A pool larger than `POOL_LIMIT` is trimmed in code first, by an inverse-frequency ranker over names and descriptions.
+3. **Fallback.** If the top category scores below `CATEGORY_FLOOR`, the router reruns as `balanced-shards-v2`, adds those requests to the totals and records `fallback: true`. It does the same when Jev picks `other` while live skills are uncategorized.
+
+`--router category-nogate-v2` is the same router without the gate. Request 1 asks only the category Choice. A confident `other` (at least `CATEGORY_FLOOR`) abstains. An unsure answer widens the pool to the top two non-`other` categories instead of falling back. Uncategorized skills join every pool. The `fits` check in request 2 alone decides whether anything is suggested, and asks whether each skill improves the execution of the request rather than whether it can do it. A skill must score at least `NOGATE_FITS_THRESHOLD` (0.55) to be suggested. (v1 asked the old question with a 0.30 cutoff; on 30 routine file edits it routed 19.)
+
+`catalog/catalog.yaml` covers `my-skills` (as its five `zord-*` plugins, e.g. `zord-review:multi-agent-review`), loose `~/.claude/skills`, parked `skills/disabled` and `agents-parked` from ClaudeConfig, project-only agents, four public local plugins and the cloud-synced roster. It gives each skill:
+
+- a category, plus optional `also` categories;
+- an `action`: `prompt`, `session` or `agent`;
+- an `invoke` value. Only `auto` entries are routed: `user` marks skills that must not self-trigger, `internal` marks subagents spawned by another skill, and `"off"` mirrors `skillOverrides`.
+
+Agents carry `kind: agent` and sit in their own namespace, so a skill and an agent can share a name. Each agent lists the repos whose `.claude/agents` hold a copy in `projects`. With `--roster live`, routing reads only the host's roster, so parked skills and agents are never picked. Library mode (below) routes them too.
+
+Live skills missing from the catalog get a keyword-rule category, and are reported as uncategorized when no single category clearly leads. Results add `categories`, `chosen_categories`, `pool`, `fallback` and `catalog_sha256`. Editing the catalog changes routing as much as changing the roster does, so start a new observations file.
+
+```bash
+python3 skill_router.py --host claude catalog
+python3 skill_router.py --host claude --router category-v1 route 'Find why this total is wrong.'
+python3 tests/test_skill_catalog.py
+python3 tests/test_router_category.py
+```
+
+### Library mode (no live roster)
+
+`--roster library` makes the router choose from the whole catalog, so nothing needs to sit in the host's skill listing. Each routable catalog entry resolves to its file through the path templates in `catalog/library.yaml`: parked skills, agents, and `my-skills` from its checkout. The router then deploys only its pick, as a hint that names the file. A skill hint reads "read that file and follow it"; an agent hint says to run the file's instructions as a subagent. `JEV_LIBRARY` points at another templates file.
+
+```bash
+python3 skill_router.py --roster library catalog
+python3 skill_router.py --roster library --router category-v1 route 'Find why this total is wrong.'
+python3 skill_router.py --host claude --roster library --router category-v1 hook
+```
+
+A library-mode benchmark runs every Claude arm with no skills (`--disable-slash-commands`), no plugin MCP servers (`--strict-mcp-config`) and only `Read`. The library directories are not added to the session, so the agent learns a file's location only from the hint. A load is the first turn reading a library file. The baseline arm therefore measures a bare agent, and the routed and oracle arms measure what one routed file adds. `score` also reports `wrong_loads_accepting_alternatives`, which counts a row's labeled same-job `alternatives` as right. With every parked skill available, near-duplicates such as `diagnosing-bugs` and `my-skills:addyosmani-debugging-and-error-recovery` compete.
+
+`catalog` reports coverage of the live roster without a Jev call. It lists skills tagged by rule, skills left uncategorized, catalog entries missing from the roster, pool sizes, and the size of request 1. Tag every uncategorized skill in `catalog.yaml` before you benchmark.
+
+This repo's own Claude `UserPromptSubmit` hook runs `--roster library --router category-nogate-v2 hook`. Every routed prompt appends one row to `skill-router.jsonl` in `$JEV_LOG_DIR`, or this checkout's ignored `.local/` (mode 0600). A row holds the prompt (through `redact_strict`, clipped to 500 characters), the suggestion and its fit, the best fit, the categories, and the cost. A failed route logs an `error` row. Review real picks with `tail .local/skill-router.jsonl`.
+
 ## Authored pilot
 
 `benchmarks/pilot-labels-claude.jsonl` and `benchmarks/pilot-labels-codex.jsonl` each contain 100 self-contained, manually authored prompts: 60 with skill labels and 40 labeled `null`. Labels were fixed before agent observations. These fixtures exercise the routing and measurement protocol; results from them do not estimate accuracy on ordinary user requests. The two hosts use separate live rosters, labels, observations, and scores.
@@ -116,7 +159,20 @@ python3 skill_router.py --host claude benchmark benchmarks/pilot-labels-claude.j
 python3 skill_router.py --host codex benchmark benchmarks/pilot-labels-codex.jsonl .local/pilot-observations-codex.jsonl
 python3 skill_router.py --host claude score .local/pilot-observations-claude.jsonl
 python3 skill_router.py --host codex score .local/pilot-observations-codex.jsonl
+python3 skill_router.py --host claude --router category-v1 benchmark benchmarks/pilot-labels-claude.jsonl .local/pilot-observations-claude-category-v1.jsonl --reuse-arms .local/pilot-observations-claude.jsonl
+python3 skill_router.py --host claude score .local/pilot-observations-claude-category-v1.jsonl
 ```
+
+Compare `category-v1` with `balanced-shards-v2` only when both observation files share a roster hash. Each router needs its own observations file.
+
+`--reuse-arms` copies the baseline and oracle loads from another router's observations instead of rerunning them. Neither arm sees the router's suggestion, so a second router costs 100 agent sessions instead of 300. The source file must match the host, agent model, roster hash and labels, or the run stops before any session starts. Copied rows record `arms_reused_from`, and `score` counts them as `rows_with_reused_arms`. Both routers then share the same baseline and oracle samples, so their `routed` results are compared against identical controls.
+
+`benchmarks/pilot-labels-claude-2026-11.jsonl` is a draft remap of the Claude labels to the November 2026 roster. It keeps the same prompts and IDs. The original gold skills are gone: `ClaudesMods` was split into `my-skills` and `ThinkTime`, and `superpowers` is disabled. So each covered row now records `previous_gold`, `remap` (`rename` or `substitute`), `remap_confidence` and any `alternatives`. The four substitutes are judgment calls; review them before you run:
+
+- **`ClaudesMods:prd`**, high confidence.
+- **`superpowers:systematic-debugging`**, high confidence.
+- **`superpowers:brainstorming`**, medium confidence.
+- **`superpowers:test-driven-development`**, ambiguous: `tdd` and `zord-addyosmani:addyosmani-test-driven-development` overlap.
 
 Each prompt runs in three fresh agent sessions: baseline, Jev suggestion, and gold-label suggestion. Claude's first `Skill` call and Codex's first observed `SKILL.md` read count as loads. Covered prompts count as wrong when the first load differs from the label; uncovered prompts count as needless when any skill loads. The observations file checkpoints after routing and each arm, so the same command resumes interrupted work. A changed roster, router version, host, or agent model requires a new observations file.
 

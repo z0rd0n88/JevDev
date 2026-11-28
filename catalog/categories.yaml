@@ -1,0 +1,107 @@
+# Routing categories for the category-v1 skill router.
+#
+# criteria  Sent to Jev as the option description in the request-1 category Choice. Say what
+#           the user wants, not what a skill does; Jev sees only the request text.
+# keywords  Fallback for live-roster skills missing from catalog.yaml: whole-token hits in a
+#           skill's name and description. skill_catalog.rule_category abstains unless one
+#           category leads (see MIN_RULE_HITS and MIN_RULE_MARGIN there).
+#
+# Keep the list fixed and short. A new category needs criteria, keywords and catalog members.
+categories:
+  plan-and-spec:
+    criteria: >-
+      The user wants to decide what to build before building it: clarify requirements, be
+      interviewed about goals, write a spec, PRD or implementation plan, break work into tasks,
+      or explore options and requirements before coding starts.
+    keywords: [spec, prd, requirements, plan, planning, roadmap, scope, interview, breakdown, milestones]
+  think-and-research:
+    criteria: >-
+      The user wants ideas, analysis or research rather than code: brainstorm or generate
+      options, apply a creative-thinking technique, refine or stress-test an idea or decision,
+      run a strategy analysis such as SWOT, or investigate a question against sources.
+    keywords: [idea, ideas, brainstorm, brainstorming, creative, lateral, swot, strategy, research, decision, thinking, analogy]
+  design-architecture:
+    criteria: >-
+      The user wants to shape how software is structured: system or service architecture,
+      module and API boundaries, domain or data models, technology choices, or architecture
+      decision records.
+    keywords: [architecture, architect, design, module, boundaries, interface, domain, adr, system, schema]
+  build-code:
+    criteria: >-
+      The user wants code written or changed outside the user interface: implement a feature
+      in backend code, scripts or libraries, migrate or remove old code, tune performance,
+      work with databases and queries, call third-party APIs, SDKs or webhooks, or build a
+      quick prototype.
+    keywords: [implement, implementation, feature, code, sdk, api, database, query, integration, webhook, prototype, migration, performance]
+  frontend-and-design:
+    criteria: >-
+      The user wants user-facing interface or visual work: components, pages, styling,
+      accessibility, web platform APIs, browser extensions, translations, dashboards and
+      charts, visual design, icons and images, or how content and navigation are organized.
+    keywords: [ui, ux, frontend, component, css, html, accessibility, design, visual, icon, i18n, browser, dashboard]
+  test:
+    criteria: >-
+      The user wants tests or a test strategy: write a failing test first, add regression
+      tests, plan coverage, test in a real browser, or run a repository's CI checks locally.
+    keywords: [test, tests, testing, tdd, coverage, regression, qa, e2e]
+  debug:
+    criteria: >-
+      Something is broken and the user wants the cause found: a wrong result, failing test,
+      crash, flaky build or error message that needs systematic root-cause diagnosis before a
+      fix.
+    keywords: [debug, debugging, bug, error, failure, failing, crash, root, cause, diagnose, broken]
+  review-and-audit:
+    criteria: >-
+      The user wants existing work judged: review a pull request, diff, codebase, spec or design
+      for problems from one or more perspectives, audit for a specific risk, fix review
+      findings, simplify code, or assess technical debt.
+    keywords: [review, reviews, audit, findings, quality, refactor, simplify, debt, verify, verification]
+  git-and-release:
+    criteria: >-
+      The user wants work moved through version control and out to users: branches, commits,
+      worktrees, splitting or finishing and merging a pull request, git safety, CI/CD
+      pipelines, deployment, release readiness, infrastructure, environment setup,
+      monitoring or production incidents.
+    keywords: [git, branch, commit, merge, pr, worktree, ci, cd, deploy, deployment, release, infrastructure, monitoring, incident]
+  security:
+    criteria: >-
+      The user wants something made or proven secure: threat modeling, hardening code or
+      infrastructure, secrets and credentials, authentication and authorization, or
+      vulnerability and API security scanning.
+    keywords: [security, secure, vulnerability, threat, secrets, credentials, auth, authorization, hardening, owasp]
+  agents-and-automation:
+    criteria: >-
+      The user wants AI agents or automation to do or check work: coordinate several agents or
+      sessions, run a long unattended multi-phase job, hand a job to another session or a
+      teammate's agent, evaluate or constrain an AI agent, or drive a browser, desktop app or
+      sandbox automatically.
+    keywords: [agent, agents, multi-agent, orchestration, orchestrate, subagents, parallel, unattended, sandbox, automation, guardrails, evals]
+  claude-setup:
+    criteria: >-
+      The user wants their AI assistant's own setup changed or explained: skills, plugins,
+      agents, hooks, CLAUDE.md or AGENTS.md files, settings, cloud environments, memory, or
+      finding and running a skill by name.
+    keywords: [skill, skills, plugin, plugins, hook, hooks, claude, settings, mcp, environment, memory]
+  writing-and-communication:
+    criteria: >-
+      The user wants text written, rewritten or restyled for a reader: shorten or tighten
+      prose while keeping its facts, plain-language rewrites, documentation and READMEs,
+      prompts, grant or proposal text, or a different answer format or tone.
+    keywords: [writing, write, rewrite, prose, concise, documentation, docs, readme, plain, language, tone, prompt, grant]
+  work-tracking:
+    criteria: >-
+      The user wants their work tracked or summarized: status updates, standups, weekly
+      wrap-ups, task lists, tickets, session handoff or close-out notes, transcript summaries,
+      or digests and searches across connected work tools.
+    keywords: [status, standup, wrapup, tasks, ticket, tracker, handoff, digest, summary, summarize, progress]
+  business:
+    criteria: >-
+      The user wants help running or growing a business: finance, bookkeeping, invoices,
+      payroll, taxes, inventory, contracts, hiring, sales leads, CRM, outreach, marketing,
+      ads, SEO, customer reviews or app store listings.
+    keywords: [business, invoice, payroll, tax, inventory, sales, leads, crm, marketing, customers, ads, seo, hiring, finance]
+  other:
+    criteria: >-
+      None of these areas fits: a general knowledge question, a definition, small talk, or a
+      task no listed area covers.
+    keywords: []
